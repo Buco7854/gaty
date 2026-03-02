@@ -13,7 +13,10 @@ import (
 	"github.com/Buco7854/gaty/internal/cache"
 	"github.com/Buco7854/gaty/internal/config"
 	"github.com/Buco7854/gaty/internal/db"
+	"github.com/Buco7854/gaty/internal/handler"
 	"github.com/Buco7854/gaty/internal/middleware"
+	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gaty/internal/service"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
@@ -61,7 +64,20 @@ func main() {
 	}))
 	router.Use(middleware.TenantResolver(pool))
 
+	// Repositories
+	userRepo := repository.NewUserRepository(pool)
+	credRepo := repository.NewCredentialRepository(pool)
+	wsRepo := repository.NewWorkspaceRepository(pool)
+
+	// Services
+	authSvc := service.NewAuthService(userRepo, credRepo, redisClient, cfg.JWTSecret)
+
 	api := humachi.New(router, huma.DefaultConfig("GATY API", "0.1.0"))
+
+	// Global soft auth middleware: silently extracts Bearer token and sets user ID in context
+	api.UseMiddleware(middleware.AuthExtractor(authSvc))
+	// Per-operation hard auth middleware: returns 401 if user ID not in context
+	requireAuth := middleware.RequireAuth(api)
 
 	type HealthOutput struct {
 		Body struct {
@@ -85,6 +101,10 @@ func main() {
 		}
 		return resp, nil
 	})
+
+	// Register route groups
+	handler.NewAuthHandler(authSvc, userRepo).RegisterRoutes(api, requireAuth)
+	handler.NewWorkspaceHandler(wsRepo).RegisterRoutes(api, requireAuth)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
