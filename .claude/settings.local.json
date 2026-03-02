@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git push origin main)",
+      "Bash(go get github.com/danielgtaylor/huma/v2 github.com/go-chi/chi/v5 github.com/go-chi/cors github.com/joho/godotenv)",
+      "Bash(go mod tidy)",
+      "Bash(go build ./cmd/server/)",
+      "Bash(npm create vite@latest frontend -- --template react-ts)",
+      "Bash(npm install)",
+      "Bash(npm install -D tailwindcss @tailwindcss/vite)",
+      "Bash(npx shadcn@latest init -d -y)",
+      "Bash(npx vite build)",
+      "Bash(git add -A)"
+    ]
+  }
+}

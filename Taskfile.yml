@@ -1,0 +1,49 @@
+version: "3"
+
+tasks:
+  dev-infra:
+    desc: "Start infra services (PostgreSQL, Redis, Mosquitto, Caddy)"
+    cmd: docker compose up -d
+
+  dev-api:
+    desc: "Start Go backend with hot-reload (requires air)"
+    cmd: air
+
+  dev-frontend:
+    desc: "Start React frontend dev server"
+    dir: frontend
+    cmd: npm run dev
+
+  build:
+    desc: "Build Go binary"
+    cmd: go build -o bin/server.exe ./cmd/server/
+
+  build-frontend:
+    desc: "Build React frontend"
+    dir: frontend
+    cmd: npm run build
+
+  test:
+    desc: "Run Go tests"
+    cmd: go test ./... -v
+
+  lint:
+    desc: "Run all linters"
+    cmds:
+      - golangci-lint run ./...
+      - cmd: npm run lint
+        dir: frontend
+
+  migrate-up:
+    desc: "Run all pending migrations"
+    cmd: migrate -path migrations -database "{{.DATABASE_URL}}" up
+    dotenv: [".env"]
+
+  migrate-down:
+    desc: "Rollback last migration"
+    cmd: migrate -path migrations -database "{{.DATABASE_URL}}" down 1
+    dotenv: [".env"]
+
+  migrate-create:
+    desc: "Create a new migration (usage: task migrate-create -- my_migration_name)"
+    cmd: migrate create -ext sql -dir migrations -seq {{.CLI_ARGS}}

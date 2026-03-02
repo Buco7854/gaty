@@ -1,0 +1,18 @@
+# Environment
+.env
+
+# Go
+tmp/
+*.exe
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
