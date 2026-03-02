@@ -1,7 +1,7 @@
 # GATY - IoT Gate Control SaaS - Plan de Développement
 
 ## Stack validée
-- **Backend** : Go (Gin-Gonic)
+- **Backend** : Go (Huma + chi router)
 - **Base de données** : PostgreSQL + Redis (cache/rate-limiting)
 - **Migrations** : golang-migrate (fichiers SQL versionnés)
 - **Broker IoT** : Eclipse Mosquitto (MQTT)
@@ -59,7 +59,8 @@
 - [ ] Module de configuration (chargement .env, validation des variables requises)
 - [ ] Connexion PostgreSQL (pool de connexions via pgx ou database/sql)
 - [ ] Connexion Redis
-- [ ] Setup du routeur Gin avec les middleware de base (CORS, Recovery, Logger)
+- [ ] Setup Huma API avec chi comme routeur sous-jacent (CORS, Recovery, Logger via chi middleware)
+- [ ] Configurer la génération automatique OpenAPI 3.1 via Huma
 - [ ] Middleware d'extraction du Tenant via le header `Host` (Tenant Resolution)
 - [ ] Structure de réponse API standardisée (erreurs, pagination)
 - [ ] Health check endpoint (`GET /api/health`)
@@ -71,7 +72,7 @@
 ### 3.1 - Auth par mot de passe (Password)
 - [ ] Endpoint `POST /api/auth/register` (création user + credential type PASSWORD)
 - [ ] Endpoint `POST /api/auth/login` (validation bcrypt, émission JWT)
-- [ ] Middleware d'authentification JWT (extraction, validation, injection user dans le context Gin)
+- [ ] Middleware d'authentification JWT (extraction, validation, injection user dans le context via chi middleware)
 - [ ] Endpoint `POST /api/auth/refresh` (renouvellement de token)
 - [ ] Endpoint `GET /api/auth/me` (profil utilisateur connecté)
 
@@ -197,8 +198,11 @@
 - [ ] Design adaptatif mobile-first (cas d'usage principal : téléphone devant le portail)
 - [ ] Aucune navigation visible, branding du workspace uniquement
 
-### 9.6 - Temps Réel (WebSocket ou SSE)
-- [ ] Connexion WebSocket ou SSE pour recevoir les changements de statut des gates en temps réel sur le dashboard
+### 9.6 - Temps Réel (SSE)
+- [ ] Endpoint SSE backend via `sse.Register` de Huma (`GET /api/workspaces/:ws_id/gates/events`)
+- [ ] Définir les types d'événements SSE (GateStatusChanged, GateCommandAck) comme structs Go mappés dans sse.Register
+- [ ] Bridge MQTT → SSE : le backend relaie les messages MQTT reçus vers les connexions SSE actives (fan-out par workspace)
+- [ ] Client SSE frontend : hook React `useGateEvents()` basé sur `EventSource` avec reconnexion automatique
 - [ ] Mise à jour automatique de l'UI lors d'un changement de statut
 
 ---
