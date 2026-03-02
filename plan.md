@@ -14,72 +14,72 @@
 
 ## Phase 0 : Setup du Projet & Outillage
 
-- [ ] Initialiser le module Go (`go mod init`)
-- [ ] Mettre en place la structure de dossiers backend (cmd/, internal/, migrations/, configs/)
-- [ ] Initialiser le projet React avec Vite + TypeScript
-- [ ] Installer et configurer Tailwind CSS + shadcn/ui
-- [ ] Créer le `docker-compose.yml` (PostgreSQL, Redis, Mosquitto, Caddy)
-- [ ] Configurer `air` pour le hot-reload Go
-- [ ] Créer le `Caddyfile` de base (dev local)
-- [ ] Mettre en place le `.env` et la gestion des variables d'environnement (Viper ou envconfig)
-- [ ] Configurer le linter/formatter (golangci-lint, ESLint, Prettier)
-- [ ] Créer le `Makefile` avec les commandes courantes (migrate, dev, test, build)
+- [x] Initialiser le module Go (`go mod init`)
+- [x] Mettre en place la structure de dossiers backend (cmd/, internal/, migrations/, configs/)
+- [x] Initialiser le projet React avec Vite + TypeScript
+- [x] Installer et configurer Tailwind CSS + shadcn/ui
+- [x] Créer le `docker-compose.yml` (PostgreSQL, Redis, Mosquitto, Caddy)
+- [x] Configurer `air` pour le hot-reload Go
+- [x] Créer le `Caddyfile` de base (dev local)
+- [x] Mettre en place le `.env` et la gestion des variables d'environnement (Viper ou envconfig)
+- [x] Configurer le linter/formatter (golangci-lint, ESLint, Prettier)
+- [x] Créer le `Makefile` avec les commandes courantes (migrate, dev, test, build) _(remplacé par Taskfile.yml — go-task)_
 
 ---
 
 ## Phase 1 : Base de Données & Migrations
 
 ### 1.1 - Setup golang-migrate
-- [ ] Installer golang-migrate
-- [ ] Configurer le répertoire `migrations/` et les commandes dans le Makefile
-- [ ] Créer la migration initiale : extensions (`uuid-ossp` ou `pgcrypto`)
+- [x] Installer golang-migrate
+- [x] Configurer le répertoire `migrations/` et les commandes dans le Makefile _(dans Taskfile.yml)_
+- [x] Créer la migration initiale : extensions (`uuid-ossp` ou `pgcrypto`)
 
 ### 1.2 - Tables Core & Multi-Tenant
-- [ ] Migration : table `users` (id UUID, email, created_at, deleted_at)
-- [ ] Migration : table `workspaces` (id, name, owner_id FK, oidc_settings JSONB, created_at, deleted_at)
-- [ ] Migration : table `workspace_members` (workspace_id, user_id, workspace_role ENUM, PK composite)
-- [ ] Migration : table `gates` (id, workspace_id FK, name, integration_type ENUM, integration_config JSONB, status, last_seen_at, created_at, deleted_at)
+- [x] Migration : table `users` (id UUID, email, created_at, deleted_at)
+- [x] Migration : table `workspaces` (id, name, owner_id FK, oidc_settings JSONB, created_at, deleted_at)
+- [x] Migration : table `workspace_members` (workspace_id, user_id, workspace_role ENUM, PK composite)
+- [x] Migration : table `gates` (id, workspace_id FK, name, integration_type ENUM, integration_config JSONB, status, last_seen_at, created_at, deleted_at)
 
 ### 1.3 - Tables Auth & Permissions
-- [ ] Migration : table `credentials` (id, target_type ENUM, target_id, credential_type ENUM, hashed_value, metadata JSONB, created_at)
-- [ ] Index unique composite sur `credentials` pour éviter les doublons
-- [ ] Migration : table `permissions` (code PK, description)
-- [ ] Migration : seed des permissions de base (gate:read_status, gate:trigger_open, gate:manage, workspace:manage)
-- [ ] Migration : table `gate_user_policies` (gate_id, user_id, permission_code, PK composite)
+- [x] Migration : table `credentials` (id, target_type ENUM, target_id, credential_type ENUM, hashed_value, metadata JSONB, created_at)
+- [x] Index unique composite sur `credentials` pour éviter les doublons
+- [x] Migration : table `permissions` (code PK, description)
+- [x] Migration : seed des permissions de base (gate:read_status, gate:trigger_open, gate:manage, workspace:manage)
+- [x] Migration : table `gate_user_policies` (gate_id, user_id, permission_code, PK composite)
 
 ### 1.4 - Tables Domaines Personnalisés & Audit
-- [ ] Migration : table `custom_domains` (id, domain_name UNIQUE, target_type ENUM, target_id, base_path, is_verified, created_at)
-- [ ] Migration : table `audit_logs` (id, workspace_id, gate_id nullable, user_id nullable, action, ip_address, metadata JSONB, created_at)
-- [ ] Index sur `audit_logs` (workspace_id, created_at) pour les requêtes chronologiques
+- [x] Migration : table `custom_domains` (id, domain_name UNIQUE, target_type ENUM, target_id, base_path, is_verified, created_at)
+- [x] Migration : table `audit_logs` (id, workspace_id, gate_id nullable, user_id nullable, action, ip_address, metadata JSONB, created_at)
+- [x] Index sur `audit_logs` (workspace_id, created_at) pour les requêtes chronologiques
 
 ---
 
 ## Phase 2 : Backend Core (Connexion DB, Config, Serveur HTTP)
 
-- [ ] Module de configuration (chargement .env, validation des variables requises)
-- [ ] Connexion PostgreSQL (pool de connexions via pgx ou database/sql)
-- [ ] Connexion Redis
-- [ ] Setup Huma API avec chi comme routeur sous-jacent (CORS, Recovery, Logger via chi middleware)
-- [ ] Configurer la génération automatique OpenAPI 3.1 via Huma
-- [ ] Middleware d'extraction du Tenant via le header `Host` (Tenant Resolution)
-- [ ] Structure de réponse API standardisée (erreurs, pagination)
-- [ ] Health check endpoint (`GET /api/health`)
+- [x] Module de configuration (chargement .env, validation des variables requises)
+- [x] Connexion PostgreSQL (pool de connexions via pgx ou database/sql)
+- [x] Connexion Redis
+- [x] Setup Huma API avec chi comme routeur sous-jacent (CORS, Recovery, Logger via chi middleware)
+- [x] Configurer la génération automatique OpenAPI 3.1 via Huma
+- [x] Middleware d'extraction du Tenant via le header `Host` (Tenant Resolution)
+- [x] Structure de réponse API standardisée (erreurs, pagination) _(géré nativement par Huma)_
+- [x] Health check endpoint (`GET /api/health`)
 
 ---
 
 ## Phase 3 : Authentification & Gestion des Utilisateurs
 
 ### 3.1 - Auth par mot de passe (Password)
-- [ ] Endpoint `POST /api/auth/register` (création user + credential type PASSWORD)
-- [ ] Endpoint `POST /api/auth/login` (validation bcrypt, émission JWT)
-- [ ] Middleware d'authentification JWT (extraction, validation, injection user dans le context via chi middleware)
-- [ ] Endpoint `POST /api/auth/refresh` (renouvellement de token)
-- [ ] Endpoint `GET /api/auth/me` (profil utilisateur connecté)
+- [x] Endpoint `POST /api/auth/register` (création user + credential type PASSWORD)
+- [x] Endpoint `POST /api/auth/login` (validation bcrypt, émission JWT)
+- [x] Middleware d'authentification JWT (AuthExtractor global + RequireAuth par opération, Huma natif)
+- [x] Endpoint `POST /api/auth/refresh` (renouvellement de token, Redis-backed rotation)
+- [x] Endpoint `GET /api/auth/me` (profil utilisateur connecté)
 
 ### 3.2 - Gestion des Workspaces
-- [ ] Endpoint `POST /api/workspaces` (création workspace, l'utilisateur devient OWNER)
-- [ ] Endpoint `GET /api/workspaces` (liste des workspaces de l'utilisateur connecté)
-- [ ] Endpoint `GET /api/workspaces/:ws_id` (détails d'un workspace)
+- [x] Endpoint `POST /api/workspaces` (création workspace, l'utilisateur devient OWNER)
+- [x] Endpoint `GET /api/workspaces` (liste des workspaces de l'utilisateur connecté)
+- [x] Endpoint `GET /api/workspaces/:ws_id` (détails d'un workspace)
 - [ ] Endpoint `POST /api/workspaces/:ws_id/members` (invitation d'un membre)
 - [ ] Endpoint `PATCH /api/workspaces/:ws_id/members/:user_id` (changement de rôle)
 - [ ] Endpoint `DELETE /api/workspaces/:ws_id/members/:user_id` (retrait d'un membre)
