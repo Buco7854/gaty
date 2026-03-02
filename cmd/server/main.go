@@ -10,7 +10,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Buco7854/gaty/internal/cache"
 	"github.com/Buco7854/gaty/internal/config"
+	"github.com/Buco7854/gaty/internal/db"
+	"github.com/Buco7854/gaty/internal/middleware"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
@@ -25,6 +28,24 @@ func main() {
 		os.Exit(1)
 	}
 
+	ctx := context.Background()
+
+	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
+	if err != nil {
+		slog.Error("failed to connect to database", "error", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+	slog.Info("database connected")
+
+	redisClient, err := cache.NewRedis(ctx, cfg.RedisURL)
+	if err != nil {
+		slog.Error("failed to connect to redis", "error", err)
+		os.Exit(1)
+	}
+	defer redisClient.Close()
+	slog.Info("redis connected")
+
 	router := chi.NewMux()
 	router.Use(chimw.RequestID)
 	router.Use(chimw.RealIP)
@@ -38,20 +59,30 @@ func main() {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
+	router.Use(middleware.TenantResolver(pool))
 
 	api := humachi.New(router, huma.DefaultConfig("GATY API", "0.1.0"))
 
-	huma.Get(api, "/api/health", func(ctx context.Context, input *struct{}) (*struct {
+	type HealthOutput struct {
 		Body struct {
-			Status string `json:"status"`
+			Status   string `json:"status"`
+			Database string `json:"database"`
+			Redis    string `json:"redis"`
 		}
-	}, error) {
-		resp := &struct {
-			Body struct {
-				Status string `json:"status"`
-			}
-		}{}
+	}
+	huma.Get(api, "/api/health", func(ctx context.Context, _ *struct{}) (*HealthOutput, error) {
+		resp := &HealthOutput{}
 		resp.Body.Status = "ok"
+		if err := pool.Ping(ctx); err != nil {
+			resp.Body.Database = "unreachable"
+		} else {
+			resp.Body.Database = "ok"
+		}
+		if err := redisClient.Ping(ctx).Err(); err != nil {
+			resp.Body.Redis = "unreachable"
+		} else {
+			resp.Body.Redis = "ok"
+		}
 		return resp, nil
 	})
 

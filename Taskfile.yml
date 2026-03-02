@@ -1,5 +1,7 @@
 version: "3"
 
+dotenv: [".env"]
+
 tasks:
   dev-infra:
     desc: "Start infra services (PostgreSQL, Redis, Mosquitto, Caddy)"
@@ -37,12 +39,10 @@ tasks:
   migrate-up:
     desc: "Run all pending migrations"
     cmd: migrate -path migrations -database "{{.DATABASE_URL}}" up
-    dotenv: [".env"]
 
   migrate-down:
     desc: "Rollback last migration"
     cmd: migrate -path migrations -database "{{.DATABASE_URL}}" down 1
-    dotenv: [".env"]
 
   migrate-create:
     desc: "Create a new migration (usage: task migrate-create -- my_migration_name)"
