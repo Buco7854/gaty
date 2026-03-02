@@ -30,21 +30,7 @@
 - MQTT: tcp://localhost:1883
 
 ## Avancement
-L'avancement détaillé (cases à cocher) se suit dans **plan.md** à la racine du repo.
-
-Résumé :
-- [x] Phase 0: Setup (Go module, React, Docker Compose, air, Taskfile)
-- [x] Phase 1: Migrations (7 migrations, tables + indexes)
-- [x] Phase 2: Backend core (DB pool, Redis, Huma server, TenantResolver)
-- [~] Phase 3: Auth + Workspaces (auth complet, ws create/list/get — membres manquants)
-- [ ] Phase 4: RBAC
-- [ ] Phase 5: Gates + MQTT
-- [ ] Phase 6: Guest PIN
-- [ ] Phase 7: OIDC
-- [ ] Phase 8: Domaines personnalisés + Caddy
-- [ ] Phase 9: Frontend React
-- [ ] Phase 10: Tests & Qualité
-- [ ] Phase 11: Dockerisation & Déploiement
+L'avancement se suit dans **plan.md** à la racine du repo.
 
 ## User preferences
 - No co-authored commits
