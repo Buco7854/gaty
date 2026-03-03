@@ -86,9 +86,9 @@ func main() {
 	auditRepo := repository.NewAuditRepository(pool)
 	domainRepo := repository.NewCustomDomainRepository(pool)
 
-	// Subscribe to gate status updates from MQTT
+	// Subscribe to gate status updates from MQTT (bridge to Redis Pub/Sub for SSE)
 	if mqttClient != nil {
-		if err := mqttClient.SubscribeGateStatuses(gateRepo); err != nil {
+		if err := mqttClient.SubscribeGateStatuses(gateRepo, redisClient); err != nil {
 			slog.Warn("mqtt: failed to subscribe to gate statuses", "error", err)
 		}
 	}
@@ -147,6 +147,9 @@ func main() {
 	handler.NewSSOHandler(ssoSvc, authSvc, wsRepo, cfg.FrontendURL).RegisterRoutes(api, wsAdmin)
 	handler.NewCredentialHandler(credRepo, memberCredRepo, membershipRepo).RegisterRoutes(api, requireAuth, requireMembership, wsAdmin)
 	handler.NewCustomDomainHandler(domainRepo, gateRepo).RegisterRoutes(api, wsAdmin)
+
+	// SSE: raw chi route (long-lived, not Huma)
+	handler.NewSSEHandler(authSvc, redisClient).RegisterRoutes(router)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),

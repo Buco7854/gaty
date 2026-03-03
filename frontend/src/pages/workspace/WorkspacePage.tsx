@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import type { Gate, WorkspaceWithRole } from '@/types'
+import type { Gate, GateStatus, WorkspaceWithRole } from '@/types'
+import { useGateEvents } from '@/hooks/useGateEvents'
+import type { GateEvent } from '@/hooks/useGateEvents'
 import { Plus, DoorOpen, Wifi, WifiOff, HelpCircle, ChevronRight, Zap, Globe } from 'lucide-react'
 
 function StatusDot({ status }: { status: Gate['status'] }) {
@@ -47,6 +49,17 @@ export default function WorkspacePage() {
       }),
     refetchInterval: 10_000,
   })
+
+  // Real-time gate status updates via SSE
+  const handleGateEvent = useCallback((event: GateEvent) => {
+    qc.setQueryData<Gate[]>(['gates', wsId], (prev) =>
+      prev?.map((g) =>
+        g.id === event.gate_id ? { ...g, status: event.status as GateStatus } : g
+      )
+    )
+  }, [qc, wsId])
+
+  useGateEvents(wsId, handleGateEvent)
 
   const createGate = useMutation({
     mutationFn: (body: { name: string; integration_type: string }) =>

@@ -2,11 +2,17 @@ import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import type { Gate, GatePin, CustomDomain } from '@/types'
+import type { Gate, GatePin, CustomDomain, WorkspaceMembership, MembershipPolicy } from '@/types'
 import {
   ArrowLeft, Zap, Hash, Globe, Plus, Trash2,
-  CheckCircle2, XCircle, Clock, Copy, Check
+  CheckCircle2, XCircle, Clock, Copy, Check, Shield, Users
 } from 'lucide-react'
+
+const PERMISSIONS = [
+  { code: 'gate:read_status', label: 'View status' },
+  { code: 'gate:trigger_open', label: 'Open' },
+  { code: 'gate:manage', label: 'Manage' },
+] as const
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
@@ -104,6 +110,56 @@ export default function GatePage() {
       if (data.verified) qc.invalidateQueries({ queryKey: ['domains', wsId, gateId] })
     },
   })
+
+  // Permissions
+  const { data: members } = useQuery<WorkspaceMembership[]>({
+    queryKey: ['members', wsId],
+    queryFn: () =>
+      api.get(`/workspaces/${wsId}/members`).then((r) => {
+        const d = r.data as unknown
+        if (Array.isArray(d)) return d as WorkspaceMembership[]
+        return ((d as Record<string, unknown>).members ?? []) as WorkspaceMembership[]
+      }),
+  })
+
+  const { data: policies } = useQuery<MembershipPolicy[]>({
+    queryKey: ['policies', wsId, gateId],
+    queryFn: () =>
+      api.get(`/workspaces/${wsId}/gates/${gateId}/policies`).then((r) => {
+        const d = r.data as unknown
+        if (Array.isArray(d)) return d as MembershipPolicy[]
+        return []
+      }),
+  })
+
+  const grantPerm = useMutation({
+    mutationFn: ({ membershipId, permCode }: { membershipId: string; permCode: string }) =>
+      api.post(`/workspaces/${wsId}/gates/${gateId}/policies`, {
+        membership_id: membershipId,
+        permission_code: permCode,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['policies', wsId, gateId] }),
+  })
+
+  const revokePerm = useMutation({
+    mutationFn: ({ membershipId, permCode }: { membershipId: string; permCode: string }) =>
+      api.delete(`/workspaces/${wsId}/gates/${gateId}/policies/${membershipId}/${permCode}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['policies', wsId, gateId] }),
+  })
+
+  const regularMembers = members?.filter((m) => m.role === 'MEMBER') ?? []
+
+  function hasPermission(membershipId: string, permCode: string) {
+    return policies?.some((p) => p.membership_id === membershipId && p.permission_code === permCode) ?? false
+  }
+
+  function togglePermission(membershipId: string, permCode: string) {
+    if (hasPermission(membershipId, permCode)) {
+      revokePerm.mutate({ membershipId, permCode })
+    } else {
+      grantPerm.mutate({ membershipId, permCode })
+    }
+  }
 
   const statusColor = {
     online: 'text-green-600 bg-green-50 dark:bg-green-900/20',
@@ -284,6 +340,66 @@ export default function GatePage() {
             </div>
           ))}
         </div>
+      </section>
+
+      {/* Permissions */}
+      <section>
+        <div className="flex items-center gap-2 mb-3">
+          <Users className="w-4 h-4 text-muted-foreground" />
+          <h2 className="font-semibold">Member permissions</h2>
+          <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{regularMembers.length}</span>
+        </div>
+
+        {regularMembers.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-2">No regular members in this workspace</p>
+        ) : (
+          <div className="rounded-lg border border-border overflow-hidden">
+            {/* Header row */}
+            <div className="grid bg-muted/50 border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground"
+              style={{ gridTemplateColumns: '1fr repeat(3, auto)' }}>
+              <span>Member</span>
+              {PERMISSIONS.map((p) => (
+                <span key={p.code} className="text-center w-20">{p.label}</span>
+              ))}
+            </div>
+            {/* Member rows */}
+            {regularMembers.map((m) => (
+              <div
+                key={m.id}
+                className="grid items-center px-3 py-2.5 border-b border-border last:border-0 hover:bg-accent/20 transition-colors"
+                style={{ gridTemplateColumns: '1fr repeat(3, auto)' }}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center shrink-0">
+                    <Shield className="w-3 h-3 text-muted-foreground" />
+                  </div>
+                  <span className="text-sm truncate">
+                    {m.display_name ?? m.local_username ?? `Member ${m.id.slice(0, 8)}`}
+                  </span>
+                </div>
+                {PERMISSIONS.map((p) => {
+                  const checked = hasPermission(m.id, p.code)
+                  return (
+                    <div key={p.code} className="w-20 flex justify-center">
+                      <button
+                        onClick={() => togglePermission(m.id, p.code)}
+                        disabled={grantPerm.isPending || revokePerm.isPending}
+                        className={`w-5 h-5 rounded flex items-center justify-center border transition-colors disabled:opacity-40 ${
+                          checked
+                            ? 'bg-primary border-primary text-primary-foreground'
+                            : 'border-input bg-background hover:bg-accent'
+                        }`}
+                        title={checked ? `Revoke "${p.label}"` : `Grant "${p.label}"`}
+                      >
+                        {checked && <Check className="w-3 h-3" />}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   )

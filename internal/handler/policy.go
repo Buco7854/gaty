@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/Buco7854/gaty/internal/model"
@@ -70,6 +71,26 @@ func (h *PolicyHandler) Revoke(ctx context.Context, input *PolicyMembershipPathP
 	return nil, nil
 }
 
+// --- Revoke a single permission for a membership on a gate ---
+
+type RevokePermissionPathParam struct {
+	WorkspaceID    uuid.UUID `path:"ws_id"`
+	GateID         uuid.UUID `path:"gate_id"`
+	MembershipID   uuid.UUID `path:"membership_id"`
+	PermissionCode string    `path:"permission_code"`
+}
+
+func (h *PolicyHandler) RevokePermission(ctx context.Context, input *RevokePermissionPathParam) (*struct{}, error) {
+	err := h.policies.RevokePermission(ctx, input.MembershipID, input.GateID, input.PermissionCode)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("policy not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to revoke permission")
+	}
+	return nil, nil
+}
+
 // RegisterRoutes wires policy endpoints onto the Huma API.
 func (h *PolicyHandler) RegisterRoutes(api huma.API, wsAdmin func(huma.Context, func(huma.Context))) {
 	huma.Register(api, huma.Operation{
@@ -98,4 +119,13 @@ func (h *PolicyHandler) RegisterRoutes(api huma.API, wsAdmin func(huma.Context, 
 		Tags:        []string{"Policies"},
 		Middlewares: huma.Middlewares{wsAdmin},
 	}, h.Revoke)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "policy-revoke-permission",
+		Method:      http.MethodDelete,
+		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/policies/{membership_id}/{permission_code}",
+		Summary:     "Revoke a specific permission from a membership on a gate",
+		Tags:        []string{"Policies"},
+		Middlewares: huma.Middlewares{wsAdmin},
+	}, h.RevokePermission)
 }

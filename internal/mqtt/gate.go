@@ -11,6 +11,7 @@ import (
 	"github.com/Buco7854/gaty/internal/repository"
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 // StatusTopic returns the MQTT topic for a gate's status updates.
@@ -29,13 +30,21 @@ type statusPayload struct {
 	Status string `json:"status"`
 }
 
-// SubscribeGateStatuses subscribes to all gate status topics and updates the DB accordingly.
+// GateEvent is published to Redis Pub/Sub when a gate status changes.
+type GateEvent struct {
+	GateID      string `json:"gate_id"`
+	WorkspaceID string `json:"workspace_id"`
+	Status      string `json:"status"`
+}
+
+// SubscribeGateStatuses subscribes to all gate status topics, updates the DB,
+// and if redisClient is non-nil, publishes GateEvents to gate:events:{workspace_id}.
 // Topic wildcard: +/gates/+/status
-func (c *Client) SubscribeGateStatuses(gateRepo *repository.GateRepository) error {
+func (c *Client) SubscribeGateStatuses(gateRepo *repository.GateRepository, redisClient *redis.Client) error {
 	return c.Subscribe("+/gates/+/status", func(_ pahomqtt.Client, msg pahomqtt.Message) {
-		gateID, err := parseGateIDFromTopic(msg.Topic())
+		wsID, gateID, err := parseTopicIDs(msg.Topic())
 		if err != nil {
-			slog.Warn("mqtt: cannot parse gate id from topic", "topic", msg.Topic())
+			slog.Warn("mqtt: cannot parse ids from topic", "topic", msg.Topic())
 			return
 		}
 
@@ -50,16 +59,42 @@ func (c *Client) SubscribeGateStatuses(gateRepo *repository.GateRepository) erro
 
 		if err := gateRepo.UpdateStatus(ctx, gateID, p.Status); err != nil {
 			slog.Error("mqtt: failed to update gate status", "gate_id", gateID, "error", err)
+			return
+		}
+
+		if redisClient != nil {
+			event := GateEvent{
+				GateID:      gateID.String(),
+				WorkspaceID: wsID.String(),
+				Status:      p.Status,
+			}
+			payload, _ := json.Marshal(event)
+			channel := fmt.Sprintf("gate:events:%s", wsID)
+			if err := redisClient.Publish(ctx, channel, string(payload)).Err(); err != nil {
+				slog.Warn("mqtt: failed to publish gate event", "channel", channel, "error", err)
+			}
 		}
 	})
 }
 
-// parseGateIDFromTopic extracts the gate UUID from topics like
+// parseTopicIDs extracts workspace UUID and gate UUID from topics like
 // "workspace_{wsID}/gates/{gateID}/status".
-func parseGateIDFromTopic(topic string) (uuid.UUID, error) {
+func parseTopicIDs(topic string) (wsID, gateID uuid.UUID, err error) {
 	parts := strings.Split(topic, "/")
 	if len(parts) != 4 {
-		return uuid.Nil, fmt.Errorf("unexpected topic format: %s", topic)
+		return uuid.Nil, uuid.Nil, fmt.Errorf("unexpected topic format: %s", topic)
 	}
-	return uuid.Parse(parts[2])
+	wsPrefix := parts[0]
+	if !strings.HasPrefix(wsPrefix, "workspace_") {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("unexpected workspace prefix: %s", wsPrefix)
+	}
+	wsID, err = uuid.Parse(strings.TrimPrefix(wsPrefix, "workspace_"))
+	if err != nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("parse workspace id: %w", err)
+	}
+	gateID, err = uuid.Parse(parts[2])
+	if err != nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("parse gate id: %w", err)
+	}
+	return wsID, gateID, nil
 }
