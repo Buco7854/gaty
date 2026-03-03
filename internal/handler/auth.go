@@ -53,7 +53,7 @@ func (h *AuthHandler) Register(ctx context.Context, input *RegisterInput) (*Auth
 	return resp, nil
 }
 
-// --- Login ---
+// --- Login (global) ---
 
 type LoginInput struct {
 	Body struct {
@@ -75,6 +75,39 @@ func (h *AuthHandler) Login(ctx context.Context, input *LoginInput) (*AuthOutput
 	resp.Body.RefreshToken = tokens.RefreshToken
 	resp.Body.User = *user
 	return resp, nil
+}
+
+// --- Login (local membership) ---
+
+type LoginLocalInput struct {
+	Body struct {
+		WorkspaceSlug string `json:"workspace_slug" minLength:"1"`
+		LocalUsername string `json:"local_username" minLength:"1"`
+		Password      string `json:"password" minLength:"1"`
+	}
+}
+
+type LocalAuthOutput struct {
+	Body struct {
+		AccessToken  string                    `json:"access_token"`
+		RefreshToken string                    `json:"refresh_token"`
+		Membership   *model.WorkspaceMembership `json:"membership"`
+	}
+}
+
+func (h *AuthHandler) LoginLocal(ctx context.Context, input *LoginLocalInput) (*LocalAuthOutput, error) {
+	tokens, membership, err := h.authSvc.LoginLocal(ctx, input.Body.WorkspaceSlug, input.Body.LocalUsername, input.Body.Password)
+	if errors.Is(err, service.ErrInvalidCredentials) {
+		return nil, huma.Error401Unauthorized("invalid credentials")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("login failed")
+	}
+	out := &LocalAuthOutput{}
+	out.Body.AccessToken = tokens.AccessToken
+	out.Body.RefreshToken = tokens.RefreshToken
+	out.Body.Membership = membership
+	return out, nil
 }
 
 // --- Refresh ---
@@ -106,6 +139,31 @@ func (h *AuthHandler) Refresh(ctx context.Context, input *RefreshInput) (*Refres
 	return resp, nil
 }
 
+// --- Merge (link local membership to global user) ---
+
+type MergeInput struct {
+	Body struct {
+		WorkspaceSlug string `json:"workspace_slug" minLength:"1"`
+		LocalUsername string `json:"local_username" minLength:"1"`
+		Password      string `json:"password" minLength:"1"`
+	}
+}
+
+func (h *AuthHandler) Merge(ctx context.Context, input *MergeInput) (*struct{}, error) {
+	userID, _ := middleware.UserIDFromContext(ctx)
+	err := h.authSvc.Merge(ctx, userID, input.Body.WorkspaceSlug, input.Body.LocalUsername, input.Body.Password)
+	if errors.Is(err, service.ErrInvalidCredentials) {
+		return nil, huma.Error401Unauthorized("invalid credentials")
+	}
+	if errors.Is(err, service.ErrAlreadyMerged) {
+		return nil, huma.Error409Conflict("membership already linked to a user account")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("merge failed")
+	}
+	return nil, nil
+}
+
 // --- Me ---
 
 type MeOutput struct {
@@ -113,7 +171,6 @@ type MeOutput struct {
 }
 
 func (h *AuthHandler) Me(ctx context.Context, _ *struct{}) (*MeOutput, error) {
-	// RequireAuth middleware guarantees userID is present
 	userID, _ := middleware.UserIDFromContext(ctx)
 	user, err := h.users.GetByID(ctx, userID)
 	if err != nil {
@@ -123,13 +180,12 @@ func (h *AuthHandler) Me(ctx context.Context, _ *struct{}) (*MeOutput, error) {
 }
 
 // RegisterRoutes wires auth endpoints onto the Huma API.
-// requireAuth is a Huma per-operation middleware from middleware.RequireAuth(api).
 func (h *AuthHandler) RegisterRoutes(api huma.API, requireAuth func(huma.Context, func(huma.Context))) {
 	huma.Register(api, huma.Operation{
 		OperationID: "auth-register",
 		Method:      http.MethodPost,
 		Path:        "/api/auth/register",
-		Summary:     "Register a new user",
+		Summary:     "Register a new platform user",
 		Tags:        []string{"Auth"},
 	}, h.Register)
 
@@ -137,9 +193,17 @@ func (h *AuthHandler) RegisterRoutes(api huma.API, requireAuth func(huma.Context
 		OperationID: "auth-login",
 		Method:      http.MethodPost,
 		Path:        "/api/auth/login",
-		Summary:     "Login with email and password",
+		Summary:     "Login with email and password (platform user)",
 		Tags:        []string{"Auth"},
 	}, h.Login)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "auth-login-local",
+		Method:      http.MethodPost,
+		Path:        "/api/auth/login/local",
+		Summary:     "Login as a managed member (local credentials)",
+		Tags:        []string{"Auth"},
+	}, h.LoginLocal)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "auth-refresh",
@@ -150,10 +214,19 @@ func (h *AuthHandler) RegisterRoutes(api huma.API, requireAuth func(huma.Context
 	}, h.Refresh)
 
 	huma.Register(api, huma.Operation{
+		OperationID: "auth-merge",
+		Method:      http.MethodPost,
+		Path:        "/api/auth/merge",
+		Summary:     "Link a local membership to the authenticated platform user",
+		Tags:        []string{"Auth"},
+		Middlewares: huma.Middlewares{requireAuth},
+	}, h.Merge)
+
+	huma.Register(api, huma.Operation{
 		OperationID: "auth-me",
 		Method:      http.MethodGet,
 		Path:        "/api/auth/me",
-		Summary:     "Get current user",
+		Summary:     "Get current platform user",
 		Tags:        []string{"Auth"},
 		Middlewares: huma.Middlewares{requireAuth},
 	}, h.Me)

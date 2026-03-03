@@ -1,45 +1,39 @@
 CREATE TABLE users (
     id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     email      TEXT        NOT NULL UNIQUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at TIMESTAMPTZ
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TYPE workspace_role AS ENUM ('OWNER', 'ADMIN', 'MEMBER');
-
 CREATE TABLE workspaces (
-    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    name          TEXT        NOT NULL,
-    owner_id      UUID        NOT NULL REFERENCES users(id),
-    oidc_settings JSONB       NOT NULL DEFAULT '{}',
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at    TIMESTAMPTZ
+    id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    slug               TEXT        NOT NULL UNIQUE,
+    name               TEXT        NOT NULL,
+    owner_id           UUID        NOT NULL REFERENCES users(id),
+    sso_settings       JSONB       NOT NULL DEFAULT '{}',
+    member_auth_config JSONB       NOT NULL DEFAULT '{}',
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_workspaces_owner ON workspaces(owner_id);
 
-CREATE TABLE workspace_members (
-    workspace_id   UUID           NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    user_id        UUID           NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    workspace_role workspace_role NOT NULL DEFAULT 'MEMBER',
-    PRIMARY KEY (workspace_id, user_id)
-);
-
-CREATE INDEX idx_workspace_members_user ON workspace_members(user_id);
-
--- Members: workspace-scoped people managed by admins (no platform account required).
--- username is unique per workspace; user_id is set if the member converts to a platform user.
-CREATE TABLE members (
+-- Every person with workspace access: platform users (user_id set) and managed members (user_id null).
+CREATE TABLE workspace_memberships (
     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID        NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    display_name TEXT        NOT NULL,
-    email        TEXT,
-    username     TEXT        NOT NULL,
-    user_id      UUID        REFERENCES users(id),
+    user_id      UUID        REFERENCES users(id) ON DELETE SET NULL,
+    local_username TEXT,
+    display_name TEXT,
+    role         TEXT        NOT NULL DEFAULT 'MEMBER' CHECK (role IN ('OWNER', 'ADMIN', 'MEMBER')),
+    auth_config  JSONB       NOT NULL DEFAULT '{}',
+    invited_by   UUID        REFERENCES users(id) ON DELETE SET NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at   TIMESTAMPTZ,
-    UNIQUE (workspace_id, username)
+    -- must have a platform account OR a local username to identify them
+    CONSTRAINT chk_has_identity CHECK (user_id IS NOT NULL OR local_username IS NOT NULL),
+    -- one membership per user per workspace
+    CONSTRAINT uq_workspace_user UNIQUE (workspace_id, user_id),
+    -- unique local username per workspace (partial: only where set)
+    CONSTRAINT uq_workspace_local_username UNIQUE (workspace_id, local_username)
 );
 
-CREATE INDEX idx_members_workspace ON members(workspace_id);
-CREATE INDEX idx_members_user ON members(user_id) WHERE user_id IS NOT NULL;
+CREATE INDEX idx_memberships_workspace ON workspace_memberships(workspace_id);
+CREATE INDEX idx_memberships_user ON workspace_memberships(user_id) WHERE user_id IS NOT NULL;

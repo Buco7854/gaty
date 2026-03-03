@@ -17,10 +17,11 @@ func NewPolicyRepository(pool *pgxpool.Pool) *PolicyRepository {
 	return &PolicyRepository{pool: pool}
 }
 
-func (r *PolicyRepository) List(ctx context.Context, gateID uuid.UUID) ([]model.GatePolicy, error) {
+func (r *PolicyRepository) List(ctx context.Context, gateID uuid.UUID) ([]model.MembershipPolicy, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT gate_id, user_id, permission_code FROM gate_user_policies
-		 WHERE gate_id = $1 ORDER BY user_id, permission_code`,
+		`SELECT membership_id, gate_id, permission_code FROM membership_policies
+		 WHERE gate_id = $1
+		 ORDER BY membership_id, permission_code`,
 		gateID,
 	)
 	if err != nil {
@@ -28,10 +29,10 @@ func (r *PolicyRepository) List(ctx context.Context, gateID uuid.UUID) ([]model.
 	}
 	defer rows.Close()
 
-	var result []model.GatePolicy
+	var result []model.MembershipPolicy
 	for rows.Next() {
-		var p model.GatePolicy
-		if err := rows.Scan(&p.GateID, &p.UserID, &p.PermissionCode); err != nil {
+		var p model.MembershipPolicy
+		if err := rows.Scan(&p.MembershipID, &p.GateID, &p.PermissionCode); err != nil {
 			return nil, fmt.Errorf("scan policy: %w", err)
 		}
 		result = append(result, p)
@@ -39,12 +40,35 @@ func (r *PolicyRepository) List(ctx context.Context, gateID uuid.UUID) ([]model.
 	return result, rows.Err()
 }
 
-// Grant adds a permission for a user on a gate. Idempotent (ON CONFLICT DO NOTHING).
-func (r *PolicyRepository) Grant(ctx context.Context, gateID, userID uuid.UUID, permCode string) error {
+func (r *PolicyRepository) ListForMembership(ctx context.Context, membershipID uuid.UUID) ([]model.MembershipPolicy, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT membership_id, gate_id, permission_code FROM membership_policies
+		 WHERE membership_id = $1
+		 ORDER BY gate_id, permission_code`,
+		membershipID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list membership policies: %w", err)
+	}
+	defer rows.Close()
+
+	var result []model.MembershipPolicy
+	for rows.Next() {
+		var p model.MembershipPolicy
+		if err := rows.Scan(&p.MembershipID, &p.GateID, &p.PermissionCode); err != nil {
+			return nil, fmt.Errorf("scan policy: %w", err)
+		}
+		result = append(result, p)
+	}
+	return result, rows.Err()
+}
+
+// Grant adds a permission for a membership on a gate. Idempotent (ON CONFLICT DO NOTHING).
+func (r *PolicyRepository) Grant(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO gate_user_policies (gate_id, user_id, permission_code)
+		`INSERT INTO membership_policies (membership_id, gate_id, permission_code)
 		 VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-		gateID, userID, permCode,
+		membershipID, gateID, permCode,
 	)
 	if err != nil {
 		return fmt.Errorf("grant policy: %w", err)
@@ -52,12 +76,13 @@ func (r *PolicyRepository) Grant(ctx context.Context, gateID, userID uuid.UUID, 
 	return nil
 }
 
-// HasPermission returns true if the user has the given permission on the gate.
-func (r *PolicyRepository) HasPermission(ctx context.Context, gateID, userID uuid.UUID, permCode string) (bool, error) {
+// HasPermission returns true if the membership has the given permission on the gate.
+func (r *PolicyRepository) HasPermission(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) (bool, error) {
 	var exists bool
 	err := r.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM gate_user_policies WHERE gate_id = $1 AND user_id = $2 AND permission_code = $3)`,
-		gateID, userID, permCode,
+		`SELECT EXISTS(SELECT 1 FROM membership_policies
+		  WHERE membership_id = $1 AND gate_id = $2 AND permission_code = $3)`,
+		membershipID, gateID, permCode,
 	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("check permission: %w", err)
@@ -65,12 +90,13 @@ func (r *PolicyRepository) HasPermission(ctx context.Context, gateID, userID uui
 	return exists, nil
 }
 
-// HasAnyPermission returns true if the user has at least one policy on the gate.
-func (r *PolicyRepository) HasAnyPermission(ctx context.Context, gateID, userID uuid.UUID) (bool, error) {
+// HasAnyPermission returns true if the membership has at least one policy on the gate.
+func (r *PolicyRepository) HasAnyPermission(ctx context.Context, membershipID, gateID uuid.UUID) (bool, error) {
 	var exists bool
 	err := r.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM gate_user_policies WHERE gate_id = $1 AND user_id = $2)`,
-		gateID, userID,
+		`SELECT EXISTS(SELECT 1 FROM membership_policies
+		  WHERE membership_id = $1 AND gate_id = $2)`,
+		membershipID, gateID,
 	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("check any permission: %w", err)
@@ -78,14 +104,30 @@ func (r *PolicyRepository) HasAnyPermission(ctx context.Context, gateID, userID 
 	return exists, nil
 }
 
-// Revoke removes all permissions for a user on a gate.
-func (r *PolicyRepository) Revoke(ctx context.Context, gateID, userID uuid.UUID) error {
+// Revoke removes all permissions for a membership on a gate.
+func (r *PolicyRepository) Revoke(ctx context.Context, membershipID, gateID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx,
-		`DELETE FROM gate_user_policies WHERE gate_id = $1 AND user_id = $2`,
-		gateID, userID,
+		`DELETE FROM membership_policies WHERE membership_id = $1 AND gate_id = $2`,
+		membershipID, gateID,
 	)
 	if err != nil {
 		return fmt.Errorf("revoke policy: %w", err)
+	}
+	return nil
+}
+
+// RevokePermission removes a specific permission for a membership on a gate.
+func (r *PolicyRepository) RevokePermission(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM membership_policies
+		 WHERE membership_id = $1 AND gate_id = $2 AND permission_code = $3`,
+		membershipID, gateID, permCode,
+	)
+	if err != nil {
+		return fmt.Errorf("revoke permission: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

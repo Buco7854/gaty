@@ -13,6 +13,7 @@ import (
 )
 
 const wsRoleKey contextKey = "ws_role"
+const wsMembershipIDKey contextKey = "ws_membership_id"
 
 var roleOrder = map[model.WorkspaceRole]int{
 	model.RoleMember: 1,
@@ -20,7 +21,7 @@ var roleOrder = map[model.WorkspaceRole]int{
 	model.RoleOwner:  3,
 }
 
-func workspaceAccess(api huma.API, wsRepo *repository.WorkspaceRepository, minRole model.WorkspaceRole) func(huma.Context, func(huma.Context)) {
+func workspaceAccess(api huma.API, _ *repository.WorkspaceRepository, memberRepo *repository.WorkspaceMembershipRepository, minRole model.WorkspaceRole) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
 		wsID, err := uuid.Parse(chi.URLParamFromCtx(ctx.Context(), "ws_id"))
 		if err != nil {
@@ -28,19 +29,41 @@ func workspaceAccess(api huma.API, wsRepo *repository.WorkspaceRepository, minRo
 			return
 		}
 
-		userID, ok := UserIDFromContext(ctx.Context())
-		if !ok {
-			huma.WriteErr(api, ctx, http.StatusUnauthorized, "unauthorized")
-			return
-		}
+		var role model.WorkspaceRole
+		var membershipID uuid.UUID
 
-		role, err := wsRepo.GetMemberRole(ctx.Context(), wsID, userID)
-		if errors.Is(err, repository.ErrNotFound) {
-			huma.WriteErr(api, ctx, http.StatusForbidden, "access denied")
-			return
-		}
-		if err != nil {
-			huma.WriteErr(api, ctx, http.StatusInternalServerError, "internal error")
+		if userID, ok := UserIDFromContext(ctx.Context()); ok {
+			// Platform user: look up their workspace_memberships row.
+			membership, err := memberRepo.GetByUserID(ctx.Context(), wsID, userID)
+			if errors.Is(err, repository.ErrNotFound) {
+				huma.WriteErr(api, ctx, http.StatusForbidden, "access denied")
+				return
+			}
+			if err != nil {
+				huma.WriteErr(api, ctx, http.StatusInternalServerError, "internal error")
+				return
+			}
+			role = membership.Role
+			membershipID = membership.ID
+		} else if mID, memberWsID, ok := MemberFromContext(ctx.Context()); ok {
+			// Managed member: verify workspace matches and look up their membership.
+			if memberWsID != wsID {
+				huma.WriteErr(api, ctx, http.StatusForbidden, "access denied")
+				return
+			}
+			membership, err := memberRepo.GetByID(ctx.Context(), mID, wsID)
+			if errors.Is(err, repository.ErrNotFound) {
+				huma.WriteErr(api, ctx, http.StatusForbidden, "access denied")
+				return
+			}
+			if err != nil {
+				huma.WriteErr(api, ctx, http.StatusInternalServerError, "internal error")
+				return
+			}
+			role = membership.Role
+			membershipID = membership.ID
+		} else {
+			huma.WriteErr(api, ctx, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
@@ -50,23 +73,30 @@ func workspaceAccess(api huma.API, wsRepo *repository.WorkspaceRepository, minRo
 		}
 
 		ctx = huma.WithValue(ctx, wsRoleKey, role)
+		ctx = huma.WithValue(ctx, wsMembershipIDKey, membershipID)
 		next(ctx)
 	}
 }
 
-// WorkspaceMember is a Huma per-operation middleware that requires the user to be
-// a member (any role) of the workspace in :ws_id. Injects the role into context.
-func WorkspaceMember(api huma.API, wsRepo *repository.WorkspaceRepository) func(huma.Context, func(huma.Context)) {
-	return workspaceAccess(api, wsRepo, model.RoleMember)
+// WorkspaceMember is a Huma per-operation middleware that requires any role in the workspace.
+// Supports both platform users (workspace_memberships.user_id) and managed members (local JWT).
+func WorkspaceMember(api huma.API, wsRepo *repository.WorkspaceRepository, memberRepo *repository.WorkspaceMembershipRepository) func(huma.Context, func(huma.Context)) {
+	return workspaceAccess(api, wsRepo, memberRepo, model.RoleMember)
 }
 
 // WorkspaceAdmin is a Huma per-operation middleware that requires OWNER or ADMIN.
-func WorkspaceAdmin(api huma.API, wsRepo *repository.WorkspaceRepository) func(huma.Context, func(huma.Context)) {
-	return workspaceAccess(api, wsRepo, model.RoleAdmin)
+func WorkspaceAdmin(api huma.API, wsRepo *repository.WorkspaceRepository, memberRepo *repository.WorkspaceMembershipRepository) func(huma.Context, func(huma.Context)) {
+	return workspaceAccess(api, wsRepo, memberRepo, model.RoleAdmin)
 }
 
 // WorkspaceRoleFromContext retrieves the workspace role injected by WorkspaceMember/WorkspaceAdmin.
 func WorkspaceRoleFromContext(ctx context.Context) (model.WorkspaceRole, bool) {
 	role, ok := ctx.Value(wsRoleKey).(model.WorkspaceRole)
 	return role, ok && role != ""
+}
+
+// WorkspaceMembershipIDFromContext retrieves the caller's membership_id injected by WorkspaceMember/WorkspaceAdmin.
+func WorkspaceMembershipIDFromContext(ctx context.Context) (uuid.UUID, bool) {
+	id, ok := ctx.Value(wsMembershipIDKey).(uuid.UUID)
+	return id, ok && id != uuid.Nil
 }

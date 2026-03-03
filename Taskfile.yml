@@ -7,6 +7,10 @@ tasks:
     desc: "Start infra services (PostgreSQL, Redis, Mosquitto, Caddy)"
     cmd: docker compose up -d
 
+  dev-infra-down:
+    desc: "Down infra services (PostgreSQL, Redis, Mosquitto, Caddy)"
+    cmd: docker compose down
+
   dev-api:
     desc: "Start Go backend with hot-reload (requires air)"
     cmd: air

@@ -15,18 +15,13 @@ const (
 )
 
 type Workspace struct {
-	ID           uuid.UUID      `json:"id"`
-	Name         string         `json:"name"`
-	OwnerID      uuid.UUID      `json:"owner_id"`
-	OIDCSettings map[string]any `json:"oidc_settings,omitempty"`
-	CreatedAt    time.Time      `json:"created_at"`
-	DeletedAt    *time.Time     `json:"-"`
-}
-
-type WorkspaceMember struct {
-	WorkspaceID uuid.UUID     `json:"workspace_id"`
-	UserID      uuid.UUID     `json:"user_id"`
-	Role        WorkspaceRole `json:"role"`
+	ID               uuid.UUID      `json:"id"`
+	Slug             string         `json:"slug"`
+	Name             string         `json:"name"`
+	OwnerID          uuid.UUID      `json:"owner_id"`
+	SSOSettings      map[string]any `json:"sso_settings,omitempty"`
+	MemberAuthConfig map[string]any `json:"member_auth_config,omitempty"`
+	CreatedAt        time.Time      `json:"created_at"`
 }
 
 type WorkspaceWithRole struct {

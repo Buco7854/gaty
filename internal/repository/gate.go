@@ -39,7 +39,7 @@ func (r *GateRepository) GetByID(ctx context.Context, gateID, wsID uuid.UUID) (*
 	var g model.Gate
 	err := r.pool.QueryRow(ctx,
 		`SELECT id, workspace_id, name, integration_type, integration_config, status, last_seen_at, created_at
-		 FROM gates WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL`,
+		 FROM gates WHERE id = $1 AND workspace_id = $2`,
 		gateID, wsID,
 	).Scan(&g.ID, &g.WorkspaceID, &g.Name, &g.IntegrationType, &g.IntegrationConfig, &g.Status, &g.LastSeenAt, &g.CreatedAt)
 	if err == pgx.ErrNoRows {
@@ -55,7 +55,7 @@ func (r *GateRepository) Update(ctx context.Context, gateID, wsID uuid.UUID, nam
 	var g model.Gate
 	err := r.pool.QueryRow(ctx,
 		`UPDATE gates SET name = $3, integration_config = $4
-		 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL
+		 WHERE id = $1 AND workspace_id = $2
 		 RETURNING id, workspace_id, name, integration_type, integration_config, status, last_seen_at, created_at`,
 		gateID, wsID, name, config,
 	).Scan(&g.ID, &g.WorkspaceID, &g.Name, &g.IntegrationType, &g.IntegrationConfig, &g.Status, &g.LastSeenAt, &g.CreatedAt)
@@ -68,9 +68,9 @@ func (r *GateRepository) Update(ctx context.Context, gateID, wsID uuid.UUID, nam
 	return &g, nil
 }
 
-func (r *GateRepository) SoftDelete(ctx context.Context, gateID, wsID uuid.UUID) error {
+func (r *GateRepository) Delete(ctx context.Context, gateID, wsID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx,
-		`UPDATE gates SET deleted_at = NOW() WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL`,
+		`DELETE FROM gates WHERE id = $1 AND workspace_id = $2`,
 		gateID, wsID,
 	)
 	if err != nil {
@@ -82,9 +82,27 @@ func (r *GateRepository) SoftDelete(ctx context.Context, gateID, wsID uuid.UUID)
 	return nil
 }
 
+// GetByIDPublic loads a gate by its ID alone, without workspace constraint.
+// Used by the public PIN unlock endpoint which does not know the workspace.
+func (r *GateRepository) GetByIDPublic(ctx context.Context, gateID uuid.UUID) (*model.Gate, error) {
+	var g model.Gate
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, workspace_id, name, integration_type, integration_config, status, last_seen_at, created_at
+		 FROM gates WHERE id = $1`,
+		gateID,
+	).Scan(&g.ID, &g.WorkspaceID, &g.Name, &g.IntegrationType, &g.IntegrationConfig, &g.Status, &g.LastSeenAt, &g.CreatedAt)
+	if err == pgx.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get gate public: %w", err)
+	}
+	return &g, nil
+}
+
 func (r *GateRepository) UpdateStatus(ctx context.Context, gateID uuid.UUID, status string) error {
 	_, err := r.pool.Exec(ctx,
-		`UPDATE gates SET status = $2, last_seen_at = NOW() WHERE id = $1 AND deleted_at IS NULL`,
+		`UPDATE gates SET status = $2, last_seen_at = NOW() WHERE id = $1`,
 		gateID, status,
 	)
 	if err != nil {
@@ -93,21 +111,28 @@ func (r *GateRepository) UpdateStatus(ctx context.Context, gateID uuid.UUID, sta
 	return nil
 }
 
-func (r *GateRepository) ListForWorkspace(ctx context.Context, wsID, userID uuid.UUID, role model.WorkspaceRole) ([]model.Gate, error) {
+// ListForWorkspace returns gates for a workspace.
+// OWNER/ADMIN see all gates; MEMBER sees only gates they have at least one policy on.
+func (r *GateRepository) ListForWorkspace(ctx context.Context, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID) ([]model.Gate, error) {
 	isAdmin := role == model.RoleOwner || role == model.RoleAdmin
 
-	query := `SELECT id, workspace_id, name, integration_type, integration_config, status, last_seen_at, created_at
-	          FROM gates WHERE workspace_id = $1 AND deleted_at IS NULL
-	          ORDER BY created_at DESC`
-	args := []any{wsID}
+	const cols = `id, workspace_id, name, integration_type, integration_config, status, last_seen_at, created_at`
 
-	if !isAdmin {
-		query = `SELECT DISTINCT g.id, g.workspace_id, g.name, g.integration_type, g.integration_config, g.status, g.last_seen_at, g.created_at
+	var (
+		query string
+		args  []any
+	)
+
+	if isAdmin {
+		query = `SELECT ` + cols + ` FROM gates WHERE workspace_id = $1 ORDER BY created_at DESC`
+		args = []any{wsID}
+	} else {
+		query = `SELECT DISTINCT g.` + cols + `
 		         FROM gates g
-		         JOIN gate_user_policies p ON p.gate_id = g.id AND p.user_id = $2
-		         WHERE g.workspace_id = $1 AND g.deleted_at IS NULL
+		         JOIN membership_policies p ON p.gate_id = g.id AND p.membership_id = $2
+		         WHERE g.workspace_id = $1
 		         ORDER BY g.created_at DESC`
-		args = append(args, userID)
+		args = []any{wsID, membershipID}
 	}
 
 	rows, err := r.pool.Query(ctx, query, args...)

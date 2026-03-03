@@ -6,26 +6,21 @@ import (
 	"github.com/google/uuid"
 )
 
-type CredentialTargetType string
 type CredentialType string
 
 const (
-	TargetUser   CredentialTargetType = "USER"
-	TargetMember CredentialTargetType = "MEMBER"
-	TargetGate   CredentialTargetType = "GATE"
-
-	CredPassword     CredentialType = "PASSWORD"
-	CredPINCode      CredentialType = "PIN_CODE"
-	CredAPIToken     CredentialType = "API_TOKEN"
-	CredOIDCIdentity CredentialType = "OIDC_IDENTITY"
+	CredPassword    CredentialType = "PASSWORD"
+	CredSSOIdentity CredentialType = "SSO_IDENTITY"
+	CredAPIToken    CredentialType = "API_TOKEN"
 )
 
 type Credential struct {
-	ID             uuid.UUID            `json:"id"`
-	TargetType     CredentialTargetType `json:"target_type"`
-	TargetID       uuid.UUID            `json:"target_id"`
-	CredentialType CredentialType       `json:"credential_type"`
-	HashedValue    string               `json:"-"`
-	Metadata       map[string]any       `json:"metadata,omitempty"`
-	CreatedAt      time.Time            `json:"created_at"`
+	ID          uuid.UUID      `json:"id"`
+	UserID      uuid.UUID      `json:"user_id"`
+	Type        CredentialType `json:"type"`
+	HashedValue string         `json:"-"`
+	Label       *string        `json:"label,omitempty"`
+	ExpiresAt   *time.Time     `json:"expires_at,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
 }

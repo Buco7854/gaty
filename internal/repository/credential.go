@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/Buco7854/gaty/internal/model"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -19,34 +21,94 @@ func NewCredentialRepository(pool *pgxpool.Pool) *CredentialRepository {
 	return &CredentialRepository{pool: pool}
 }
 
-func (r *CredentialRepository) Create(ctx context.Context, targetType model.CredentialTargetType, targetID uuid.UUID, credType model.CredentialType, hashedValue string) (*model.Credential, error) {
-	cred := &model.Credential{}
-	err := r.pool.QueryRow(ctx,
-		`INSERT INTO credentials (target_type, target_id, credential_type, hashed_value)
-		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, target_type, target_id, credential_type, hashed_value, created_at`,
-		targetType, targetID, credType, hashedValue,
-	).Scan(&cred.ID, &cred.TargetType, &cred.TargetID, &cred.CredentialType, &cred.HashedValue, &cred.CreatedAt)
-	if err != nil {
-		return nil, fmt.Errorf("create credential: %w", err)
-	}
-	return cred, nil
-}
+const credColumns = `id, user_id, type, hashed_value, label, expires_at, metadata, created_at`
 
-func (r *CredentialRepository) GetByTarget(ctx context.Context, targetType model.CredentialTargetType, targetID uuid.UUID, credType model.CredentialType) (*model.Credential, error) {
-	cred := &model.Credential{}
-	err := r.pool.QueryRow(ctx,
-		`SELECT id, target_type, target_id, credential_type, hashed_value, metadata, created_at
-		 FROM credentials
-		 WHERE target_type = $1 AND target_id = $2 AND credential_type = $3
-		 LIMIT 1`,
-		targetType, targetID, credType,
-	).Scan(&cred.ID, &cred.TargetType, &cred.TargetID, &cred.CredentialType, &cred.HashedValue, &cred.Metadata, &cred.CreatedAt)
+func scanCredential(row pgx.Row) (*model.Credential, error) {
+	c := &model.Credential{}
+	err := row.Scan(&c.ID, &c.UserID, &c.Type, &c.HashedValue, &c.Label, &c.ExpiresAt, &c.Metadata, &c.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("get credential: %w", err)
+		return nil, fmt.Errorf("scan credential: %w", err)
 	}
-	return cred, nil
+	return c, nil
+}
+
+func (r *CredentialRepository) Create(ctx context.Context, userID uuid.UUID, credType model.CredentialType, hashedValue string, label *string, expiresAt *time.Time, metadata map[string]any) (*model.Credential, error) {
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	c, err := scanCredential(r.pool.QueryRow(ctx,
+		`INSERT INTO credentials (user_id, type, hashed_value, label, expires_at, metadata)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING `+credColumns,
+		userID, credType, hashedValue, label, expiresAt, metadata,
+	))
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, ErrAlreadyExists
+		}
+		return nil, fmt.Errorf("create credential: %w", err)
+	}
+	return c, nil
+}
+
+// GetByUserAndType returns the first credential of the given type for a user.
+// Used for PASSWORD and SSO_IDENTITY lookups.
+func (r *CredentialRepository) GetByUserAndType(ctx context.Context, userID uuid.UUID, credType model.CredentialType) (*model.Credential, error) {
+	return scanCredential(r.pool.QueryRow(ctx,
+		`SELECT `+credColumns+` FROM credentials
+		 WHERE user_id = $1 AND type = $2
+		 LIMIT 1`,
+		userID, credType,
+	))
+}
+
+func (r *CredentialRepository) GetByID(ctx context.Context, credID uuid.UUID) (*model.Credential, error) {
+	return scanCredential(r.pool.QueryRow(ctx,
+		`SELECT `+credColumns+` FROM credentials WHERE id = $1`,
+		credID,
+	))
+}
+
+// ListByUserAndType lists all credentials of a given type for a user.
+// Used for API token listing.
+func (r *CredentialRepository) ListByUserAndType(ctx context.Context, userID uuid.UUID, credType model.CredentialType) ([]*model.Credential, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+credColumns+` FROM credentials
+		 WHERE user_id = $1 AND type = $2
+		 ORDER BY created_at DESC`,
+		userID, credType,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list credentials: %w", err)
+	}
+	defer rows.Close()
+
+	var result []*model.Credential
+	for rows.Next() {
+		c := &model.Credential{}
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Type, &c.HashedValue, &c.Label, &c.ExpiresAt, &c.Metadata, &c.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan credential row: %w", err)
+		}
+		result = append(result, c)
+	}
+	return result, rows.Err()
+}
+
+// Delete hard-deletes a credential by ID, scoped to the owning user.
+func (r *CredentialRepository) Delete(ctx context.Context, credID, userID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM credentials WHERE id = $1 AND user_id = $2`,
+		credID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("delete credential: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

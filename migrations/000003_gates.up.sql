@@ -8,8 +8,7 @@ CREATE TABLE gates (
     integration_config JSONB            NOT NULL DEFAULT '{}',
     status             TEXT             NOT NULL DEFAULT 'unknown',
     last_seen_at       TIMESTAMPTZ,
-    created_at         TIMESTAMPTZ      NOT NULL DEFAULT NOW(),
-    deleted_at         TIMESTAMPTZ
+    created_at         TIMESTAMPTZ      NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_gates_workspace ON gates(workspace_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_gates_workspace ON gates(workspace_id);

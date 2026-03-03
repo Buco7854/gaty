@@ -31,7 +31,13 @@ func NewGateHandler(
 	return &GateHandler{gates: gates, policies: policies, audit: audit, mqtt: mqtt}
 }
 
-// applyEffectiveStatus replaces Status with the computed live status.
+// --- Shared path params (used by policy.go too) ---
+
+type GatePathParam struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	GateID      uuid.UUID `path:"gate_id"`
+}
+
 func applyEffectiveStatus(g *model.Gate) {
 	g.Status = g.EffectiveStatus()
 }
@@ -43,10 +49,10 @@ type ListGatesOutput struct {
 }
 
 func (h *GateHandler) List(ctx context.Context, input *WorkspacePathParam) (*ListGatesOutput, error) {
-	userID, _ := middleware.UserIDFromContext(ctx)
 	role, _ := middleware.WorkspaceRoleFromContext(ctx)
+	membershipID, _ := middleware.WorkspaceMembershipIDFromContext(ctx)
 
-	gates, err := h.gates.ListForWorkspace(ctx, input.WorkspaceID, userID, role)
+	gates, err := h.gates.ListForWorkspace(ctx, input.WorkspaceID, role, membershipID)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list gates")
 	}
@@ -87,7 +93,6 @@ func (h *GateHandler) Create(ctx context.Context, input *CreateGateInput) (*Gate
 
 func (h *GateHandler) Get(ctx context.Context, input *GatePathParam) (*GateOutput, error) {
 	role, _ := middleware.WorkspaceRoleFromContext(ctx)
-	userID, _ := middleware.UserIDFromContext(ctx)
 
 	gate, err := h.gates.GetByID(ctx, input.GateID, input.WorkspaceID)
 	if errors.Is(err, repository.ErrNotFound) {
@@ -97,9 +102,10 @@ func (h *GateHandler) Get(ctx context.Context, input *GatePathParam) (*GateOutpu
 		return nil, huma.Error500InternalServerError("failed to get gate")
 	}
 
-	// MEMBER: verify they have at least one policy on this gate
+	// MEMBER role: verify they have at least one policy on this gate.
 	if role == model.RoleMember {
-		ok, err := h.policies.HasAnyPermission(ctx, gate.ID, userID)
+		membershipID, _ := middleware.WorkspaceMembershipIDFromContext(ctx)
+		ok, err := h.policies.HasAnyPermission(ctx, membershipID, gate.ID)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to check permissions")
 		}
@@ -143,7 +149,7 @@ type DeleteGateInput struct {
 }
 
 func (h *GateHandler) Delete(ctx context.Context, input *DeleteGateInput) (*struct{}, error) {
-	err := h.gates.SoftDelete(ctx, input.GateID, input.WorkspaceID)
+	err := h.gates.Delete(ctx, input.GateID, input.WorkspaceID)
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")
 	}
@@ -162,11 +168,11 @@ type TriggerInput struct {
 
 func (h *GateHandler) Trigger(ctx context.Context, input *TriggerInput) (*struct{}, error) {
 	role, _ := middleware.WorkspaceRoleFromContext(ctx)
-	userID, _ := middleware.UserIDFromContext(ctx)
 
-	// MEMBER: requires gate:trigger_open permission
+	// MEMBER role: requires gate:trigger_open permission.
 	if role == model.RoleMember {
-		ok, err := h.policies.HasPermission(ctx, input.GateID, userID, "gate:trigger_open")
+		membershipID, _ := middleware.WorkspaceMembershipIDFromContext(ctx)
+		ok, err := h.policies.HasPermission(ctx, membershipID, input.GateID, "gate:trigger_open")
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to check permissions")
 		}
@@ -175,7 +181,6 @@ func (h *GateHandler) Trigger(ctx context.Context, input *TriggerInput) (*struct
 		}
 	}
 
-	// Verify gate exists in this workspace
 	gate, err := h.gates.GetByID(ctx, input.GateID, input.WorkspaceID)
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")
@@ -184,7 +189,6 @@ func (h *GateHandler) Trigger(ctx context.Context, input *TriggerInput) (*struct
 		return nil, huma.Error500InternalServerError("failed to get gate")
 	}
 
-	// Publish MQTT command
 	if h.mqtt != nil {
 		payload, _ := json.Marshal(map[string]string{"action": "open"})
 		topic := internalmqtt.CommandTopic(gate.WorkspaceID, gate.ID)
@@ -193,14 +197,11 @@ func (h *GateHandler) Trigger(ctx context.Context, input *TriggerInput) (*struct
 		}
 	}
 
-	// Audit log (best-effort)
 	if h.audit != nil {
 		gateID := gate.ID
-		uid := userID
 		_ = h.audit.Insert(ctx, repository.AuditEntry{
 			WorkspaceID: input.WorkspaceID,
 			GateID:      &gateID,
-			UserID:      &uid,
 			Action:      "gate:trigger_open",
 		})
 	}

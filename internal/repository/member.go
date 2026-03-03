@@ -12,118 +12,135 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type MemberRepository struct {
+type WorkspaceMembershipRepository struct {
 	pool *pgxpool.Pool
 }
 
-func NewMemberRepository(pool *pgxpool.Pool) *MemberRepository {
-	return &MemberRepository{pool: pool}
+func NewWorkspaceMembershipRepository(pool *pgxpool.Pool) *WorkspaceMembershipRepository {
+	return &WorkspaceMembershipRepository{pool: pool}
 }
 
-const memberColumns = `id, workspace_id, display_name, email, username, user_id, created_at`
+const membershipColumns = `id, workspace_id, user_id, local_username, display_name, role, auth_config, invited_by, created_at`
 
-func scanMember(row pgx.Row) (*model.Member, error) {
-	m := &model.Member{}
-	err := row.Scan(&m.ID, &m.WorkspaceID, &m.DisplayName, &m.Email, &m.Username, &m.UserID, &m.CreatedAt)
+func scanMembership(row pgx.Row) (*model.WorkspaceMembership, error) {
+	m := &model.WorkspaceMembership{}
+	err := row.Scan(&m.ID, &m.WorkspaceID, &m.UserID, &m.LocalUsername, &m.DisplayName, &m.Role, &m.AuthConfig, &m.InvitedBy, &m.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("scan member: %w", err)
+		return nil, fmt.Errorf("scan membership: %w", err)
 	}
 	return m, nil
 }
 
-func (r *MemberRepository) Create(ctx context.Context, workspaceID uuid.UUID, displayName string, email *string, username string) (*model.Member, error) {
+// CreateLocal creates a managed (local) membership identified by a local username.
+func (r *WorkspaceMembershipRepository) CreateLocal(ctx context.Context, workspaceID uuid.UUID, localUsername string, displayName *string, role model.WorkspaceRole, invitedBy *uuid.UUID) (*model.WorkspaceMembership, error) {
 	row := r.pool.QueryRow(ctx,
-		`INSERT INTO members (workspace_id, display_name, email, username)
-		 VALUES ($1, $2, $3, $4)
-		 RETURNING `+memberColumns,
-		workspaceID, displayName, email, username,
+		`INSERT INTO workspace_memberships (workspace_id, local_username, display_name, role, invited_by)
+		 VALUES ($1, $2, $3, $4, $5)
+		 RETURNING `+membershipColumns,
+		workspaceID, localUsername, displayName, role, invitedBy,
 	)
-	m, err := scanMember(row)
+	m, err := scanMembership(row)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return nil, ErrAlreadyExists
 		}
-		return nil, fmt.Errorf("create member: %w", err)
+		return nil, fmt.Errorf("create local membership: %w", err)
 	}
 	return m, nil
 }
 
-func (r *MemberRepository) GetByID(ctx context.Context, memberID, workspaceID uuid.UUID) (*model.Member, error) {
+// CreateForUser creates a membership for an existing platform user.
+func (r *WorkspaceMembershipRepository) CreateForUser(ctx context.Context, workspaceID, userID uuid.UUID, displayName *string, role model.WorkspaceRole, invitedBy *uuid.UUID) (*model.WorkspaceMembership, error) {
 	row := r.pool.QueryRow(ctx,
-		`SELECT `+memberColumns+`
-		 FROM members
-		 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL`,
-		memberID, workspaceID,
+		`INSERT INTO workspace_memberships (workspace_id, user_id, display_name, role, invited_by)
+		 VALUES ($1, $2, $3, $4, $5)
+		 RETURNING `+membershipColumns,
+		workspaceID, userID, displayName, role, invitedBy,
 	)
-	return scanMember(row)
+	m, err := scanMembership(row)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, ErrAlreadyExists
+		}
+		return nil, fmt.Errorf("create user membership: %w", err)
+	}
+	return m, nil
 }
 
-// GetByUsernameOrEmail looks up a member by username OR email within a workspace.
-// Used for member login.
-func (r *MemberRepository) GetByUsernameOrEmail(ctx context.Context, workspaceID uuid.UUID, login string) (*model.Member, error) {
-	row := r.pool.QueryRow(ctx,
-		`SELECT `+memberColumns+`
-		 FROM members
-		 WHERE workspace_id = $1
-		   AND deleted_at IS NULL
-		   AND (username = $2 OR email = $2)
-		 LIMIT 1`,
-		workspaceID, login,
-	)
-	return scanMember(row)
+func (r *WorkspaceMembershipRepository) GetByID(ctx context.Context, membershipID, workspaceID uuid.UUID) (*model.WorkspaceMembership, error) {
+	return scanMembership(r.pool.QueryRow(ctx,
+		`SELECT `+membershipColumns+` FROM workspace_memberships
+		 WHERE id = $1 AND workspace_id = $2`,
+		membershipID, workspaceID,
+	))
 }
 
-func (r *MemberRepository) List(ctx context.Context, workspaceID uuid.UUID) ([]*model.Member, error) {
+func (r *WorkspaceMembershipRepository) GetByUserID(ctx context.Context, workspaceID, userID uuid.UUID) (*model.WorkspaceMembership, error) {
+	return scanMembership(r.pool.QueryRow(ctx,
+		`SELECT `+membershipColumns+` FROM workspace_memberships
+		 WHERE workspace_id = $1 AND user_id = $2`,
+		workspaceID, userID,
+	))
+}
+
+func (r *WorkspaceMembershipRepository) GetByLocalUsername(ctx context.Context, workspaceID uuid.UUID, localUsername string) (*model.WorkspaceMembership, error) {
+	return scanMembership(r.pool.QueryRow(ctx,
+		`SELECT `+membershipColumns+` FROM workspace_memberships
+		 WHERE workspace_id = $1 AND local_username = $2`,
+		workspaceID, localUsername,
+	))
+}
+
+func (r *WorkspaceMembershipRepository) List(ctx context.Context, workspaceID uuid.UUID) ([]*model.WorkspaceMembership, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT `+memberColumns+`
-		 FROM members
-		 WHERE workspace_id = $1 AND deleted_at IS NULL
-		 ORDER BY display_name`,
+		`SELECT `+membershipColumns+` FROM workspace_memberships
+		 WHERE workspace_id = $1
+		 ORDER BY created_at DESC`,
 		workspaceID,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list members: %w", err)
+		return nil, fmt.Errorf("list memberships: %w", err)
 	}
 	defer rows.Close()
 
-	var members []*model.Member
+	var result []*model.WorkspaceMembership
 	for rows.Next() {
-		m := &model.Member{}
-		if err := rows.Scan(&m.ID, &m.WorkspaceID, &m.DisplayName, &m.Email, &m.Username, &m.UserID, &m.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan member row: %w", err)
+		m := &model.WorkspaceMembership{}
+		if err := rows.Scan(&m.ID, &m.WorkspaceID, &m.UserID, &m.LocalUsername, &m.DisplayName, &m.Role, &m.AuthConfig, &m.InvitedBy, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan membership row: %w", err)
 		}
-		members = append(members, m)
+		result = append(result, m)
 	}
-	return members, rows.Err()
+	return result, rows.Err()
 }
 
-func (r *MemberRepository) Update(ctx context.Context, memberID, workspaceID uuid.UUID, displayName string, email *string) (*model.Member, error) {
+func (r *WorkspaceMembershipRepository) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName *string, role model.WorkspaceRole, authConfig map[string]any) (*model.WorkspaceMembership, error) {
 	row := r.pool.QueryRow(ctx,
-		`UPDATE members
-		 SET display_name = $1, email = $2
-		 WHERE id = $3 AND workspace_id = $4 AND deleted_at IS NULL
-		 RETURNING `+memberColumns,
-		displayName, email, memberID, workspaceID,
+		`UPDATE workspace_memberships
+		 SET display_name = $3, role = $4, auth_config = $5
+		 WHERE id = $1 AND workspace_id = $2
+		 RETURNING `+membershipColumns,
+		membershipID, workspaceID, displayName, role, authConfig,
 	)
-	m, err := scanMember(row)
+	m, err := scanMembership(row)
 	if err != nil {
-		return nil, fmt.Errorf("update member: %w", err)
+		return nil, fmt.Errorf("update membership: %w", err)
 	}
 	return m, nil
 }
 
-func (r *MemberRepository) SoftDelete(ctx context.Context, memberID, workspaceID uuid.UUID) error {
+func (r *WorkspaceMembershipRepository) Delete(ctx context.Context, membershipID, workspaceID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx,
-		`UPDATE members SET deleted_at = NOW()
-		 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL`,
-		memberID, workspaceID,
+		`DELETE FROM workspace_memberships WHERE id = $1 AND workspace_id = $2`,
+		membershipID, workspaceID,
 	)
 	if err != nil {
-		return fmt.Errorf("delete member: %w", err)
+		return fmt.Errorf("delete membership: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -131,3 +148,20 @@ func (r *MemberRepository) SoftDelete(ctx context.Context, memberID, workspaceID
 	return nil
 }
 
+// MergeUser atomically links a local membership to a platform user.
+// Sets user_id and clears local_username. Only applies if user_id is currently NULL.
+func (r *WorkspaceMembershipRepository) MergeUser(ctx context.Context, membershipID, userID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE workspace_memberships
+		 SET user_id = $2, local_username = NULL
+		 WHERE id = $1 AND user_id IS NULL`,
+		membershipID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("merge user: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

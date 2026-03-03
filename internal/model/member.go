@@ -6,13 +6,14 @@ import (
 	"github.com/google/uuid"
 )
 
-type Member struct {
-	ID          uuid.UUID  `json:"id"`
-	WorkspaceID uuid.UUID  `json:"workspace_id"`
-	DisplayName string     `json:"display_name"`
-	Email       *string    `json:"email,omitempty"`
-	Username    string     `json:"username"`
-	UserID      *uuid.UUID `json:"user_id,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	DeletedAt   *time.Time `json:"-"`
+type WorkspaceMembership struct {
+	ID            uuid.UUID      `json:"id"`
+	WorkspaceID   uuid.UUID      `json:"workspace_id"`
+	UserID        *uuid.UUID     `json:"user_id,omitempty"`
+	LocalUsername *string        `json:"local_username,omitempty"`
+	DisplayName   *string        `json:"display_name,omitempty"`
+	Role          WorkspaceRole  `json:"role"`
+	AuthConfig    map[string]any `json:"auth_config,omitempty"`
+	InvitedBy     *uuid.UUID     `json:"invited_by,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
 }

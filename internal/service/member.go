@@ -4,114 +4,127 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/Buco7854/gaty/internal/model"
 	"github.com/Buco7854/gaty/internal/repository"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
-var ErrUsernameTaken = errors.New("username already taken in this workspace")
+var (
+	ErrUsernameTaken = errors.New("username already taken in this workspace")
+	ErrAlreadyMember = errors.New("user already has a membership in this workspace")
+)
 
-type MemberService struct {
-	members     *repository.MemberRepository
-	credentials *repository.CredentialRepository
-	jwtSecret   []byte
+type MembershipService struct {
+	memberships *repository.WorkspaceMembershipRepository
+	memberCreds *repository.MembershipCredentialRepository
+	workspaces  *repository.WorkspaceRepository
 }
 
-func NewMemberService(
-	members *repository.MemberRepository,
-	credentials *repository.CredentialRepository,
-	jwtSecret string,
-) *MemberService {
-	return &MemberService{
-		members:     members,
-		credentials: credentials,
-		jwtSecret:   []byte(jwtSecret),
+func NewMembershipService(
+	memberships *repository.WorkspaceMembershipRepository,
+	memberCreds *repository.MembershipCredentialRepository,
+	workspaces *repository.WorkspaceRepository,
+) *MembershipService {
+	return &MembershipService{
+		memberships: memberships,
+		memberCreds: memberCreds,
+		workspaces:  workspaces,
 	}
 }
 
-func (s *MemberService) Create(ctx context.Context, workspaceID uuid.UUID, displayName string, email *string, username, password string) (*model.Member, error) {
+// CreateLocal creates a managed (local) membership with a password credential.
+func (s *MembershipService) CreateLocal(ctx context.Context, workspaceID uuid.UUID, localUsername string, displayName *string, password string, role model.WorkspaceRole, invitedBy *uuid.UUID) (*model.WorkspaceMembership, error) {
 	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, fmt.Errorf("hash password: %w", err)
 	}
 
-	member, err := s.members.Create(ctx, workspaceID, displayName, email, username)
+	membership, err := s.memberships.CreateLocal(ctx, workspaceID, localUsername, displayName, role, invitedBy)
 	if errors.Is(err, repository.ErrAlreadyExists) {
 		return nil, ErrUsernameTaken
 	}
 	if err != nil {
-		return nil, fmt.Errorf("create member: %w", err)
+		return nil, fmt.Errorf("create membership: %w", err)
 	}
 
-	_, err = s.credentials.Create(ctx, model.TargetMember, member.ID, model.CredPassword, string(hashed))
+	_, err = s.memberCreds.Create(ctx, membership.ID, model.CredPassword, string(hashed), nil, nil, nil)
 	if err != nil {
-		return nil, fmt.Errorf("create member credential: %w", err)
+		return nil, fmt.Errorf("create password credential: %w", err)
 	}
 
-	return member, nil
+	return membership, nil
 }
 
-// Login authenticates a member by username OR email within a workspace.
-// Returns an access token and the member on success.
-func (s *MemberService) Login(ctx context.Context, workspaceID uuid.UUID, login, password string) (string, *model.Member, error) {
-	member, err := s.members.GetByUsernameOrEmail(ctx, workspaceID, login)
-	if errors.Is(err, repository.ErrNotFound) {
-		return "", nil, ErrInvalidCredentials
+func (s *MembershipService) GetByID(ctx context.Context, membershipID, workspaceID uuid.UUID) (*model.WorkspaceMembership, error) {
+	return s.memberships.GetByID(ctx, membershipID, workspaceID)
+}
+
+func (s *MembershipService) List(ctx context.Context, workspaceID uuid.UUID) ([]*model.WorkspaceMembership, error) {
+	return s.memberships.List(ctx, workspaceID)
+}
+
+func (s *MembershipService) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName *string, role model.WorkspaceRole, authConfig map[string]any) (*model.WorkspaceMembership, error) {
+	return s.memberships.Update(ctx, membershipID, workspaceID, displayName, role, authConfig)
+}
+
+func (s *MembershipService) Delete(ctx context.Context, membershipID, workspaceID uuid.UUID) error {
+	return s.memberships.Delete(ctx, membershipID, workspaceID)
+}
+
+func (s *MembershipService) SetPassword(ctx context.Context, membershipID, workspaceID uuid.UUID, password string) error {
+	// Verify membership exists in this workspace.
+	if _, err := s.memberships.GetByID(ctx, membershipID, workspaceID); err != nil {
+		return err
+	}
+
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+
+	// Delete existing password credential (if any) then create a new one.
+	existing, err := s.memberCreds.GetByMembershipAndType(ctx, membershipID, model.CredPassword)
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		return fmt.Errorf("get existing credential: %w", err)
+	}
+	if existing != nil {
+		if err := s.memberCreds.Delete(ctx, existing.ID, membershipID); err != nil {
+			return fmt.Errorf("delete existing credential: %w", err)
+		}
+	}
+
+	_, err = s.memberCreds.Create(ctx, membershipID, model.CredPassword, string(hashed), nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("create password credential: %w", err)
+	}
+	return nil
+}
+
+// InviteUser creates a membership for an existing platform user (no password).
+func (s *MembershipService) InviteUser(ctx context.Context, workspaceID, userID uuid.UUID, displayName *string, role model.WorkspaceRole, invitedBy *uuid.UUID) (*model.WorkspaceMembership, error) {
+	membership, err := s.memberships.CreateForUser(ctx, workspaceID, userID, displayName, role, invitedBy)
+	if errors.Is(err, repository.ErrAlreadyExists) {
+		return nil, ErrAlreadyMember
 	}
 	if err != nil {
-		return "", nil, fmt.Errorf("get member: %w", err)
+		return nil, fmt.Errorf("invite user: %w", err)
 	}
-
-	cred, err := s.credentials.GetByTarget(ctx, model.TargetMember, member.ID, model.CredPassword)
-	if errors.Is(err, repository.ErrNotFound) {
-		return "", nil, ErrInvalidCredentials
-	}
-	if err != nil {
-		return "", nil, fmt.Errorf("get member credential: %w", err)
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(cred.HashedValue), []byte(password)); err != nil {
-		return "", nil, ErrInvalidCredentials
-	}
-
-	token, err := s.issueMemberToken(member.ID, workspaceID)
-	if err != nil {
-		return "", nil, err
-	}
-	return token, member, nil
+	return membership, nil
 }
 
-func (s *MemberService) GetByID(ctx context.Context, memberID, workspaceID uuid.UUID) (*model.Member, error) {
-	return s.members.GetByID(ctx, memberID, workspaceID)
-}
-
-func (s *MemberService) List(ctx context.Context, workspaceID uuid.UUID) ([]*model.Member, error) {
-	return s.members.List(ctx, workspaceID)
-}
-
-func (s *MemberService) Update(ctx context.Context, memberID, workspaceID uuid.UUID, displayName string, email *string) (*model.Member, error) {
-	return s.members.Update(ctx, memberID, workspaceID, displayName, email)
-}
-
-func (s *MemberService) Delete(ctx context.Context, memberID, workspaceID uuid.UUID) error {
-	return s.members.SoftDelete(ctx, memberID, workspaceID)
-}
-
-func (s *MemberService) issueMemberToken(memberID, workspaceID uuid.UUID) (string, error) {
-	claims := jwt.MapClaims{
-		"sub": memberID.String(),
-		"wid": workspaceID.String(),
-		"typ": "member",
-		"iat": time.Now().Unix(),
-		"exp": time.Now().Add(accessTokenTTL).Unix(),
+// GetEffectiveAuthConfig merges the workspace-level member_auth_config with the membership-level
+// auth_config override. Membership values take precedence; null values in auth_config inherit from workspace.
+func GetEffectiveAuthConfig(workspace *model.Workspace, membership *model.WorkspaceMembership) map[string]any {
+	result := make(map[string]any, len(workspace.MemberAuthConfig))
+	for k, v := range workspace.MemberAuthConfig {
+		result[k] = v
 	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.jwtSecret)
-	if err != nil {
-		return "", fmt.Errorf("sign member token: %w", err)
+	for k, v := range membership.AuthConfig {
+		if v != nil {
+			result[k] = v
+		}
 	}
-	return token, nil
+	return result
 }

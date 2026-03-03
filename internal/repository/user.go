@@ -38,8 +38,7 @@ func (r *UserRepository) Create(ctx context.Context, email string) (*model.User,
 func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*model.User, error) {
 	user := &model.User{}
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, email, created_at FROM users
-		 WHERE email = $1 AND deleted_at IS NULL`,
+		`SELECT id, email, created_at FROM users WHERE email = $1`,
 		email,
 	).Scan(&user.ID, &user.Email, &user.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -54,8 +53,7 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*model.U
 func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
 	user := &model.User{}
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, email, created_at FROM users
-		 WHERE id = $1 AND deleted_at IS NULL`,
+		`SELECT id, email, created_at FROM users WHERE id = $1`,
 		id,
 	).Scan(&user.ID, &user.Email, &user.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
