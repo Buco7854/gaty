@@ -104,6 +104,7 @@ func main() {
 
 	// Per-operation middlewares
 	requireAuth := middleware.RequireAuth(api)
+	requireMembership := middleware.RequireMembership(api)
 	wsMember := middleware.WorkspaceMember(api, wsRepo, membershipRepo)
 	wsAdmin := middleware.WorkspaceAdmin(api, wsRepo, membershipRepo)
 
@@ -143,6 +144,7 @@ func main() {
 	handler.NewMemberHandler(membershipSvc).RegisterRoutes(api, wsAdmin)
 	handler.NewGatePinHandler(gatePinRepo, gateRepo, mqttClient, redisClient).RegisterRoutes(api, wsAdmin)
 	handler.NewSSOHandler(ssoSvc, authSvc, wsRepo, cfg.FrontendURL).RegisterRoutes(api, wsAdmin)
+	handler.NewCredentialHandler(credRepo, memberCredRepo, membershipRepo).RegisterRoutes(api, requireAuth, requireMembership, wsAdmin)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),

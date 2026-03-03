@@ -247,7 +247,11 @@ Voir CLAUDE.md pour le schéma complet.
 - [x] Mettre à jour `handler/gate.go` : hard delete, membership_id via contexte RBAC
 - [x] Mettre à jour `cmd/server/main.go` : câbler nouveaux repos/services/handlers
 - [x] Créer `handler/gate_pin.go` : CRUD gate_pins _(reporté à Phase 6)_
-- [ ] Créer `handler/credential.go` : gestion credentials user _(reporté à Phase 6+)_
+- [x] Créer `handler/credential.go` : gestion credentials user et membres
+  - Platform users : `GET/POST /api/auth/me/credentials`, `POST /api/auth/me/api-tokens`, `DELETE /api/auth/me/credentials/{id}`, `PATCH /api/auth/me/password`
+  - Local members (self) : mêmes 4 endpoints sur `/api/auth/local/me/…`
+  - Admin : `GET/POST/DELETE /api/workspaces/{ws_id}/members/{membership_id}/credentials`, `POST …/password`
+  - API tokens : format `gaty_<64hex>`, stockés en SHA-256 (lookup O(1) possible)
 
 ---
 
