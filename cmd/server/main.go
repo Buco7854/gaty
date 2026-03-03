@@ -66,7 +66,7 @@ func main() {
 	router.Use(middleware.TenantResolver(pool))
 
 	// MQTT client (non-fatal: API works without broker)
-	mqttClient, err := internalmqtt.New(cfg.MQTTBroker)
+	mqttClient, err := internalmqtt.New(cfg.MQTTBroker, cfg.MQTTUsername, cfg.MQTTPassword)
 	if err != nil {
 		slog.Warn("mqtt unavailable, continuing without MQTT", "error", err)
 	} else {
@@ -80,6 +80,7 @@ func main() {
 	gateRepo := repository.NewGateRepository(pool)
 	policyRepo := repository.NewPolicyRepository(pool)
 	auditRepo := repository.NewAuditRepository(pool)
+	memberRepo := repository.NewMemberRepository(pool)
 
 	// Subscribe to gate status updates from MQTT
 	if mqttClient != nil {
@@ -90,6 +91,7 @@ func main() {
 
 	// Services
 	authSvc := service.NewAuthService(userRepo, credRepo, redisClient, cfg.JWTSecret)
+	memberSvc := service.NewMemberService(memberRepo, credRepo, cfg.JWTSecret)
 
 	api := humachi.New(router, huma.DefaultConfig("GATY API", "0.1.0"))
 
@@ -128,6 +130,7 @@ func main() {
 	handler.NewWorkspaceHandler(wsRepo).RegisterRoutes(api, requireAuth, wsAdmin)
 	handler.NewGateHandler(gateRepo, policyRepo, auditRepo, mqttClient).RegisterRoutes(api, wsMember, wsAdmin)
 	handler.NewPolicyHandler(policyRepo).RegisterRoutes(api, wsAdmin)
+	handler.NewMemberHandler(memberSvc).RegisterRoutes(api, wsAdmin)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),

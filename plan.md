@@ -12,6 +12,40 @@
 
 ---
 
+## Architecture Core : Users vs Members
+
+Deux entités distinctes coexistent dans GATY.
+
+### Users (Comptes Plateforme)
+- Personne qui **crée un compte** sur l'application web
+- Table : `users` (id, email, created_at)
+- Credential : `credentials` (target_type=USER, type=PASSWORD ou OIDC_IDENTITY)
+- Peut créer des workspaces et en être OWNER/ADMIN/MEMBER
+- Table de jointure : `workspace_members` → rôles OWNER, ADMIN, MEMBER
+- Authentification : JWT émis par l'API (accès à l'interface web)
+
+### Members (Personnes gérées par admin)
+- Personne **ajoutée manuellement** par un admin dans un workspace
+- **N'a PAS de compte plateforme** par défaut
+- Table : `members` (id, workspace_id, display_name, email, username, user_id nullable, created_at)
+  - `email` = simple info de contact pour l'admin (non utilisé pour auth)
+  - `username` = identifiant de connexion dans le contexte du workspace
+  - `user_id` = nullable, renseigné si le member convertit son compte en User
+- Credential : `credentials` (target_type=MEMBER, type=PASSWORD ou API_TOKEN)
+- Peut être autorisé sur des gates spécifiques via `gate_member_policies`
+- **Conversion possible** : un member peut créer un compte User → le lien `user_id` est établi
+
+### Vecteurs d'accès aux Gates
+| Vecteur | Mécanisme |
+|---------|-----------|
+| User OWNER/ADMIN du workspace | Rôle workspace (accès total) |
+| User avec policy | `gate_user_policies` (gate:trigger_open etc.) |
+| Member avec policy | `gate_member_policies` (gate:trigger_open etc.) |
+| Code PIN public | `credentials` (target_type=GATE, type=PIN_CODE) |
+| Token API | `credentials` (target_type=USER\|MEMBER, type=API_TOKEN) |
+
+---
+
 ## Phase 0 : Setup du Projet & Outillage
 
 - [x] Initialiser le module Go (`go mod init`)
@@ -37,7 +71,7 @@
 ### 1.2 - Tables Core & Multi-Tenant
 - [x] Migration : table `users` (id UUID, email, created_at, deleted_at)
 - [x] Migration : table `workspaces` (id, name, owner_id FK, oidc_settings JSONB, created_at, deleted_at)
-- [x] Migration : table `workspace_members` (workspace_id, user_id, workspace_role ENUM, PK composite)
+- [x] Migration : table `workspace_members` (workspace_id, user_id, workspace_role ENUM, PK composite) — jointure User ↔ Workspace
 - [x] Migration : table `gates` (id, workspace_id FK, name, integration_type ENUM, integration_config JSONB, status, last_seen_at, created_at, deleted_at)
 
 ### 1.3 - Tables Auth & Permissions
@@ -46,6 +80,13 @@
 - [x] Migration : table `permissions` (code PK, description)
 - [x] Migration : seed des permissions de base (gate:read_status, gate:trigger_open, gate:manage, workspace:manage)
 - [x] Migration : table `gate_user_policies` (gate_id, user_id, permission_code, PK composite)
+
+### 1.5 - Tables Members (non-user)
+- [x] Migration : table `members` (id UUID, workspace_id FK, display_name, email nullable, username, user_id nullable FK → users, created_at, deleted_at)
+- [x] Contrainte UNIQUE (workspace_id, username) sur `members`
+- [x] Migration : étendre l'ENUM `credential_target_type` pour inclure `MEMBER` _(000008)_
+- [x] Migration : table `gate_member_policies` (gate_id FK, member_id FK, permission_code FK, PK composite) _(000009)_
+- [x] Index sur `gate_member_policies(member_id)` pour lookup rapide
 
 ### 1.4 - Tables Domaines Personnalisés & Audit
 - [x] Migration : table `custom_domains` (id, domain_name UNIQUE, target_type ENUM, target_id, base_path, is_verified, created_at)
@@ -76,18 +117,34 @@
 - [x] Endpoint `POST /api/auth/refresh` (renouvellement de token, Redis-backed rotation)
 - [x] Endpoint `GET /api/auth/me` (profil utilisateur connecté)
 
-### 3.2 - Gestion des Workspaces
+### 3.2 - Gestion des Workspaces (Users)
+> Ces endpoints gèrent les **Users plateforme** dans un workspace (table `workspace_members`).
 - [x] Endpoint `POST /api/workspaces` (création workspace, l'utilisateur devient OWNER)
 - [x] Endpoint `GET /api/workspaces` (liste des workspaces de l'utilisateur connecté)
 - [x] Endpoint `GET /api/workspaces/:ws_id` (détails d'un workspace)
-- [x] Endpoint `POST /api/workspaces/:ws_id/members` (invitation d'un membre)
-- [x] Endpoint `PATCH /api/workspaces/:ws_id/members/:user_id` (changement de rôle)
-- [x] Endpoint `DELETE /api/workspaces/:ws_id/members/:user_id` (retrait d'un membre)
+- [x] Endpoint `POST /api/workspaces/:ws_id/users` (invitation d'un user existant dans le workspace) _(actuellement /members)_
+- [x] Endpoint `PATCH /api/workspaces/:ws_id/users/:user_id` (changement de rôle)
+- [x] Endpoint `DELETE /api/workspaces/:ws_id/users/:user_id` (retrait d'un user)
+
+### 3.3 - Gestion des Members (non-user)
+> Ces endpoints gèrent les **personnes ajoutées par l'admin** qui n'ont pas de compte plateforme (table `members`).
+- [x] Endpoint `POST /api/auth/member/login` (login par username **ou** email + mot de passe, retourne JWT member)
+- [x] Endpoint `POST /api/workspaces/:ws_id/members` (création d'un member par l'admin)
+- [x] Endpoint `GET /api/workspaces/:ws_id/members` (liste des members du workspace)
+- [x] Endpoint `GET /api/workspaces/:ws_id/members/:member_id` (détails d'un member)
+- [x] Endpoint `PATCH /api/workspaces/:ws_id/members/:member_id` (mise à jour infos)
+- [x] Endpoint `DELETE /api/workspaces/:ws_id/members/:member_id` (soft delete)
+- [ ] Endpoint `POST /api/workspaces/:ws_id/members/:member_id/convert` (conversion member → user)
+  - Crée un compte `users` avec l'email du member
+  - Migre le credential PASSWORD vers le nouveau user
+  - Lie `members.user_id` → nouveau user
+  - Envoie un email d'invitation (si email renseigné)
 
 ---
 
 ## Phase 4 : RBAC & Permissions Granulaires
 
+### 4.1 - RBAC Users (implémenté)
 - [x] Service RBAC : vérification du rôle workspace (OWNER, ADMIN, MEMBER)
 - [x] Middleware d'autorisation workspace (injecte le rôle dans le context) _(WorkspaceMember + WorkspaceAdmin, Huma per-op)_
 - [x] Service de vérification des permissions gate (lecture de `gate_user_policies`)
@@ -95,6 +152,12 @@
 - [x] Endpoint `POST /api/workspaces/:ws_id/gates/:gate_id/policies` (attribution de permissions à un user sur une gate)
 - [x] Endpoint `DELETE /api/workspaces/:ws_id/gates/:gate_id/policies/:user_id` (retrait de permissions)
 - [x] Endpoint `GET /api/workspaces/:ws_id/gates/:gate_id/policies` (liste des policies d'une gate)
+
+### 4.2 - RBAC Members (à faire)
+- [ ] Endpoint `POST /api/workspaces/:ws_id/gates/:gate_id/member-policies` (attribution permissions à un member sur une gate)
+- [ ] Endpoint `DELETE /api/workspaces/:ws_id/gates/:gate_id/member-policies/:member_id` (retrait)
+- [ ] Endpoint `GET /api/workspaces/:ws_id/gates/:gate_id/member-policies` (liste)
+- [ ] Mise à jour du service RBAC : vérifier `gate_member_policies` lors du `trigger` par un member
 
 ---
 
@@ -116,8 +179,8 @@
 
 ### 5.3 - Configuration Mosquitto
 - [x] Configuration Mosquitto pour le dev (listener 1883, anonymous access)
-- [ ] Stratégie d'authentification MQTT (username/password par gate ou token par workspace)
-- [ ] ACL MQTT (chaque appareil ne peut publier/souscrire que sur ses propres topics)
+- [x] Stratégie d'authentification MQTT : backend s'authentifie via `MQTT_USERNAME`/`MQTT_PASSWORD` env (optionnel, anonyme en dev) ; chaque gate device utilise son `gate_id` comme username + `API_TOKEN` de la table `credentials`
+- [x] ACL MQTT : fichier `configs/mosquitto.acl` — `gaty-server` accès total, gate devices limités à leurs propres topics via pattern `%u`
 
 ---
 

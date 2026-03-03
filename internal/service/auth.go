@@ -138,6 +138,14 @@ func (s *AuthService) ValidateAccessToken(tokenStr string) (uuid.UUID, error) {
 		return uuid.Nil, ErrInvalidToken
 	}
 
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return uuid.Nil, ErrInvalidToken
+	}
+	if typ, _ := claims["typ"].(string); typ == "member" {
+		return uuid.Nil, ErrInvalidToken
+	}
+
 	sub, err := token.Claims.GetSubject()
 	if err != nil {
 		return uuid.Nil, ErrInvalidToken
@@ -148,6 +156,41 @@ func (s *AuthService) ValidateAccessToken(tokenStr string) (uuid.UUID, error) {
 		return uuid.Nil, ErrInvalidToken
 	}
 	return userID, nil
+}
+
+// ValidateMemberToken validates a member JWT and returns the member ID and workspace ID.
+func (s *AuthService) ValidateMemberToken(tokenStr string) (memberID, workspaceID uuid.UUID, err error) {
+	token, parseErr := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return s.jwtSecret, nil
+	}, jwt.WithExpirationRequired())
+	if parseErr != nil {
+		return uuid.Nil, uuid.Nil, ErrInvalidToken
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return uuid.Nil, uuid.Nil, ErrInvalidToken
+	}
+	if typ, _ := claims["typ"].(string); typ != "member" {
+		return uuid.Nil, uuid.Nil, ErrInvalidToken
+	}
+
+	sub, _ := claims["sub"].(string)
+	memberID, err = uuid.Parse(sub)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, ErrInvalidToken
+	}
+
+	wid, _ := claims["wid"].(string)
+	workspaceID, err = uuid.Parse(wid)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, ErrInvalidToken
+	}
+
+	return memberID, workspaceID, nil
 }
 
 func (s *AuthService) issueTokenPair(ctx context.Context, userID uuid.UUID) (*TokenPair, error) {

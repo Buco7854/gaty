@@ -211,28 +211,28 @@ func (h *WorkspaceHandler) RegisterRoutes(
 	}, h.Get)
 
 	huma.Register(api, huma.Operation{
-		OperationID: "workspace-invite-member",
+		OperationID: "workspace-invite-user",
 		Method:      http.MethodPost,
-		Path:        "/api/workspaces/{ws_id}/members",
-		Summary:     "Add a member to a workspace",
+		Path:        "/api/workspaces/{ws_id}/users",
+		Summary:     "Add a platform user to a workspace",
 		Tags:        []string{"Workspaces"},
 		Middlewares: huma.Middlewares{wsAdmin},
 	}, h.InviteMember)
 
 	huma.Register(api, huma.Operation{
-		OperationID: "workspace-update-member-role",
+		OperationID: "workspace-update-user-role",
 		Method:      http.MethodPatch,
-		Path:        "/api/workspaces/{ws_id}/members/{user_id}",
-		Summary:     "Update a member's role",
+		Path:        "/api/workspaces/{ws_id}/users/{user_id}",
+		Summary:     "Update a workspace user's role",
 		Tags:        []string{"Workspaces"},
 		Middlewares: huma.Middlewares{wsAdmin},
 	}, h.UpdateMemberRole)
 
 	huma.Register(api, huma.Operation{
-		OperationID: "workspace-remove-member",
+		OperationID: "workspace-remove-user",
 		Method:      http.MethodDelete,
-		Path:        "/api/workspaces/{ws_id}/members/{user_id}",
-		Summary:     "Remove a member from a workspace",
+		Path:        "/api/workspaces/{ws_id}/users/{user_id}",
+		Summary:     "Remove a platform user from a workspace",
 		Tags:        []string{"Workspaces"},
 		Middlewares: huma.Middlewares{wsAdmin},
 	}, h.RemoveMember)

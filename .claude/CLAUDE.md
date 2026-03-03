@@ -32,6 +32,55 @@
 ## Avancement
 L'avancement se suit dans **plan.md** à la racine du repo.
 
+---
+
+## Architecture : Users vs Members
+
+### Users (Comptes Plateforme)
+- Créent leur propre compte (register/login web app)
+- Table : `users` → credential `PASSWORD` ou `OIDC_IDENTITY` (target_type=USER)
+- Peuvent créer des workspaces et en être OWNER/ADMIN/MEMBER
+- Join table : `workspace_members` (workspace_id, user_id, workspace_role)
+- Authentification : JWT standard via `/api/auth/login`
+
+### Members (Personnes gérées par admin)
+- Ajoutés manuellement par un admin dans un workspace
+- **Pas de compte plateforme** par défaut
+- Table : `members` (id, workspace_id, display_name, email, username, user_id nullable, created_at)
+  - `email` = info de contact admin seulement (non utilisé pour auth)
+  - `username` = identifiant de connexion, unique par workspace
+  - `user_id` = nullable ; renseigné si le member convertit en compte User
+- Credential : `credentials` (target_type=MEMBER, type=PASSWORD|API_TOKEN)
+- Accès gates via `gate_member_policies` (gate_id, member_id, permission_code)
+- **Conversion possible** : endpoint `POST /members/:id/convert` → crée un `user`, lie `user_id`
+
+### Vecteurs d'accès aux Gates
+| Vecteur | Mécanisme |
+|---------|-----------|
+| User OWNER/ADMIN | Rôle workspace (accès total) |
+| User avec policy | `gate_user_policies` |
+| Member avec policy | `gate_member_policies` |
+| PIN code public | `credentials` (target_type=GATE, type=PIN_CODE) |
+| Token API | `credentials` (target_type=USER\|MEMBER, type=API_TOKEN) |
+
+### Schema DB (entities principales)
+```
+users ─────────────────┐
+  └─► workspace_members (workspace_id, user_id, role)
+  └─► gate_user_policies (gate_id, user_id, permission_code)
+
+workspaces
+  └─► members (id, workspace_id, display_name, username, email, user_id?)
+        └─► gate_member_policies (gate_id, member_id, permission_code)
+
+credentials (target_type: USER | MEMBER | GATE)
+  └─► target_type=USER  : PASSWORD, OIDC_IDENTITY, API_TOKEN
+  └─► target_type=MEMBER: PASSWORD, API_TOKEN
+  └─► target_type=GATE  : PIN_CODE
+```
+
+---
+
 ## User preferences
 - No co-authored commits
 - No Makefile, uses go-task (Taskfile.yml)

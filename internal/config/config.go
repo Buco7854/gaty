@@ -10,12 +10,14 @@ import (
 )
 
 type Config struct {
-	Port        int
-	DatabaseURL string
-	RedisURL    string
-	MQTTBroker  string
-	JWTSecret   string
-	CORSOrigins []string
+	Port         int
+	DatabaseURL  string
+	RedisURL     string
+	MQTTBroker   string
+	MQTTUsername string // optional, empty = anonymous
+	MQTTPassword string // optional
+	JWTSecret    string
+	CORSOrigins  []string
 }
 
 func Load() (*Config, error) {
@@ -48,6 +50,9 @@ func Load() (*Config, error) {
 	if cfg.MQTTBroker == "" {
 		cfg.MQTTBroker = "tcp://localhost:1883"
 	}
+
+	cfg.MQTTUsername = os.Getenv("MQTT_USERNAME")
+	cfg.MQTTPassword = os.Getenv("MQTT_PASSWORD")
 
 	cfg.JWTSecret = os.Getenv("JWT_SECRET")
 	if cfg.JWTSecret == "" {

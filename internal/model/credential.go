@@ -10,8 +10,9 @@ type CredentialTargetType string
 type CredentialType string
 
 const (
-	TargetUser CredentialTargetType = "USER"
-	TargetGate CredentialTargetType = "GATE"
+	TargetUser   CredentialTargetType = "USER"
+	TargetMember CredentialTargetType = "MEMBER"
+	TargetGate   CredentialTargetType = "GATE"
 
 	CredPassword     CredentialType = "PASSWORD"
 	CredPINCode      CredentialType = "PIN_CODE"

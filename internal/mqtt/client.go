@@ -13,7 +13,8 @@ type Client struct {
 	c pahomqtt.Client
 }
 
-func New(brokerURL string) (*Client, error) {
+// New creates a new MQTT client. username and password are optional (empty = anonymous).
+func New(brokerURL, username, password string) (*Client, error) {
 	opts := pahomqtt.NewClientOptions().
 		AddBroker(brokerURL).
 		SetClientID("gaty-server").
@@ -26,6 +27,10 @@ func New(brokerURL string) (*Client, error) {
 		SetConnectionLostHandler(func(_ pahomqtt.Client, err error) {
 			slog.Warn("mqtt connection lost", "error", err)
 		})
+
+	if username != "" {
+		opts.SetUsername(username).SetPassword(password)
+	}
 
 	c := pahomqtt.NewClient(opts)
 	if token := c.Connect(); token.Wait() && token.Error() != nil {
