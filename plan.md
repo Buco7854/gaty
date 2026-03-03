@@ -80,9 +80,9 @@
 - [x] Endpoint `POST /api/workspaces` (création workspace, l'utilisateur devient OWNER)
 - [x] Endpoint `GET /api/workspaces` (liste des workspaces de l'utilisateur connecté)
 - [x] Endpoint `GET /api/workspaces/:ws_id` (détails d'un workspace)
-- [ ] Endpoint `POST /api/workspaces/:ws_id/members` (invitation d'un membre)
-- [ ] Endpoint `PATCH /api/workspaces/:ws_id/members/:user_id` (changement de rôle)
-- [ ] Endpoint `DELETE /api/workspaces/:ws_id/members/:user_id` (retrait d'un membre)
+- [x] Endpoint `POST /api/workspaces/:ws_id/members` (invitation d'un membre)
+- [x] Endpoint `PATCH /api/workspaces/:ws_id/members/:user_id` (changement de rôle)
+- [x] Endpoint `DELETE /api/workspaces/:ws_id/members/:user_id` (retrait d'un membre)
 
 ---
 

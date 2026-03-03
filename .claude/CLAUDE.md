@@ -7,7 +7,7 @@
 
 ## Stack
 - Backend: Go + Huma v2 + chi router
-- DB: PostgreSQL + Redis + golang-migrate (SQL files)
+- DB: PostgreSQL + Valkey (Redis-compatible) + golang-migrate (SQL files)
 - IoT: Eclipse Mosquitto (MQTT)
 - Proxy: Caddy (On-Demand TLS)
 - Frontend: React + Vite + TS + shadcn/ui + Tailwind CSS v4
@@ -26,7 +26,7 @@
 
 ## Dev credentials
 - Postgres: postgres://gaty:gaty@localhost:5432/gaty?sslmode=disable
-- Redis: redis://localhost:6379
+- Valkey: redis://localhost:6379
 - MQTT: tcp://localhost:1883
 
 ## Avancement

@@ -125,7 +125,7 @@ func main() {
 
 	// Register route groups
 	handler.NewAuthHandler(authSvc, userRepo).RegisterRoutes(api, requireAuth)
-	handler.NewWorkspaceHandler(wsRepo).RegisterRoutes(api, requireAuth)
+	handler.NewWorkspaceHandler(wsRepo).RegisterRoutes(api, requireAuth, wsAdmin)
 	handler.NewGateHandler(gateRepo, policyRepo, auditRepo, mqttClient).RegisterRoutes(api, wsMember, wsAdmin)
 	handler.NewPolicyHandler(policyRepo).RegisterRoutes(api, wsAdmin)
 

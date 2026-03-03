@@ -8,6 +8,7 @@ import (
 	"github.com/Buco7854/gaty/internal/model"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -105,4 +106,59 @@ func (r *WorkspaceRepository) GetMemberRole(ctx context.Context, workspaceID, us
 		return "", fmt.Errorf("get member role: %w", err)
 	}
 	return role, nil
+}
+
+// AddMember adds a user to a workspace with the given role.
+// Returns ErrAlreadyExists if the user is already a member, ErrNotFound if the user doesn't exist.
+func (r *WorkspaceRepository) AddMember(ctx context.Context, workspaceID, userID uuid.UUID, role model.WorkspaceRole) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO workspace_members (workspace_id, user_id, workspace_role) VALUES ($1, $2, $3)`,
+		workspaceID, userID, role,
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			if pgErr.Code == "23505" { // unique_violation
+				return ErrAlreadyExists
+			}
+			if pgErr.Code == "23503" { // foreign_key_violation
+				return ErrNotFound
+			}
+		}
+		return fmt.Errorf("add member: %w", err)
+	}
+	return nil
+}
+
+// UpdateMemberRole changes the role of an existing member.
+// Returns ErrNotFound if the user is not a member.
+func (r *WorkspaceRepository) UpdateMemberRole(ctx context.Context, workspaceID, userID uuid.UUID, role model.WorkspaceRole) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE workspace_members SET workspace_role = $3
+		 WHERE workspace_id = $1 AND user_id = $2`,
+		workspaceID, userID, role,
+	)
+	if err != nil {
+		return fmt.Errorf("update member role: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// RemoveMember removes a user from a workspace.
+// Returns ErrNotFound if the user is not a member.
+func (r *WorkspaceRepository) RemoveMember(ctx context.Context, workspaceID, userID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM workspace_members WHERE workspace_id = $1 AND user_id = $2`,
+		workspaceID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("remove member: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
