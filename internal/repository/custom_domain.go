@@ -123,6 +123,36 @@ func (r *CustomDomainRepository) SetVerified(ctx context.Context, domainID uuid.
 	return nil
 }
 
+// DomainResolveResult holds gate + workspace context for a verified custom domain.
+type DomainResolveResult struct {
+	GateID          uuid.UUID
+	GateName        string
+	WorkspaceID     uuid.UUID
+	WorkspaceSlug   string
+	WorkspaceName   string
+}
+
+// ResolveByDomain returns gate + workspace info for a verified custom domain.
+// Used by the public resolve endpoint so the frontend knows which gate page to render.
+func (r *CustomDomainRepository) ResolveByDomain(ctx context.Context, domain string) (*DomainResolveResult, error) {
+	var res DomainResolveResult
+	err := r.pool.QueryRow(ctx,
+		`SELECT g.id, g.name, w.id, w.slug, w.name
+		 FROM custom_domains cd
+		 JOIN gates g       ON g.id = cd.gate_id
+		 JOIN workspaces w  ON w.id = cd.workspace_id
+		 WHERE cd.domain = $1 AND cd.verified_at IS NOT NULL`,
+		domain,
+	).Scan(&res.GateID, &res.GateName, &res.WorkspaceID, &res.WorkspaceSlug, &res.WorkspaceName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve domain: %w", err)
+	}
+	return &res, nil
+}
+
 func (r *CustomDomainRepository) Delete(ctx context.Context, domainID, gateID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx,
 		`DELETE FROM custom_domains WHERE id = $1 AND gate_id = $2`,

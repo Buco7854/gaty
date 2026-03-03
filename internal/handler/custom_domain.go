@@ -239,6 +239,42 @@ func (h *CustomDomainHandler) verifyDomainPublic(ctx context.Context, in *verify
 	return nil, nil
 }
 
+// --- GET /api/public/resolve?domain=xxx ---
+// Returns gate + workspace context for a verified custom domain.
+// Used by the frontend to know which gate page to render on a custom domain.
+
+type resolveDomainInput struct {
+	Domain string `query:"domain" required:"true"`
+}
+
+type resolveDomainOutput struct {
+	Body struct {
+		GateID        uuid.UUID `json:"gate_id"`
+		GateName      string    `json:"gate_name"`
+		WorkspaceID   uuid.UUID `json:"workspace_id"`
+		WorkspaceSlug string    `json:"workspace_slug"`
+		WorkspaceName string    `json:"workspace_name"`
+	}
+}
+
+func (h *CustomDomainHandler) resolveDomain(ctx context.Context, in *resolveDomainInput) (*resolveDomainOutput, error) {
+	res, err := h.domains.ResolveByDomain(ctx, strings.ToLower(strings.TrimSpace(in.Domain)))
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, huma.Error404NotFound("domain not found or not verified")
+		}
+		slog.Error("resolve domain", "error", err)
+		return nil, huma.Error500InternalServerError("internal error")
+	}
+	out := &resolveDomainOutput{}
+	out.Body.GateID = res.GateID
+	out.Body.GateName = res.GateName
+	out.Body.WorkspaceID = res.WorkspaceID
+	out.Body.WorkspaceSlug = res.WorkspaceSlug
+	out.Body.WorkspaceName = res.WorkspaceName
+	return out, nil
+}
+
 // --- GET /api/public/domains/list ---
 // Returns all verified domains (for external proxy automation scripts).
 
@@ -307,5 +343,6 @@ func (h *CustomDomainHandler) RegisterRoutes(api huma.API, wsAdmin func(ctx huma
 
 	// Public endpoints (no auth)
 	huma.Get(api, "/api/public/verify-domain", h.verifyDomainPublic)
+	huma.Get(api, "/api/public/resolve", h.resolveDomain)
 	huma.Get(api, "/api/public/domains/list", h.publicDomainsList)
 }

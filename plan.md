@@ -344,45 +344,54 @@ Voir CLAUDE.md pour le schéma complet.
 
 ## Phase 9 : Frontend React
 
+> Stack : React 19 + Vite + TypeScript + Tailwind v4 + shadcn/ui (New York)
+> Router : React Router v7 · State : TanStack Query v5 + Zustand · HTTP : Axios
+
 ### 9.1 - Setup & Architecture
-- [ ] Structure de dossiers (features/, components/, hooks/, lib/, api/, types/)
-- [ ] Configuration du routeur (React Router ou TanStack Router)
-- [ ] Client API (Axios ou fetch wrapper avec intercepteurs JWT)
-- [ ] Store d'authentification (Context API ou Zustand)
-- [ ] Layout principal (Sidebar, Header, Content area)
-- [ ] Thème dynamique : injection des couleurs du tenant via CSS variables
+- [x] Structure de dossiers (types/, lib/, store/, layouts/, pages/)
+- [x] Configuration du routeur : React Router v7 (`createBrowserRouter`)
+- [x] Client API Axios (`src/lib/api.ts`) : intercepteur JWT, refresh automatique sur 401, drain de file d'attente
+- [x] Store d'authentification Zustand (`src/store/auth.ts`) : persist localStorage, `setAuth`, `logout`, `isAuthenticated`
+- [x] Layout principal (`AppLayout`) : sidebar workspace-switcher + nav + user footer
+- [x] Layout auth (`AuthLayout`) : centered card
+- [ ] Thème dynamique : injection des couleurs du tenant via CSS variables _(Phase 11)_
 
 ### 9.2 - Pages Auth
-- [ ] Page Login (email/password)
-- [ ] Page Register
-- [ ] Bouton "Se connecter avec SSO" (flux SSO)
-- [ ] Gestion du refresh token
+- [x] Page Login (email/password) → JWT global
+- [x] Page Register
+- [x] Gestion du refresh token (intercepteur Axios, rotation automatique)
+- [ ] Bouton "Se connecter avec SSO" _(Phase 11 — dépend du workspace slug)_
 
 ### 9.3 - Dashboard Workspace
-- [ ] Page liste des workspaces
-- [ ] Page dashboard d'un workspace (liste des gates avec statut temps réel)
-- [ ] Indicateur de statut gate (online/offline/unknown basé sur last_seen_at)
-- [ ] Page de gestion des membres du workspace
-- [ ] Page de gestion des domaines personnalisés
+- [x] Page liste des workspaces (`/workspaces`) : création inline, navigation
+- [x] Page dashboard d'un workspace (`/workspaces/:wsId`) : grille de gates
+- [x] Indicateur de statut gate : dot pulsant (online), WifiOff (offline), HelpCircle (unknown), polling 10s
+- [x] Bouton "Open" rapide directement sur la card gate
+- [x] Page de gestion des membres (`/workspaces/:wsId/members`) : invite par email ou création locale
+- [x] Page Settings (`/workspaces/:wsId/settings`) : configuration SSO OIDC du workspace
 
 ### 9.4 - Gestion des Gates
-- [ ] Page détail d'une gate (statut, config, logs récents)
-- [ ] Bouton "Ouvrir" avec confirmation (appel trigger)
-- [ ] Page de gestion des permissions d'une gate (attribution users/droits)
-- [ ] Page de gestion des PIN codes d'une gate
+- [x] Page détail d'une gate (`/workspaces/:wsId/gates/:gateId`) : statut + trigger
+- [x] Bouton "Open gate" avec feedback loading/success
+- [x] Gestion des PIN codes : liste + création + suppression + affichage expires_at
+- [x] Gestion des domaines custom : liste + ajout + DNS challenge token + vérification + suppression
+- [ ] Page permissions d'une gate (attribution membership_policies) _(Phase 10)_
 
 ### 9.5 - Vue Guest (Domaine ciblant une Gate)
-- [ ] Page Guest : pavé numérique (PIN pad) plein écran
-- [ ] Feedback visuel (succès/erreur/loading)
-- [ ] Design adaptatif mobile-first (cas d'usage principal : téléphone devant le portail)
-- [ ] Aucune navigation visible, branding du workspace uniquement
+- [x] Page PIN pad (`/unlock` et `/unlock/:gateId`) plein écran, mobile-first
+- [x] Résolution automatique via `GET /api/public/resolve?domain=<host>` si pas de gateId URL
+- [x] Feedback visuel : dot states, CheckCircle (succès), XCircle (erreur)
+- [x] Gestion des erreurs : 429 rate limit, 403 PIN invalide, timeout
+- [x] Auto-submit à 12 chiffres, bouton Confirm pour longueurs intermédiaires
 
 ### 9.6 - Temps Réel (SSE)
-- [ ] Endpoint SSE backend via `sse.Register` de Huma (`GET /api/workspaces/:ws_id/gates/events`)
-- [ ] Définir les types d'événements SSE (GateStatusChanged, GateCommandAck) comme structs Go mappés dans sse.Register
-- [ ] Bridge MQTT → SSE via Redis Pub/Sub : à la réception d'un message MQTT, le backend publie sur un channel Redis `gate:events:{workspace_id}` ; toutes les instances s'abonnent et font le fan-out vers leurs connexions SSE locales (nécessaire pour le multi-instance)
-- [ ] Client SSE frontend : hook React `useGateEvents()` basé sur `EventSource` avec reconnexion automatique
-- [ ] Mise à jour automatique de l'UI lors d'un changement de statut
+- [ ] Endpoint SSE backend (`GET /api/workspaces/:ws_id/gates/events`)
+- [ ] Bridge MQTT → SSE via Redis Pub/Sub (multi-instance safe)
+- [ ] Hook React `useGateEvents()` basé sur `EventSource` avec reconnexion auto
+- [ ] Mise à jour automatique de l'UI lors d'un changement de statut _(polling 10s comme fallback déjà en place)_
+
+### 9.7 - Backend : résolution domaine public
+- [x] `GET /api/public/resolve?domain=xxx` — retourne `{gate_id, gate_name, workspace_id, workspace_slug, workspace_name}` si domaine vérifié
 
 ---
 
