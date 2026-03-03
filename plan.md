@@ -88,13 +88,13 @@
 
 ## Phase 4 : RBAC & Permissions Granulaires
 
-- [ ] Service RBAC : vérification du rôle workspace (OWNER, ADMIN, MEMBER)
-- [ ] Middleware d'autorisation workspace (injecte le rôle dans le context)
-- [ ] Service de vérification des permissions gate (lecture de `gate_user_policies`)
-- [ ] Endpoint `GET /api/workspaces/:ws_id/gates` avec filtrage contextuel (ADMIN voit tout, MEMBER voit uniquement ses gates autorisées via JOIN)
-- [ ] Endpoint `POST /api/workspaces/:ws_id/gates/:gate_id/policies` (attribution de permissions à un user sur une gate)
-- [ ] Endpoint `DELETE /api/workspaces/:ws_id/gates/:gate_id/policies/:user_id` (retrait de permissions)
-- [ ] Endpoint `GET /api/workspaces/:ws_id/gates/:gate_id/policies` (liste des policies d'une gate)
+- [x] Service RBAC : vérification du rôle workspace (OWNER, ADMIN, MEMBER)
+- [x] Middleware d'autorisation workspace (injecte le rôle dans le context) _(WorkspaceMember + WorkspaceAdmin, Huma per-op)_
+- [x] Service de vérification des permissions gate (lecture de `gate_user_policies`)
+- [x] Endpoint `GET /api/workspaces/:ws_id/gates` avec filtrage contextuel (ADMIN voit tout, MEMBER voit uniquement ses gates autorisées via JOIN)
+- [x] Endpoint `POST /api/workspaces/:ws_id/gates/:gate_id/policies` (attribution de permissions à un user sur une gate)
+- [x] Endpoint `DELETE /api/workspaces/:ws_id/gates/:gate_id/policies/:user_id` (retrait de permissions)
+- [x] Endpoint `GET /api/workspaces/:ws_id/gates/:gate_id/policies` (liste des policies d'une gate)
 
 ---
 

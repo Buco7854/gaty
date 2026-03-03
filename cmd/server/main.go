@@ -68,6 +68,8 @@ func main() {
 	userRepo := repository.NewUserRepository(pool)
 	credRepo := repository.NewCredentialRepository(pool)
 	wsRepo := repository.NewWorkspaceRepository(pool)
+	gateRepo := repository.NewGateRepository(pool)
+	policyRepo := repository.NewPolicyRepository(pool)
 
 	// Services
 	authSvc := service.NewAuthService(userRepo, credRepo, redisClient, cfg.JWTSecret)
@@ -76,8 +78,10 @@ func main() {
 
 	// Global soft auth middleware: silently extracts Bearer token and sets user ID in context
 	api.UseMiddleware(middleware.AuthExtractor(authSvc))
-	// Per-operation hard auth middleware: returns 401 if user ID not in context
+	// Per-operation middlewares
 	requireAuth := middleware.RequireAuth(api)
+	wsMember := middleware.WorkspaceMember(api, wsRepo)
+	wsAdmin := middleware.WorkspaceAdmin(api, wsRepo)
 
 	type HealthOutput struct {
 		Body struct {
@@ -105,6 +109,8 @@ func main() {
 	// Register route groups
 	handler.NewAuthHandler(authSvc, userRepo).RegisterRoutes(api, requireAuth)
 	handler.NewWorkspaceHandler(wsRepo).RegisterRoutes(api, requireAuth)
+	handler.NewGateHandler(gateRepo).RegisterRoutes(api, wsMember)
+	handler.NewPolicyHandler(policyRepo).RegisterRoutes(api, wsAdmin)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
