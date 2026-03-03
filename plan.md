@@ -101,21 +101,21 @@
 ## Phase 5 : Gestion des Gates & Communication IoT (MQTT)
 
 ### 5.1 - CRUD Gates
-- [ ] Endpoint `POST /api/workspaces/:ws_id/gates` (création d'une gate)
-- [ ] Endpoint `GET /api/workspaces/:ws_id/gates/:gate_id` (détails d'une gate)
-- [ ] Endpoint `PATCH /api/workspaces/:ws_id/gates/:gate_id` (mise à jour)
-- [ ] Endpoint `DELETE /api/workspaces/:ws_id/gates/:gate_id` (soft delete)
+- [x] Endpoint `POST /api/workspaces/:ws_id/gates` (création d'une gate)
+- [x] Endpoint `GET /api/workspaces/:ws_id/gates/:gate_id` (détails d'une gate)
+- [x] Endpoint `PATCH /api/workspaces/:ws_id/gates/:gate_id` (mise à jour)
+- [x] Endpoint `DELETE /api/workspaces/:ws_id/gates/:gate_id` (soft delete)
 
 ### 5.2 - Intégration MQTT
-- [ ] Client MQTT Go (connexion au broker Mosquitto avec reconnexion automatique)
-- [ ] Abonnement aux topics de statut : `workspace_{id}/gates/{gate_id}/status`
-- [ ] Handler de réception des statuts (mise à jour `status` + `last_seen_at` en base)
-- [ ] Fonction de publication de commande : `workspace_{id}/gates/{gate_id}/command`
-- [ ] Endpoint `POST /api/workspaces/:ws_id/gates/:gate_id/trigger` (déclenchement d'ouverture, vérification RBAC, publication MQTT, log audit)
-- [ ] Détection des appareils offline (job périodique ou vérification à la lecture basée sur `last_seen_at`)
+- [x] Client MQTT Go (connexion au broker Mosquitto avec reconnexion automatique)
+- [x] Abonnement aux topics de statut : `workspace_{id}/gates/{gate_id}/status`
+- [x] Handler de réception des statuts (mise à jour `status` + `last_seen_at` en base)
+- [x] Fonction de publication de commande : `workspace_{id}/gates/{gate_id}/command`
+- [x] Endpoint `POST /api/workspaces/:ws_id/gates/:gate_id/trigger` (déclenchement d'ouverture, vérification RBAC, publication MQTT, log audit)
+- [x] Détection des appareils offline (vérification à la lecture via `EffectiveStatus()` basée sur `last_seen_at`)
 
 ### 5.3 - Configuration Mosquitto
-- [ ] Configuration Mosquitto pour le dev (listener, auth basique ou plugin Go)
+- [x] Configuration Mosquitto pour le dev (listener 1883, anonymous access)
 - [ ] Stratégie d'authentification MQTT (username/password par gate ou token par workspace)
 - [ ] ACL MQTT (chaque appareil ne peut publier/souscrire que sur ses propres topics)
 

@@ -52,6 +52,32 @@ func (r *PolicyRepository) Grant(ctx context.Context, gateID, userID uuid.UUID, 
 	return nil
 }
 
+// HasPermission returns true if the user has the given permission on the gate.
+func (r *PolicyRepository) HasPermission(ctx context.Context, gateID, userID uuid.UUID, permCode string) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM gate_user_policies WHERE gate_id = $1 AND user_id = $2 AND permission_code = $3)`,
+		gateID, userID, permCode,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check permission: %w", err)
+	}
+	return exists, nil
+}
+
+// HasAnyPermission returns true if the user has at least one policy on the gate.
+func (r *PolicyRepository) HasAnyPermission(ctx context.Context, gateID, userID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM gate_user_policies WHERE gate_id = $1 AND user_id = $2)`,
+		gateID, userID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check any permission: %w", err)
+	}
+	return exists, nil
+}
+
 // Revoke removes all permissions for a user on a gate.
 func (r *PolicyRepository) Revoke(ctx context.Context, gateID, userID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx,

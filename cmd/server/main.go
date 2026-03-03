@@ -15,6 +15,7 @@ import (
 	"github.com/Buco7854/gaty/internal/db"
 	"github.com/Buco7854/gaty/internal/handler"
 	"github.com/Buco7854/gaty/internal/middleware"
+	internalmqtt "github.com/Buco7854/gaty/internal/mqtt"
 	"github.com/Buco7854/gaty/internal/repository"
 	"github.com/Buco7854/gaty/internal/service"
 	"github.com/danielgtaylor/huma/v2"
@@ -64,12 +65,28 @@ func main() {
 	}))
 	router.Use(middleware.TenantResolver(pool))
 
+	// MQTT client (non-fatal: API works without broker)
+	mqttClient, err := internalmqtt.New(cfg.MQTTBroker)
+	if err != nil {
+		slog.Warn("mqtt unavailable, continuing without MQTT", "error", err)
+	} else {
+		defer mqttClient.Disconnect()
+	}
+
 	// Repositories
 	userRepo := repository.NewUserRepository(pool)
 	credRepo := repository.NewCredentialRepository(pool)
 	wsRepo := repository.NewWorkspaceRepository(pool)
 	gateRepo := repository.NewGateRepository(pool)
 	policyRepo := repository.NewPolicyRepository(pool)
+	auditRepo := repository.NewAuditRepository(pool)
+
+	// Subscribe to gate status updates from MQTT
+	if mqttClient != nil {
+		if err := mqttClient.SubscribeGateStatuses(gateRepo); err != nil {
+			slog.Warn("mqtt: failed to subscribe to gate statuses", "error", err)
+		}
+	}
 
 	// Services
 	authSvc := service.NewAuthService(userRepo, credRepo, redisClient, cfg.JWTSecret)
@@ -109,7 +126,7 @@ func main() {
 	// Register route groups
 	handler.NewAuthHandler(authSvc, userRepo).RegisterRoutes(api, requireAuth)
 	handler.NewWorkspaceHandler(wsRepo).RegisterRoutes(api, requireAuth)
-	handler.NewGateHandler(gateRepo).RegisterRoutes(api, wsMember)
+	handler.NewGateHandler(gateRepo, policyRepo, auditRepo, mqttClient).RegisterRoutes(api, wsMember, wsAdmin)
 	handler.NewPolicyHandler(policyRepo).RegisterRoutes(api, wsAdmin)
 
 	srv := &http.Server{

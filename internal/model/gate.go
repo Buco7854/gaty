@@ -6,6 +6,8 @@ import (
 	"github.com/google/uuid"
 )
 
+const offlineThreshold = 5 * time.Minute
+
 type GateIntegrationType string
 
 const (
@@ -31,4 +33,18 @@ type Gate struct {
 	Status            GateStatus          `json:"status"`
 	LastSeenAt        *time.Time          `json:"last_seen_at,omitempty"`
 	CreatedAt         time.Time           `json:"created_at"`
+}
+
+// EffectiveStatus computes the live status based on last_seen_at:
+// - never seen → unknown
+// - not seen in > 5 min → offline
+// - otherwise the stored status (online/offline/unknown from last MQTT message)
+func (g *Gate) EffectiveStatus() GateStatus {
+	if g.LastSeenAt == nil {
+		return GateStatusUnknown
+	}
+	if time.Since(*g.LastSeenAt) > offlineThreshold {
+		return GateStatusOffline
+	}
+	return g.Status
 }
