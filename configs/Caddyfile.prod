@@ -1,0 +1,29 @@
+{
+    # On-Demand TLS: before issuing a certificate for any incoming hostname,
+    # Caddy asks this endpoint. Only verified custom domains return 200.
+    on_demand_tls {
+        ask http://app:8080/api/public/verify-domain
+        interval 2m
+        burst 5
+    }
+}
+
+# Main app domain — standard ACME cert, serves both API and frontend.
+{$APP_DOMAIN} {
+    handle /api/* {
+        reverse_proxy app:8080
+    }
+    handle {
+        reverse_proxy frontend:3000
+    }
+}
+
+# Custom gate domains — On-Demand TLS (cert issued on first request if verified).
+# The gate page (frontend) decides what to render based on the resolved gate context
+# returned by GET /api/public/resolve?domain=<host>.
+:443 {
+    tls {
+        on_demand
+    }
+    reverse_proxy app:8080
+}

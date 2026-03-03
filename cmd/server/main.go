@@ -84,6 +84,7 @@ func main() {
 	gatePinRepo := repository.NewGatePinRepository(pool)
 	policyRepo := repository.NewPolicyRepository(pool)
 	auditRepo := repository.NewAuditRepository(pool)
+	domainRepo := repository.NewCustomDomainRepository(pool)
 
 	// Subscribe to gate status updates from MQTT
 	if mqttClient != nil {
@@ -145,6 +146,7 @@ func main() {
 	handler.NewGatePinHandler(gatePinRepo, gateRepo, mqttClient, redisClient).RegisterRoutes(api, wsAdmin)
 	handler.NewSSOHandler(ssoSvc, authSvc, wsRepo, cfg.FrontendURL).RegisterRoutes(api, wsAdmin)
 	handler.NewCredentialHandler(credRepo, memberCredRepo, membershipRepo).RegisterRoutes(api, requireAuth, requireMembership, wsAdmin)
+	handler.NewCustomDomainHandler(domainRepo, gateRepo).RegisterRoutes(api, wsAdmin)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),

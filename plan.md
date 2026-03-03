@@ -288,18 +288,57 @@ Voir CLAUDE.md pour le schéma complet.
 
 ---
 
-## Phase 8 : Domaines Personnalisés & Reverse Proxy (Caddy)
+## Phase 8 : Domaines Personnalisés
 
-### 8.1 - Backend
-- [ ] Endpoint interne `GET /api/internal/verify-domain` (utilisé par Caddy pour l'On-Demand TLS)
-- [ ] CRUD custom domains : `POST/GET/DELETE /api/workspaces/:ws_id/domains`
-- [ ] Vérification de propriété du domaine (DNS TXT record check)
-- [ ] Middleware Tenant Resolution complet (résolution Host -> workspace ou gate)
+> Un domaine custom pointe vers **une gate spécifique** (page unlock/PIN pad).
+> Deux modes de déploiement supportés — même backend, docker-compose différent.
+>
+> **Mode A — Proxy bundlé (Caddy)** : `docker-compose --profile caddy up`
+> Caddy On-Demand TLS : appelle `GET /api/public/verify-domain` avant d'émettre un cert.
+> DNS pointé sur le serveur → TLS Let's Encrypt automatique, zéro config.
+>
+> **Mode B — Proxy externe** : l'utilisateur apporte son proxy (nginx, traefik…).
+> Il conserve le header `Host` et peut utiliser `GET /api/public/verify-domain`
+> comme endpoint ACME `ask` s'il en a besoin. TLS géré par son proxy.
 
-### 8.2 - Caddy Configuration
-- [ ] Caddyfile avec directive `on_demand_tls` pointant vers le endpoint de vérification
-- [ ] Règles de reverse proxy vers le backend Go et le frontend
-- [ ] Configuration pour le dev local (certificats auto-signés ou HTTP)
+### 8.1 - Migration & Modèle
+- [x] Migration `000006_custom_domains` :
+  ```sql
+  custom_domains (
+    id UUID PK, workspace_id FK, gate_id FK → gates CASCADE,
+    domain TEXT UNIQUE NOT NULL,
+    dns_challenge_token TEXT NOT NULL DEFAULT encode(gen_random_bytes(24), 'hex'),
+    verified_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )
+  INDEX ON custom_domains(gate_id), INDEX ON custom_domains(domain)
+  ```
+- [x] Model `CustomDomain` (`model/custom_domain.go`)
+- [x] Repository `CustomDomainRepository` (`repository/custom_domain.go`)
+
+### 8.2 - Backend endpoints
+- [x] `POST   /api/workspaces/{ws_id}/gates/{gate_id}/domains` — ajouter un domaine custom (wsAdmin)
+- [x] `GET    /api/workspaces/{ws_id}/gates/{gate_id}/domains` — lister les domaines d'une gate (wsAdmin)
+- [x] `DELETE /api/workspaces/{ws_id}/gates/{gate_id}/domains/{domain_id}` — supprimer (wsAdmin)
+- [x] `POST   /api/workspaces/{ws_id}/gates/{gate_id}/domains/{domain_id}/verify` — déclenche la vérification DNS TXT (wsAdmin)
+  - Résout `_gaty.<domain>` TXT → compare au `dns_challenge_token`
+  - Si OK : `verified_at=now()`
+- [x] `GET /api/public/verify-domain?domain=xxx` — endpoint ACME (Caddy `ask`) ; 200 si vérifié, 403 sinon
+- [x] `GET /api/public/domains/list` — liste de tous les domaines vérifiés (scripts d'automatisation proxy externe)
+- [ ] `GET /api/public/resolve?domain=xxx` — résolution pour le frontend sur domaine custom _(Phase 9 — frontend)_
+
+### 8.3 - Tenant Middleware
+- [x] Mettre à jour `middleware/tenant.go` : Host header → lookup `custom_domains` → injecter `TenantTypeGate` + `gate_id` en contexte
+
+### 8.4 - Infrastructure (docker-compose)
+- [x] `configs/Caddyfile.prod` (On-Demand TLS) :
+  ```
+  { on_demand_tls { ask http://app:8080/api/public/verify-domain } }
+  {$APP_DOMAIN} { reverse_proxy app:8080 }
+  :443 { tls { on_demand } reverse_proxy app:8080 }
+  ```
+- [x] `docker-compose.yml` : profil `prod` pour le service Caddy (désactivé en dev)
+- [ ] Documentation : comment configurer un proxy externe (nginx, traefik) pour le mode B _(Phase 11)_
 
 ---
 

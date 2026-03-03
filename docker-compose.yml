@@ -23,13 +23,19 @@ services:
       - ./configs/mosquitto.conf:/mosquitto/config/mosquitto.conf
       - ./configs/mosquitto.acl:/mosquitto/config/mosquitto.acl
 
+  # Caddy reverse proxy with On-Demand TLS for custom gate domains.
+  # Uses configs/Caddyfile.prod — set APP_DOMAIN env var before starting.
+  # For local dev, run `task dev-api` instead (uses the root Caddyfile via `caddy run`).
   caddy:
     image: caddy:2-alpine
+    profiles: ["prod"]
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-example.com}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
+      - ./configs/Caddyfile.prod:/etc/caddy/Caddyfile
       - caddy_data:/data
       - caddy_config:/config
 
