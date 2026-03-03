@@ -26,3 +26,20 @@ CREATE TABLE workspace_members (
 );
 
 CREATE INDEX idx_workspace_members_user ON workspace_members(user_id);
+
+-- Members: workspace-scoped people managed by admins (no platform account required).
+-- username is unique per workspace; user_id is set if the member converts to a platform user.
+CREATE TABLE members (
+    id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID        NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    display_name TEXT        NOT NULL,
+    email        TEXT,
+    username     TEXT        NOT NULL,
+    user_id      UUID        REFERENCES users(id),
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at   TIMESTAMPTZ,
+    UNIQUE (workspace_id, username)
+);
+
+CREATE INDEX idx_members_workspace ON members(workspace_id);
+CREATE INDEX idx_members_user ON members(user_id) WHERE user_id IS NOT NULL;

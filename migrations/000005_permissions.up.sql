@@ -18,3 +18,13 @@ CREATE TABLE gate_user_policies (
 
 -- Fast lookup for "which gates can this user see?"
 CREATE INDEX idx_gate_user_policies_user ON gate_user_policies(user_id);
+
+CREATE TABLE gate_member_policies (
+    gate_id         UUID NOT NULL REFERENCES gates(id)        ON DELETE CASCADE,
+    member_id       UUID NOT NULL REFERENCES members(id)      ON DELETE CASCADE,
+    permission_code TEXT NOT NULL REFERENCES permissions(code) ON DELETE CASCADE,
+    PRIMARY KEY (gate_id, member_id, permission_code)
+);
+
+-- Fast lookup for "which gates can this member see?"
+CREATE INDEX idx_gate_member_policies_member ON gate_member_policies(member_id);

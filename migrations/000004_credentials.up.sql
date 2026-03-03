@@ -1,4 +1,4 @@
-CREATE TYPE credential_target_type AS ENUM ('USER', 'GATE');
+CREATE TYPE credential_target_type AS ENUM ('USER', 'MEMBER', 'GATE');
 CREATE TYPE credential_type AS ENUM ('PASSWORD', 'PIN_CODE', 'API_TOKEN', 'OIDC_IDENTITY');
 
 CREATE TABLE credentials (

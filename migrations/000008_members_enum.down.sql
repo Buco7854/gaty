@@ -1,2 +1,0 @@
--- PostgreSQL does not support removing enum values.
--- To fully revert, drop and recreate the enum (handled by 000009 down which drops dependent tables).
