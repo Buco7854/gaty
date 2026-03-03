@@ -6,43 +6,21 @@
 - **Migrations** : golang-migrate (fichiers SQL versionnés)
 - **Broker IoT** : Eclipse Mosquitto (MQTT)
 - **Reverse Proxy** : Caddy (On-Demand TLS)
-- **Frontend** : React + Vite + TypeScript + shadcn/ui + Tailwind CSS
+- **Frontend** : React + Vite + TypeScript + Mantine + Tailwind CSS
 - **Tests** : Unitaires + Intégration API + E2E (flux critiques)
 - **Dev local** : Go avec hot-reload (air) + Docker Compose pour l'infra (PG, Redis, Mosquitto, Caddy)
 
 ---
 
-## Architecture Core : Users vs Members
+## Architecture Core : workspace_memberships (cible post-refactor Phase R)
 
-Deux entités distinctes coexistent dans GATY.
+Tout accès workspace passe par la table pivot `workspace_memberships`.
+- **User plateforme** : membership avec `user_id` renseigné, s'authentifie par email/password global
+- **Membre managé** : membership avec `user_id` null, s'authentifie par `workspace_slug + local_username + password`
+- **Fusion** (merge) : un membre managé lie son `user_id` → UPDATE atomique, permissions intactes
+- **Permissions** : `membership_policies` lié au `membership_id` (pas à l'identité) → aucun problème à la fusion
 
-### Users (Comptes Plateforme)
-- Personne qui **crée un compte** sur l'application web
-- Table : `users` (id, email, created_at)
-- Credential : `credentials` (target_type=USER, type=PASSWORD ou OIDC_IDENTITY)
-- Peut créer des workspaces et en être OWNER/ADMIN/MEMBER
-- Table de jointure : `workspace_members` → rôles OWNER, ADMIN, MEMBER
-- Authentification : JWT émis par l'API (accès à l'interface web)
-
-### Members (Personnes gérées par admin)
-- Personne **ajoutée manuellement** par un admin dans un workspace
-- **N'a PAS de compte plateforme** par défaut
-- Table : `members` (id, workspace_id, display_name, email, username, user_id nullable, created_at)
-  - `email` = simple info de contact pour l'admin (non utilisé pour auth)
-  - `username` = identifiant de connexion dans le contexte du workspace
-  - `user_id` = nullable, renseigné si le member convertit son compte en User
-- Credential : `credentials` (target_type=MEMBER, type=PASSWORD ou API_TOKEN)
-- Peut être autorisé sur des gates spécifiques via `gate_member_policies`
-- **Conversion possible** : un member peut créer un compte User → le lien `user_id` est établi
-
-### Vecteurs d'accès aux Gates
-| Vecteur | Mécanisme |
-|---------|-----------|
-| User OWNER/ADMIN du workspace | Rôle workspace (accès total) |
-| User avec policy | `gate_user_policies` (gate:trigger_open etc.) |
-| Member avec policy | `gate_member_policies` (gate:trigger_open etc.) |
-| Code PIN public | `credentials` (target_type=GATE, type=PIN_CODE) |
-| Token API | `credentials` (target_type=USER\|MEMBER, type=API_TOKEN) |
+Voir CLAUDE.md pour le schéma complet.
 
 ---
 
@@ -51,7 +29,7 @@ Deux entités distinctes coexistent dans GATY.
 - [x] Initialiser le module Go (`go mod init`)
 - [x] Mettre en place la structure de dossiers backend (cmd/, internal/, migrations/, configs/)
 - [x] Initialiser le projet React avec Vite + TypeScript
-- [x] Installer et configurer Tailwind CSS + shadcn/ui
+- [ ] Installer et configurer Mantine + Tailwind CSS
 - [x] Créer le `docker-compose.yml` (PostgreSQL, Redis, Mosquitto, Caddy)
 - [x] Configurer `air` pour le hot-reload Go
 - [x] Créer le `Caddyfile` de base (dev local)
@@ -70,7 +48,7 @@ Deux entités distinctes coexistent dans GATY.
 
 ### 1.2 - Tables Core & Multi-Tenant
 - [x] Migration : table `users` (id UUID, email, created_at, deleted_at)
-- [x] Migration : table `workspaces` (id, name, owner_id FK, oidc_settings JSONB, created_at, deleted_at)
+- [x] Migration : table `workspaces` (id, name, owner_id FK, sso_settings JSONB, created_at, deleted_at)
 - [x] Migration : table `workspace_members` (workspace_id, user_id, workspace_role ENUM, PK composite) — jointure User ↔ Workspace
 - [x] Migration : table `gates` (id, workspace_id FK, name, integration_type ENUM, integration_config JSONB, status, last_seen_at, created_at, deleted_at)
 
@@ -82,11 +60,11 @@ Deux entités distinctes coexistent dans GATY.
 - [x] Migration : table `gate_user_policies` (gate_id, user_id, permission_code, PK composite)
 
 ### 1.5 - Tables Members (non-user)
-- [x] Migration : table `members` (id UUID, workspace_id FK, display_name, email nullable, username, user_id nullable FK → users, created_at, deleted_at)
+- [x] Migration : table `members` (id UUID, workspace_id FK, display_name, email nullable, username, **workspace_role DEFAULT 'MEMBER'**, user_id nullable FK → users, created_at, deleted_at)
 - [x] Contrainte UNIQUE (workspace_id, username) sur `members`
-- [x] Migration : étendre l'ENUM `credential_target_type` pour inclure `MEMBER` _(000008)_
-- [x] Migration : table `gate_member_policies` (gate_id FK, member_id FK, permission_code FK, PK composite) _(000009)_
-- [x] Index sur `gate_member_policies(member_id)` pour lookup rapide
+- [x] Migration : ENUM `credential_target_type` inclut MEMBER depuis la création _(dans 000004)_
+- [x] Migration : table `gate_policies` unifiée (gate_id FK, target_type TEXT CHECK IN('USER','MEMBER'), target_id UUID, permission_code FK, PK composite) _(dans 000005)_
+- [x] Index sur `gate_policies(target_type, target_id)` pour lookup rapide
 
 ### 1.4 - Tables Domaines Personnalisés & Audit
 - [x] Migration : table `custom_domains` (id, domain_name UNIQUE, target_type ENUM, target_id, base_path, is_verified, created_at)
@@ -134,30 +112,24 @@ Deux entités distinctes coexistent dans GATY.
 - [x] Endpoint `GET /api/workspaces/:ws_id/members/:member_id` (détails d'un member)
 - [x] Endpoint `PATCH /api/workspaces/:ws_id/members/:member_id` (mise à jour infos)
 - [x] Endpoint `DELETE /api/workspaces/:ws_id/members/:member_id` (soft delete)
-- [ ] Endpoint `POST /api/workspaces/:ws_id/members/:member_id/convert` (conversion member → user)
+- [x] Endpoint `POST /api/workspaces/:ws_id/members/:member_id/convert` (conversion member → user)
   - Crée un compte `users` avec l'email du member
   - Migre le credential PASSWORD vers le nouveau user
+  - Ajoute le user dans `workspace_members` avec le rôle du member
   - Lie `members.user_id` → nouveau user
-  - Envoie un email d'invitation (si email renseigné)
 
 ---
 
 ## Phase 4 : RBAC & Permissions Granulaires
 
-### 4.1 - RBAC Users (implémenté)
-- [x] Service RBAC : vérification du rôle workspace (OWNER, ADMIN, MEMBER)
-- [x] Middleware d'autorisation workspace (injecte le rôle dans le context) _(WorkspaceMember + WorkspaceAdmin, Huma per-op)_
-- [x] Service de vérification des permissions gate (lecture de `gate_user_policies`)
-- [x] Endpoint `GET /api/workspaces/:ws_id/gates` avec filtrage contextuel (ADMIN voit tout, MEMBER voit uniquement ses gates autorisées via JOIN)
-- [x] Endpoint `POST /api/workspaces/:ws_id/gates/:gate_id/policies` (attribution de permissions à un user sur une gate)
-- [x] Endpoint `DELETE /api/workspaces/:ws_id/gates/:gate_id/policies/:user_id` (retrait de permissions)
-- [x] Endpoint `GET /api/workspaces/:ws_id/gates/:gate_id/policies` (liste des policies d'une gate)
-
-### 4.2 - RBAC Members (à faire)
-- [ ] Endpoint `POST /api/workspaces/:ws_id/gates/:gate_id/member-policies` (attribution permissions à un member sur une gate)
-- [ ] Endpoint `DELETE /api/workspaces/:ws_id/gates/:gate_id/member-policies/:member_id` (retrait)
-- [ ] Endpoint `GET /api/workspaces/:ws_id/gates/:gate_id/member-policies` (liste)
-- [ ] Mise à jour du service RBAC : vérifier `gate_member_policies` lors du `trigger` par un member
+### 4.1 - RBAC Unifié (Users + Members)
+- [x] Middleware `WorkspaceMember`/`WorkspaceAdmin` : supporte Users (via `workspace_members`) **et** Members (via `members.workspace_role`)
+- [x] Table `gate_policies` unifiée : `target_type` (USER|MEMBER) + `target_id` → remplace `gate_user_policies` + `gate_member_policies`
+- [x] Service RBAC : vérification du rôle workspace (OWNER, ADMIN, MEMBER) pour users et members
+- [x] `GET /api/workspaces/:ws_id/gates` : filtrage contextuel (ADMIN voit tout, MEMBER voit gates avec policy via JOIN sur `gate_policies`)
+- [x] `POST /api/workspaces/:ws_id/gates/:gate_id/policies` (attribution permissions — `target_type` + `target_id` dans le body)
+- [x] `DELETE /api/workspaces/:ws_id/gates/:gate_id/policies/{target_type}/{target_id}` (retrait)
+- [x] `GET /api/workspaces/:ws_id/gates/:gate_id/policies` (liste des policies d'une gate)
 
 ---
 
@@ -184,30 +156,131 @@ Deux entités distinctes coexistent dans GATY.
 
 ---
 
-## Phase 6 : Guest Access (Code PIN Public)
+---
 
-- [ ] Endpoint `POST /api/public/unlock` (gate_id déduit du middleware Tenant ou du body)
-- [ ] Rate Limiting Redis (5 essais / 15 min / IP + rate limit global par gate_id)
-- [ ] Réponse à temps constant (obfuscation temporelle avec `time.Sleep` ou `subtle.ConstantTimeCompare`)
-- [ ] Recherche du credential (target_type=GATE, credential_type=PIN_CODE)
-- [ ] Validation bcrypt du PIN
-- [ ] Vérification des règles métier dans `metadata` JSONB (expires_at, allowed_days, allowed_hours)
-- [ ] Publication MQTT de la commande d'ouverture en cas de succès
-- [ ] Écriture dans `audit_logs` (succès et échecs)
-- [ ] CRUD des PIN codes pour les admins (`POST/DELETE /api/workspaces/:ws_id/gates/:gate_id/pins`)
+## Phase R : Refactor Architecture User/Member → workspace_memberships
+
+> **Priorité maximale** — Doit être complété avant de poursuivre les phases 6+.
+> L'ancienne architecture (tables `members`, `workspace_members`, `gate_policies` polymorphiques) est remplacée.
+
+### R1 — Migrations DB (réécriture complète, base vierge)
+- [x] Supprimer toutes les migrations existantes (000001 à 000005)
+- [x] `000001_extensions` : pgcrypto
+- [x] `000002_core_tables` : `users`, `workspaces`, `workspace_memberships`
+  - `workspaces` : ajouter `slug UNIQUE NOT NULL`, `member_auth_config JSONB DEFAULT '{}'`
+  - `workspace_memberships` : id, workspace_id FK, user_id FK nullable (SET NULL), local_username, display_name, role CHECK('OWNER','ADMIN','MEMBER'), auth_config JSONB DEFAULT '{}', invited_by FK, created_at
+  - CHECK (user_id IS NOT NULL OR local_username IS NOT NULL)
+  - UNIQUE (workspace_id, user_id) WHERE user_id IS NOT NULL
+  - UNIQUE (workspace_id, local_username) WHERE local_username IS NOT NULL
+- [x] `000003_gates` : table `gates` (inchangée)
+- [x] `000004_credentials` :
+  - table `credentials` (id PK, user_id FK → users CASCADE, type CHECK('PASSWORD','SSO_IDENTITY','API_TOKEN'), hashed_value, label, expires_at, metadata JSONB) — UNIQUE (user_id) WHERE type='PASSWORD', pas de contrainte unique sur API_TOKEN
+  - table `membership_credentials` (id PK, membership_id FK → workspace_memberships CASCADE, mêmes colonnes) — UNIQUE (membership_id) WHERE type='PASSWORD'
+  - table `gate_pins` (id, gate_id FK, hashed_pin, label, metadata JSONB, created_at)
+- [x] `000005_permissions` : table `permissions` (seed), table `membership_policies` (membership_id FK, gate_id FK, permission_code FK, PK composite)
+
+### R2 — Models
+- [x] Supprimer `model/member.go`
+- [x] Créer `model/membership.go` : struct `WorkspaceMembership` (id, workspace_id, user_id nullable, local_username, display_name, role, auth_config, created_at)
+- [x] Mettre à jour `model/workspace.go` : ajouter `Slug`, `MemberAuthConfig`, supprimer `WorkspaceMember`
+- [x] Mettre à jour `model/policy.go` : remplacer `GatePolicy` par `MembershipPolicy`
+- [x] Mettre à jour `model/credential.go` : ajouter `Label`, `ExpiresAt` ; supprimer target_type ENUM (simplifié, user_id direct)
+- [x] Créer `model/membership_credential.go` : struct `MembershipCredential` (même structure que Credential mais membership_id)
+- [x] Créer `model/gate_pin.go` : struct `GatePin`
+
+### R3 — Repositories
+- [x] Supprimer `repository/member.go`
+- [x] Créer `repository/membership.go` : `WorkspaceMembershipRepository`
+  - `Create(workspaceID, userID?, localUsername?, displayName, role)` → Membership
+  - `GetByID(membershipID, workspaceID)` → Membership
+  - `GetByLocalUsername(workspaceID, localUsername)` → Membership
+  - `GetByUserID(workspaceID, userID)` → Membership
+  - `List(workspaceID)` → []Membership
+  - `UpdateRole(membershipID, workspaceID, role)` → Membership
+  - `UpdateAuthConfig(membershipID, authConfig)` → Membership
+  - `LinkUser(membershipID, userID)` (merge : set user_id)
+  - `Delete(membershipID, workspaceID)` (hard delete)
+- [x] Mettre à jour `repository/workspace.go` : supprimer méthodes workspace_members, ajouter `GetBySlug`, `UpdateMemberAuthConfig`
+- [x] Mettre à jour `repository/policy.go` : utiliser `membership_id`
+- [x] Mettre à jour `repository/gate.go` : `ListForWorkspace` utilise `membership_id` (JOIN membership_policies)
+- [x] Créer `repository/gate_pin.go` : CRUD gate_pins
+- [x] Mettre à jour `repository/credential.go` : supprimer logique MEMBER/GATE, ajouter `ListByUser` (pour API tokens), `DeleteByID`
+- [x] Créer `repository/membership_credential.go` : `MembershipCredentialRepository`
+  - `Create(membershipID, type, hashedValue, label, expiresAt, metadata)` → MembershipCredential
+  - `GetByMembership(membershipID, type)` → MembershipCredential (PASSWORD/SSO)
+  - `ListByMembership(membershipID)` → []MembershipCredential (tous, pour API tokens)
+  - `DeleteByID(credID, membershipID)`
+
+### R4 — Services
+- [x] Mettre à jour `service/auth.go` :
+  - Login global PASSWORD : email + password → JWT `type=global`
+  - Login local PASSWORD : workspace_slug + local_username + password → JWT `type=local`
+  - `Merge(globalUserID, workspaceSlug, localUsername, localPassword)` → UPDATE atomique
+  - Refresh tokens Redis pour les deux types (global = raw UUID, local = JSON)
+- [x] Créer `service/membership.go` (fichier `service/member.go` réécrit) :
+  - `CreateLocal`, `InviteUser`, `GetByID`, `List`, `Update`, `Delete`, `SetPassword`
+  - `GetEffectiveAuthConfig` (func package-level)
+
+### R5 — Middleware
+- [x] Mettre à jour `middleware/auth.go` :
+  - `AuthExtractor` : lire `type` claim → stocker `user_id` (global) ou `membership_id+workspace_id+role` (local) en contexte
+  - Ajouter `RequireMembership` (global OU local)
+  - `MemberRoleFromContext` pour récupérer le rôle injecté par local JWT
+- [x] Mettre à jour `middleware/rbac.go` :
+  - `workspaceAccess` utilise `WorkspaceMembershipRepository`
+  - Injecte `wsMembershipIDKey` + `wsRoleKey` dans le contexte
+  - `WorkspaceMembershipIDFromContext` exposé pour les handlers
+
+### R6 — Handlers
+- [x] Réécrire `handler/member.go` → `MembershipHandler`
+  - `POST /api/workspaces/{ws_id}/members` (créer membre local)
+  - `POST /api/workspaces/{ws_id}/members/invite` (inviter user plateforme existant)
+  - `GET /api/workspaces/{ws_id}/members` (liste)
+  - `GET /api/workspaces/{ws_id}/members/{membership_id}` (détail)
+  - `PATCH /api/workspaces/{ws_id}/members/{membership_id}` (update)
+  - `DELETE /api/workspaces/{ws_id}/members/{membership_id}` (hard delete)
+- [x] Mettre à jour `handler/auth.go` :
+  - `POST /api/auth/login/local` (login membre par workspace_slug+username+password)
+  - `POST /api/auth/merge` (fusionner membership locale avec compte global)
+- [x] Mettre à jour `handler/workspace.go` : ajouter `slug` dans Create, supprimer endpoints `/users`
+- [x] Mettre à jour `handler/policy.go` : body `{membership_id, permission_code}`, path `policies/{membership_id}`
+- [x] Mettre à jour `handler/gate.go` : hard delete, membership_id via contexte RBAC
+- [x] Mettre à jour `cmd/server/main.go` : câbler nouveaux repos/services/handlers
+- [x] Créer `handler/gate_pin.go` : CRUD gate_pins _(reporté à Phase 6)_
+- [ ] Créer `handler/credential.go` : gestion credentials user _(reporté à Phase 6+)_
 
 ---
 
-## Phase 7 : OIDC (Single Sign-On)
+## Phase 6 : Guest Access (Code PIN Public)
 
-- [ ] Endpoint `GET /api/auth/oidc/:ws_id/authorize` (redirection vers le provider OIDC)
-- [ ] Endpoint `GET /api/auth/oidc/:ws_id/callback` (réception du code, échange token)
-- [ ] Validation du JWT OIDC (signature, issuer, audience)
-- [ ] Auto-Provisioning Just-In-Time : création user si inexistant
-- [ ] Lecture des claims (groups, roles) et application des `mapping_rules` du workspace
-- [ ] Attribution automatique des `gate_user_policies` selon les règles mappées
-- [ ] Stockage du credential OIDC_IDENTITY dans la table `credentials`
-- [ ] Configuration UI pour les admins : endpoint `PATCH /api/workspaces/:ws_id/oidc-settings`
+- [x] Endpoint `POST /api/public/unlock` (gate_id dans le body)
+- [x] Rate Limiting Redis (5 essais / 15 min / IP par gate_id, fenêtre fixe via ExpireNX)
+- [x] Réponse à temps constant (padding via `time.Sleep`, minimum 400ms)
+- [x] Recherche dans table `gate_pins`, validation bcrypt
+- [x] Vérification des règles métier dans `metadata` JSONB (expires_at, allowed_days, allowed_hours_start/end)
+- [x] Publication MQTT de la commande d'ouverture en cas de succès
+- [ ] Écriture dans `audit_logs` (succès et échecs) _(table supprimée en Phase R, reporté)_
+- [x] CRUD des PIN codes pour les admins (`POST/GET/DELETE /api/workspaces/{ws_id}/gates/{gate_id}/pins`)
+
+---
+
+## Phase 7 : SSO (Single Sign-On)
+
+> Architecture adaptée au refactor Phase R : SSO workspace uniquement (local JWT), membership_credentials pour SSO_IDENTITY, auto-provisioning crée un `workspace_membership`.
+
+- [x] Endpoint `GET /api/auth/sso/{ws_slug}/authorize` (redirection vers le provider OIDC via discovery)
+- [x] Endpoint `GET /api/auth/sso/{ws_slug}/callback` (échange code→tokens, vérification ID token)
+- [x] Validation du ID token OIDC (signature, issuer, audience via go-oidc/v3)
+- [x] État anti-CSRF : state random stocké dans Redis (TTL 10 min), consommé à usage unique
+- [x] Cache OIDC provider (sync.RWMutex) pour éviter les appels discovery répétés
+- [x] Auto-Provisioning Just-In-Time : création `workspace_membership` + credential `SSO_IDENTITY` si auto_provision=true
+- [x] Lecture des claims + role mapping via `role_claim` / `role_mapping` dans les settings
+- [x] Stockage du credential SSO_IDENTITY dans `membership_credentials` (post-Phase R)
+- [x] Redirection frontend vers `{frontendURL}/auth/sso/callback?access_token=...&refresh_token=...`
+- [x] Gestion erreurs provider → redirection `?error={code}` (invalid_state, access_denied, server_error)
+- [x] Endpoint `GET /api/workspaces/{ws_id}/sso-settings` (lecture config SSO, wsAdmin)
+- [x] Endpoint `PATCH /api/workspaces/{ws_id}/sso-settings` (mise à jour config SSO, wsAdmin)
+- [x] `BASE_URL` et `FRONTEND_URL` ajoutés à config.go (avec defaults dev)
 
 ---
 
@@ -239,7 +312,7 @@ Deux entités distinctes coexistent dans GATY.
 ### 9.2 - Pages Auth
 - [ ] Page Login (email/password)
 - [ ] Page Register
-- [ ] Bouton "Se connecter avec SSO" (flux OIDC)
+- [ ] Bouton "Se connecter avec SSO" (flux SSO)
 - [ ] Gestion du refresh token
 
 ### 9.3 - Dashboard Workspace
@@ -264,7 +337,7 @@ Deux entités distinctes coexistent dans GATY.
 ### 9.6 - Temps Réel (SSE)
 - [ ] Endpoint SSE backend via `sse.Register` de Huma (`GET /api/workspaces/:ws_id/gates/events`)
 - [ ] Définir les types d'événements SSE (GateStatusChanged, GateCommandAck) comme structs Go mappés dans sse.Register
-- [ ] Bridge MQTT → SSE : le backend relaie les messages MQTT reçus vers les connexions SSE actives (fan-out par workspace)
+- [ ] Bridge MQTT → SSE via Redis Pub/Sub : à la réception d'un message MQTT, le backend publie sur un channel Redis `gate:events:{workspace_id}` ; toutes les instances s'abonnent et font le fan-out vers leurs connexions SSE locales (nécessaire pour le multi-instance)
 - [ ] Client SSE frontend : hook React `useGateEvents()` basé sur `EventSource` avec reconnexion automatique
 - [ ] Mise à jour automatique de l'UI lors d'un changement de statut
 
@@ -277,7 +350,7 @@ Deux entités distinctes coexistent dans GATY.
 - [ ] Tests de la validation PIN (bcrypt, règles métier metadata, temps constant)
 - [ ] Tests du Tenant Resolution middleware
 - [ ] Tests du rate limiter Redis (mock)
-- [ ] Tests de l'auto-provisioning OIDC (mapping rules)
+- [ ] Tests de l'auto-provisioning SSO (mapping rules)
 
 ### 10.2 - Tests d'Intégration API (Go)
 - [ ] Setup d'une DB de test (testcontainers-go ou DB dédiée)

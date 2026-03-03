@@ -53,6 +53,7 @@ func main() {
 	router := chi.NewMux()
 	router.Use(chimw.RequestID)
 	router.Use(chimw.RealIP)
+	router.Use(middleware.ClientIPInjector())
 	router.Use(chimw.Logger)
 	router.Use(chimw.Recoverer)
 	router.Use(cors.Handler(cors.Options{
@@ -77,10 +78,12 @@ func main() {
 	userRepo := repository.NewUserRepository(pool)
 	credRepo := repository.NewCredentialRepository(pool)
 	wsRepo := repository.NewWorkspaceRepository(pool)
+	membershipRepo := repository.NewWorkspaceMembershipRepository(pool)
+	memberCredRepo := repository.NewMembershipCredentialRepository(pool)
 	gateRepo := repository.NewGateRepository(pool)
+	gatePinRepo := repository.NewGatePinRepository(pool)
 	policyRepo := repository.NewPolicyRepository(pool)
 	auditRepo := repository.NewAuditRepository(pool)
-	memberRepo := repository.NewMemberRepository(pool)
 
 	// Subscribe to gate status updates from MQTT
 	if mqttClient != nil {
@@ -90,27 +93,34 @@ func main() {
 	}
 
 	// Services
-	authSvc := service.NewAuthService(userRepo, credRepo, redisClient, cfg.JWTSecret)
-	memberSvc := service.NewMemberService(memberRepo, credRepo, cfg.JWTSecret)
+	authSvc := service.NewAuthService(userRepo, credRepo, membershipRepo, memberCredRepo, wsRepo, redisClient, cfg.JWTSecret)
+	membershipSvc := service.NewMembershipService(membershipRepo, memberCredRepo, wsRepo)
+	ssoSvc := service.NewSSOService(wsRepo, membershipRepo, memberCredRepo, redisClient, cfg.BaseURL)
 
 	api := humachi.New(router, huma.DefaultConfig("GATY API", "0.1.0"))
 
-	// Global soft auth middleware: silently extracts Bearer token and sets user ID in context
+	// Global soft auth middleware: silently extracts Bearer token and injects identity into context.
 	api.UseMiddleware(middleware.AuthExtractor(authSvc))
+
 	// Per-operation middlewares
 	requireAuth := middleware.RequireAuth(api)
-	wsMember := middleware.WorkspaceMember(api, wsRepo)
-	wsAdmin := middleware.WorkspaceAdmin(api, wsRepo)
+	wsMember := middleware.WorkspaceMember(api, wsRepo, membershipRepo)
+	wsAdmin := middleware.WorkspaceAdmin(api, wsRepo, membershipRepo)
 
-	type HealthOutput struct {
+	huma.Get(api, "/api/health", func(ctx context.Context, _ *struct{}) (*struct {
 		Body struct {
 			Status   string `json:"status"`
 			Database string `json:"database"`
 			Redis    string `json:"redis"`
 		}
-	}
-	huma.Get(api, "/api/health", func(ctx context.Context, _ *struct{}) (*HealthOutput, error) {
-		resp := &HealthOutput{}
+	}, error) {
+		resp := &struct {
+			Body struct {
+				Status   string `json:"status"`
+				Database string `json:"database"`
+				Redis    string `json:"redis"`
+			}
+		}{}
 		resp.Body.Status = "ok"
 		if err := pool.Ping(ctx); err != nil {
 			resp.Body.Database = "unreachable"
@@ -127,10 +137,12 @@ func main() {
 
 	// Register route groups
 	handler.NewAuthHandler(authSvc, userRepo).RegisterRoutes(api, requireAuth)
-	handler.NewWorkspaceHandler(wsRepo).RegisterRoutes(api, requireAuth, wsAdmin)
+	handler.NewWorkspaceHandler(wsRepo).RegisterRoutes(api, requireAuth)
 	handler.NewGateHandler(gateRepo, policyRepo, auditRepo, mqttClient).RegisterRoutes(api, wsMember, wsAdmin)
 	handler.NewPolicyHandler(policyRepo).RegisterRoutes(api, wsAdmin)
-	handler.NewMemberHandler(memberSvc).RegisterRoutes(api, wsAdmin)
+	handler.NewMemberHandler(membershipSvc).RegisterRoutes(api, wsAdmin)
+	handler.NewGatePinHandler(gatePinRepo, gateRepo, mqttClient, redisClient).RegisterRoutes(api, wsAdmin)
+	handler.NewSSOHandler(ssoSvc, authSvc, wsRepo, cfg.FrontendURL).RegisterRoutes(api, wsAdmin)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),

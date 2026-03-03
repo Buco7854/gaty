@@ -18,6 +18,8 @@ type Config struct {
 	MQTTPassword string // optional
 	JWTSecret    string
 	CORSOrigins  []string
+	BaseURL      string // public base URL of this API, e.g. https://api.example.com
+	FrontendURL  string // public URL of the frontend SPA, for post-SSO redirects
 }
 
 func Load() (*Config, error) {
@@ -61,6 +63,16 @@ func Load() (*Config, error) {
 
 	if v := os.Getenv("CORS_ORIGINS"); v != "" {
 		cfg.CORSOrigins = strings.Split(v, ",")
+	}
+
+	cfg.BaseURL = os.Getenv("BASE_URL")
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = fmt.Sprintf("http://localhost:%d", cfg.Port)
+	}
+
+	cfg.FrontendURL = os.Getenv("FRONTEND_URL")
+	if cfg.FrontendURL == "" {
+		cfg.FrontendURL = "http://localhost:5173"
 	}
 
 	return cfg, nil
