@@ -2,11 +2,11 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 
+	"github.com/Buco7854/gaty/internal/integration"
 	"github.com/Buco7854/gaty/internal/middleware"
 	"github.com/Buco7854/gaty/internal/model"
 	internalmqtt "github.com/Buco7854/gaty/internal/mqtt"
@@ -71,8 +71,11 @@ type CreateGateInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	Body        struct {
 		Name              string                    `json:"name" minLength:"1"`
-		IntegrationType   model.GateIntegrationType `json:"integration_type"`
+		IntegrationType   model.GateIntegrationType `json:"integration_type,omitempty"`
 		IntegrationConfig map[string]any            `json:"integration_config,omitempty"`
+		OpenConfig        *model.ActionConfig       `json:"open_config,omitempty"`
+		CloseConfig       *model.ActionConfig       `json:"close_config,omitempty"`
+		StatusConfig      *model.ActionConfig       `json:"status_config,omitempty"`
 	}
 }
 
@@ -81,7 +84,18 @@ type GateOutput struct {
 }
 
 func (h *GateHandler) Create(ctx context.Context, input *CreateGateInput) (*GateOutput, error) {
-	gate, err := h.gates.Create(ctx, input.WorkspaceID, input.Body.Name, input.Body.IntegrationType, input.Body.IntegrationConfig)
+	intType := input.Body.IntegrationType
+	if intType == "" {
+		intType = model.IntegrationTypeMQTT
+	}
+	gate, err := h.gates.Create(ctx, input.WorkspaceID, repository.CreateGateParams{
+		Name:              input.Body.Name,
+		IntegrationType:   intType,
+		IntegrationConfig: input.Body.IntegrationConfig,
+		OpenConfig:        input.Body.OpenConfig,
+		CloseConfig:       input.Body.CloseConfig,
+		StatusConfig:      input.Body.StatusConfig,
+	})
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create gate")
 	}
@@ -124,13 +138,20 @@ type UpdateGateInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	GateID      uuid.UUID `path:"gate_id"`
 	Body        struct {
-		Name              string         `json:"name" minLength:"1"`
-		IntegrationConfig map[string]any `json:"integration_config,omitempty"`
+		Name         string              `json:"name" minLength:"1"`
+		OpenConfig   *model.ActionConfig `json:"open_config,omitempty"`
+		CloseConfig  *model.ActionConfig `json:"close_config,omitempty"`
+		StatusConfig *model.ActionConfig `json:"status_config,omitempty"`
 	}
 }
 
 func (h *GateHandler) Update(ctx context.Context, input *UpdateGateInput) (*GateOutput, error) {
-	gate, err := h.gates.Update(ctx, input.GateID, input.WorkspaceID, input.Body.Name, input.Body.IntegrationConfig)
+	gate, err := h.gates.Update(ctx, input.GateID, input.WorkspaceID, repository.UpdateGateParams{
+		Name:         input.Body.Name,
+		OpenConfig:   input.Body.OpenConfig,
+		CloseConfig:  input.Body.CloseConfig,
+		StatusConfig: input.Body.StatusConfig,
+	})
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")
 	}
@@ -159,7 +180,7 @@ func (h *GateHandler) Delete(ctx context.Context, input *DeleteGateInput) (*stru
 	return nil, nil
 }
 
-// --- Trigger gate ---
+// --- Trigger gate (open) ---
 
 type TriggerInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
@@ -189,12 +210,12 @@ func (h *GateHandler) Trigger(ctx context.Context, input *TriggerInput) (*struct
 		return nil, huma.Error500InternalServerError("failed to get gate")
 	}
 
-	if h.mqtt != nil {
-		payload, _ := json.Marshal(map[string]string{"action": "open"})
-		topic := internalmqtt.CommandTopic(gate.WorkspaceID, gate.ID)
-		if err := h.mqtt.Publish(topic, payload); err != nil {
-			slog.Warn("mqtt: failed to publish command", "gate_id", gate.ID, "error", err)
-		}
+	// Dispatch via the integration driver (MQTT, HTTP, or noop).
+	driver, driverErr := integration.NewOpenDriver(gate, h.mqtt)
+	if driverErr != nil {
+		slog.Warn("gate: failed to build open driver", "gate_id", gate.ID, "error", driverErr)
+	} else if execErr := driver.Execute(ctx, gate); execErr != nil {
+		slog.Warn("gate: open driver execution failed", "gate_id", gate.ID, "error", execErr)
 	}
 
 	if h.audit != nil {

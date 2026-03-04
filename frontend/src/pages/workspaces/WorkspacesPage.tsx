@@ -1,147 +1,144 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '@/lib/api'
+import { workspacesApi } from '@/api'
 import type { WorkspaceWithRole } from '@/types'
-import { Plus, Building2, ChevronRight } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import {
+  Container, Title, Text, Group, Button, Modal, TextInput, Stack, Alert,
+  Card, Avatar, Badge, Skeleton, Center,
+} from '@mantine/core'
+import { useDisclosure } from '@mantine/hooks'
+import { Plus, Building2, ChevronRight, AlertCircle } from 'lucide-react'
+
+function autoSlug(n: string) {
+  return n.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+}
 
 export default function WorkspacesPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [showCreate, setShowCreate] = useState(false)
+  const { t } = useTranslation()
+  const [opened, { open, close }] = useDisclosure(false)
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   const { data: workspaces, isLoading } = useQuery<WorkspaceWithRole[]>({
     queryKey: ['workspaces'],
-    queryFn: () =>
-      api.get('/workspaces').then((r) => {
-        const d = r.data as unknown
-        if (Array.isArray(d)) return d as WorkspaceWithRole[]
-        return ((d as Record<string, unknown>).workspaces ?? []) as WorkspaceWithRole[]
-      }),
+    queryFn: workspacesApi.list,
   })
 
   const create = useMutation({
-    mutationFn: (body: { name: string; slug: string }) => api.post('/workspaces', body),
+    mutationFn: () => workspacesApi.create(name, slug),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['workspaces'] })
-      setShowCreate(false)
+      close()
       setName('')
       setSlug('')
+      setError(null)
     },
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { title?: string } } })?.response?.data?.title
-      setError(msg ?? 'Failed to create workspace')
+      setError(msg ?? t('common.error'))
     },
   })
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
-    create.mutate({ name, slug })
-  }
-
-  function autoSlug(n: string) {
-    return n.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+    create.mutate()
   }
 
   return (
-    <div className="p-8 max-w-3xl mx-auto">
-      <div className="flex items-center justify-between mb-8">
+    <Container size="sm" py="xl">
+      <Group justify="space-between" mb="xl">
         <div>
-          <h1 className="text-2xl font-bold">Workspaces</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Select a workspace to manage your gates</p>
+          <Title order={2}>{t('workspaces.title')}</Title>
+          <Text c="dimmed" size="sm">{t('workspaces.subtitle')}</Text>
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-1.5 bg-primary text-primary-foreground rounded-md px-3 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          New workspace
-        </button>
-      </div>
+        <Button leftSection={<Plus size={16} />} onClick={open}>
+          {t('workspaces.new')}
+        </Button>
+      </Group>
 
-      {showCreate && (
-        <div className="mb-6 rounded-lg border border-border p-4 bg-card">
-          <h2 className="font-semibold mb-3">Create workspace</h2>
-          <form onSubmit={handleCreate} className="space-y-3">
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium">Name</label>
-              <input
-                value={name}
-                onChange={(e) => { setName(e.target.value); if (!slug) setSlug(autoSlug(e.target.value)) }}
-                required
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring transition-shadow"
-                placeholder="My Building"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium">Slug</label>
-              <input
-                value={slug}
-                onChange={(e) => setSlug(autoSlug(e.target.value))}
-                required
-                pattern="[a-z0-9-]+"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring transition-shadow font-mono"
-                placeholder="my-building"
-              />
-              <p className="text-xs text-muted-foreground">Lowercase letters, numbers, hyphens</p>
-            </div>
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            <div className="flex gap-2 pt-1">
-              <button
-                type="submit"
-                disabled={create.isPending}
-                className="bg-primary text-primary-foreground rounded-md px-3 py-1.5 text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
-              >
-                {create.isPending ? 'Creating…' : 'Create'}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setShowCreate(false); setError(null) }}
-                className="rounded-md px-3 py-1.5 text-sm hover:bg-accent transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+      <Modal opened={opened} onClose={close} title={t('workspaces.create')}>
+        <form onSubmit={handleCreate}>
+          <Stack>
+            <TextInput
+              label={t('common.name')}
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value)
+                if (!slug) setSlug(autoSlug(e.target.value))
+              }}
+              required
+              placeholder="My Building"
+            />
+            <TextInput
+              label={t('common.slug')}
+              value={slug}
+              onChange={(e) => setSlug(autoSlug(e.target.value))}
+              required
+              placeholder="my-building"
+              description={t('workspaces.slugHint')}
+              styles={{ input: { fontFamily: 'monospace' } }}
+            />
+            {error && (
+              <Alert icon={<AlertCircle size={16} />} color="red" variant="light">
+                {error}
+              </Alert>
+            )}
+            <Group justify="flex-end">
+              <Button variant="default" onClick={close}>{t('common.cancel')}</Button>
+              <Button type="submit" loading={create.isPending}>{t('common.create')}</Button>
+            </Group>
+          </Stack>
+        </form>
+      </Modal>
 
       {isLoading ? (
-        <div className="space-y-2">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="h-16 rounded-lg border border-border bg-muted/40 animate-pulse" />
-          ))}
-        </div>
+        <Stack>
+          {[0, 1, 2].map((i) => <Skeleton key={i} height={72} radius="md" />)}
+        </Stack>
       ) : workspaces?.length === 0 ? (
-        <div className="text-center py-16 text-muted-foreground">
-          <Building2 className="w-10 h-10 mx-auto mb-3 opacity-40" />
-          <p className="font-medium">No workspaces yet</p>
-          <p className="text-sm mt-0.5">Create one to get started</p>
-        </div>
+        <Center py={80}>
+          <Stack align="center" gap="xs">
+            <Building2 size={40} opacity={0.3} />
+            <Text fw={500}>{t('workspaces.noWorkspaces')}</Text>
+            <Text size="sm" c="dimmed">{t('workspaces.noWorkspacesHint')}</Text>
+          </Stack>
+        </Center>
       ) : (
-        <div className="space-y-2">
+        <Stack gap="sm">
           {workspaces?.map((ws) => (
-            <button
+            <Card
               key={ws.id}
+              withBorder
+              padding="md"
+              radius="md"
+              style={{ cursor: 'pointer' }}
               onClick={() => navigate(`/workspaces/${ws.id}`)}
-              className="w-full flex items-center gap-4 p-4 rounded-lg border border-border hover:border-primary/40 hover:bg-accent/30 transition-all text-left group"
             >
-              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                <span className="font-bold text-primary uppercase">{ws.name[0]}</span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold truncate">{ws.name}</p>
-                <p className="text-xs text-muted-foreground font-mono">{ws.slug} · {ws.role}</p>
-              </div>
-              <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
-            </button>
+              <Group justify="space-between">
+                <Group>
+                  <Avatar color="indigo" radius="md" size={40}>
+                    {ws.name[0].toUpperCase()}
+                  </Avatar>
+                  <div>
+                    <Text fw={600}>{ws.name}</Text>
+                    <Group gap={4}>
+                      <Text size="xs" c="dimmed" ff="mono">{ws.slug}</Text>
+                      <Badge size="xs" variant="light">{ws.role}</Badge>
+                    </Group>
+                  </div>
+                </Group>
+                <ChevronRight size={16} opacity={0.4} />
+              </Group>
+            </Card>
           ))}
-        </div>
+        </Stack>
       )}
-    </div>
+    </Container>
   )
 }

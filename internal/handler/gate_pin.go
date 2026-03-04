@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Buco7854/gaty/internal/integration"
 	"github.com/Buco7854/gaty/internal/middleware"
 	"github.com/Buco7854/gaty/internal/model"
 	internalmqtt "github.com/Buco7854/gaty/internal/mqtt"
@@ -215,15 +216,14 @@ func (h *GatePinHandler) Unlock(ctx context.Context, input *UnlockInput) (*struc
 	// Success — reset the rate limit counter.
 	h.redis.Del(ctx, rateLimitKey)
 
-	// Publish MQTT open command.
-	if h.mqtt != nil {
-		gate, err := h.gates.GetByIDPublic(ctx, input.Body.GateID)
-		if err == nil {
-			payload, _ := json.Marshal(map[string]string{"action": "open"})
-			topic := internalmqtt.CommandTopic(gate.WorkspaceID, gate.ID)
-			if err := h.mqtt.Publish(topic, payload); err != nil {
-				slog.Warn("pin unlock: mqtt publish failed", "gate_id", input.Body.GateID, "error", err)
-			}
+	// Trigger open via integration driver.
+	gate, gateErr := h.gates.GetByIDPublic(ctx, input.Body.GateID)
+	if gateErr == nil {
+		driver, driverErr := integration.NewOpenDriver(gate, h.mqtt)
+		if driverErr != nil {
+			slog.Warn("pin unlock: failed to build open driver", "gate_id", input.Body.GateID, "error", driverErr)
+		} else if execErr := driver.Execute(ctx, gate); execErr != nil {
+			slog.Warn("pin unlock: open driver failed", "gate_id", input.Body.GateID, "error", execErr)
 		}
 	}
 

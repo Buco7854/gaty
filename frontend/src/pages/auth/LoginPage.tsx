@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { api } from '@/lib/api'
+import { authApi } from '@/api'
 import { useAuthStore } from '@/store/auth'
-import type { AuthResponse } from '@/types'
+import { useTranslation } from 'react-i18next'
+import { TextInput, PasswordInput, Button, Stack, Text, Alert, Title, Anchor } from '@mantine/core'
+import { AlertCircle } from 'lucide-react'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -11,78 +13,66 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const setAuth = useAuthStore((s) => s.setAuth)
   const navigate = useNavigate()
+  const { t } = useTranslation()
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     setLoading(true)
     try {
-      const { data } = await api.post<AuthResponse>('/auth/login', { email, password })
+      const data = await authApi.login(email, password)
       setAuth(data.user, data.access_token, data.refresh_token)
       navigate('/workspaces')
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { title?: string } } })?.response?.data?.title
-      setError(msg ?? 'Invalid credentials')
+      setError(msg ?? t('auth.invalidCredentials'))
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-1 text-center">
-        <h1 className="text-2xl font-bold tracking-tight">Sign in</h1>
-        <p className="text-sm text-muted-foreground">Enter your email and password</p>
-      </div>
+    <Stack gap="lg">
+      <Stack gap={4} align="center">
+        <Title order={2}>{t('auth.signIn')}</Title>
+        <Text size="sm" c="dimmed">{t('auth.enterEmail')}</Text>
+      </Stack>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="space-y-1.5">
-          <label htmlFor="email" className="text-sm font-medium">Email</label>
-          <input
-            id="email"
+      <form onSubmit={handleSubmit}>
+        <Stack gap="md">
+          <TextInput
+            label={t('auth.email')}
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
             autoComplete="email"
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
-            placeholder="you@example.com"
+            placeholder={t('auth.emailPlaceholder')}
           />
-        </div>
-
-        <div className="space-y-1.5">
-          <label htmlFor="password" className="text-sm font-medium">Password</label>
-          <input
-            id="password"
-            type="password"
+          <PasswordInput
+            label={t('auth.password')}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
             autoComplete="current-password"
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
-            placeholder="••••••••"
           />
-        </div>
-
-        {error && (
-          <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">{error}</p>
-        )}
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-primary text-primary-foreground rounded-md py-2 text-sm font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          {loading ? 'Signing in…' : 'Sign in'}
-        </button>
+          {error && (
+            <Alert icon={<AlertCircle size={16} />} color="red" variant="light">
+              {error}
+            </Alert>
+          )}
+          <Button type="submit" loading={loading} fullWidth>
+            {t('auth.signIn')}
+          </Button>
+        </Stack>
       </form>
 
-      <p className="text-center text-sm text-muted-foreground">
-        No account?{' '}
-        <Link to="/register" className="font-medium text-foreground hover:underline">
-          Register
-        </Link>
-      </p>
-    </div>
+      <Text size="sm" ta="center" c="dimmed">
+        {t('auth.noAccount')}{' '}
+        <Anchor component={Link as React.FC} to="/register" size="sm">
+          {t('auth.register')}
+        </Anchor>
+      </Text>
+    </Stack>
   )
 }

@@ -1,13 +1,18 @@
 import { useState } from 'react'
 import { useParams } from 'react-router'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '@/lib/api'
+import { workspacesApi } from '@/api'
 import type { WorkspaceWithRole } from '@/types'
-import { Save, KeyRound } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import {
+  Container, Title, Text, Stack, Paper, Group, Button, TextInput, PasswordInput, Select, Alert,
+} from '@mantine/core'
+import { KeyRound, Save, CheckCircle2, AlertCircle } from 'lucide-react'
 
 export default function SettingsPage() {
   const { wsId } = useParams<{ wsId: string }>()
   const qc = useQueryClient()
+  const { t } = useTranslation()
   const [saved, setSaved] = useState(false)
 
   const ws = qc.getQueryData<WorkspaceWithRole[]>(['workspaces'])?.find((w) => w.id === wsId)
@@ -20,7 +25,7 @@ export default function SettingsPage() {
 
   const updateSSO = useMutation({
     mutationFn: (body: Record<string, string>) =>
-      api.patch(`/workspaces/${wsId}/sso-settings`, body),
+      workspacesApi.updateSsoSettings(wsId!, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['workspaces'] })
       setSaved(true)
@@ -36,67 +41,63 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="p-8 max-w-2xl">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Workspace configuration</p>
-      </div>
+    <Container size="sm" py="xl">
+      <Stack mb="xl" gap={4}>
+        <Title order={2}>{t('settings.title')}</Title>
+        <Text c="dimmed" size="sm">{t('settings.subtitle')}</Text>
+      </Stack>
 
-      {/* SSO */}
-      <section className="rounded-lg border border-border bg-card p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <KeyRound className="w-5 h-5 text-muted-foreground" />
-          <h2 className="font-semibold">Single Sign-On (OIDC)</h2>
-        </div>
-        <form onSubmit={handleSSOSubmit} className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Provider</label>
-            <select
+      <Paper withBorder p="lg" radius="md">
+        <Group gap="xs" mb="md">
+          <KeyRound size={18} opacity={0.6} />
+          <Text fw={600}>{t('settings.sso')}</Text>
+        </Group>
+
+        <form onSubmit={handleSSOSubmit}>
+          <Stack>
+            <Select
+              label={t('settings.provider')}
               value={provider}
-              onChange={(e) => setProvider(e.target.value)}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring transition-shadow"
-            >
-              <option value="oidc">OIDC</option>
-            </select>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Issuer URL</label>
-            <input
+              onChange={(v) => setProvider(v ?? 'oidc')}
+              data={[{ value: 'oidc', label: 'OIDC' }]}
+            />
+            <TextInput
+              label={t('settings.issuerUrl')}
               value={issuer}
               onChange={(e) => setIssuer(e.target.value)}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring transition-shadow"
               placeholder="https://accounts.google.com"
             />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Client ID</label>
-            <input
+            <TextInput
+              label={t('settings.clientId')}
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring transition-shadow"
               placeholder="your-client-id"
             />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Client Secret</label>
-            <input
+            <PasswordInput
+              label={t('settings.clientSecret')}
               value={clientSecret}
               onChange={(e) => setClientSecret(e.target.value)}
-              type="password"
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring transition-shadow"
-              placeholder="Leave blank to keep existing"
+              placeholder={t('settings.clientSecretPlaceholder')}
             />
-          </div>
-          <button
-            type="submit"
-            disabled={updateSSO.isPending}
-            className="flex items-center gap-1.5 bg-primary text-primary-foreground rounded-md px-3 py-2 text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
-          >
-            <Save className="w-4 h-4" />
-            {saved ? 'Saved!' : updateSSO.isPending ? 'Saving…' : 'Save SSO settings'}
-          </button>
+
+            {saved && (
+              <Alert icon={<CheckCircle2 size={16} />} color="green" variant="light">
+                {t('settings.saved')}
+              </Alert>
+            )}
+
+            <Group>
+              <Button
+                type="submit"
+                loading={updateSSO.isPending}
+                leftSection={<Save size={16} />}
+              >
+                {t('settings.saveSso')}
+              </Button>
+            </Group>
+          </Stack>
         </form>
-      </section>
-    </div>
+      </Paper>
+    </Container>
   )
 }

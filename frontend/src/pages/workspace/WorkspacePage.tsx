@@ -1,189 +1,217 @@
 import { useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '@/lib/api'
+import { gatesApi } from '@/api'
+import type { ActionConfig } from '@/api'
 import type { Gate, GateStatus, WorkspaceWithRole } from '@/types'
 import { useGateEvents } from '@/hooks/useGateEvents'
 import type { GateEvent } from '@/hooks/useGateEvents'
-import { Plus, DoorOpen, Wifi, WifiOff, HelpCircle, ChevronRight, Zap, Globe } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import {
+  Container, Title, Text, Group, Button, Modal, TextInput, Stack, Badge,
+  SimpleGrid, Card, ActionIcon, Select, Center, Tooltip, Loader,
+} from '@mantine/core'
+import { useDisclosure } from '@mantine/hooks'
+import { Plus, DoorOpen, Zap, ChevronRight } from 'lucide-react'
 
-function StatusDot({ status }: { status: Gate['status'] }) {
-  const colors = {
-    online: 'bg-green-500',
-    offline: 'bg-red-500',
-    unknown: 'bg-gray-400',
-  }
-  return (
-    <span className="relative flex h-2.5 w-2.5">
-      {status === 'online' && (
-        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-      )}
-      <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${colors[status]}`} />
-    </span>
-  )
+function StatusBadge({ status }: { status: Gate['status'] }) {
+  const { t } = useTranslation()
+  const color = status === 'online' ? 'green' : status === 'offline' ? 'red' : 'gray'
+  return <Badge color={color} variant="dot" size="sm">{t(`common.${status}`)}</Badge>
 }
 
-function StatusIcon({ status }: { status: Gate['status'] }) {
-  if (status === 'online') return <Wifi className="w-4 h-4 text-green-600" />
-  if (status === 'offline') return <WifiOff className="w-4 h-4 text-red-500" />
-  return <HelpCircle className="w-4 h-4 text-gray-400" />
+function ActionConfigForm({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: ActionConfig | null
+  onChange: (v: ActionConfig | null) => void
+}) {
+  const { t } = useTranslation()
+  const driverType = value?.type ?? 'NONE'
+
+  return (
+    <Stack gap="xs">
+      <Select
+        label={label}
+        value={driverType}
+        onChange={(v) => {
+          const type = (v ?? 'NONE') as ActionConfig['type']
+          if (type === 'NONE') {
+            onChange(null)
+          } else {
+            onChange({ type, config: value?.config })
+          }
+        }}
+        data={[
+          { value: 'NONE', label: t('gates.noneDriver') },
+          { value: 'MQTT', label: t('gates.mqttDriver') },
+          { value: 'HTTP', label: t('gates.httpDriver') },
+        ]}
+      />
+      {driverType === 'HTTP' && (
+        <TextInput
+          label={t('gates.httpUrl')}
+          value={(value?.config?.url as string) ?? ''}
+          onChange={(e) =>
+            onChange({ type: 'HTTP', config: { ...value?.config, url: e.target.value } })
+          }
+          placeholder="https://api.example.com/open"
+        />
+      )}
+    </Stack>
+  )
 }
 
 export default function WorkspacePage() {
   const { wsId } = useParams<{ wsId: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [showCreate, setShowCreate] = useState(false)
+  const { t } = useTranslation()
+  const [opened, { open, close }] = useDisclosure(false)
   const [gateName, setGateName] = useState('')
+  const [openConfig, setOpenConfig] = useState<ActionConfig | null>({ type: 'MQTT' })
+  const [closeConfig, setCloseConfig] = useState<ActionConfig | null>(null)
+  const [statusConfig, setStatusConfig] = useState<ActionConfig | null>(null)
   const [triggeringId, setTriggeringId] = useState<string | null>(null)
 
   const ws = qc.getQueryData<WorkspaceWithRole[]>(['workspaces'])?.find((w) => w.id === wsId)
 
   const { data: gates, isLoading } = useQuery<Gate[]>({
     queryKey: ['gates', wsId],
-    queryFn: () =>
-      api.get(`/workspaces/${wsId}/gates`).then((r) => {
-        const d = r.data as unknown
-        if (Array.isArray(d)) return d as Gate[]
-        return ((d as Record<string, unknown>).gates ?? []) as Gate[]
-      }),
+    queryFn: () => gatesApi.list(wsId!),
     refetchInterval: 10_000,
   })
 
-  // Real-time gate status updates via SSE
-  const handleGateEvent = useCallback((event: GateEvent) => {
-    qc.setQueryData<Gate[]>(['gates', wsId], (prev) =>
-      prev?.map((g) =>
-        g.id === event.gate_id ? { ...g, status: event.status as GateStatus } : g
+  const handleGateEvent = useCallback(
+    (event: GateEvent) => {
+      qc.setQueryData<Gate[]>(['gates', wsId], (prev) =>
+        prev?.map((g) =>
+          g.id === event.gate_id ? { ...g, status: event.status as GateStatus } : g
+        )
       )
-    )
-  }, [qc, wsId])
+    },
+    [qc, wsId]
+  )
 
   useGateEvents(wsId, handleGateEvent)
 
   const createGate = useMutation({
-    mutationFn: (body: { name: string; integration_type: string }) =>
-      api.post(`/workspaces/${wsId}/gates`, body),
+    mutationFn: () =>
+      gatesApi.create(wsId!, {
+        name: gateName,
+        open_config: openConfig,
+        close_config: closeConfig,
+        status_config: statusConfig,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['gates', wsId] })
-      setShowCreate(false)
+      close()
       setGateName('')
+      setOpenConfig({ type: 'MQTT' })
+      setCloseConfig(null)
+      setStatusConfig(null)
     },
   })
 
   const triggerGate = useMutation({
-    mutationFn: (gateId: string) =>
-      api.post(`/workspaces/${wsId}/gates/${gateId}/trigger`, {}),
+    mutationFn: (gateId: string) => gatesApi.trigger(wsId!, gateId),
     onMutate: (gateId) => setTriggeringId(gateId),
     onSettled: () => setTriggeringId(null),
   })
 
   return (
-    <div className="p-8">
-      <div className="flex items-center justify-between mb-8 max-w-4xl">
+    <Container size="lg" py="xl">
+      <Group justify="space-between" mb="xl">
         <div>
-          <h1 className="text-2xl font-bold">{ws?.name ?? 'Workspace'}</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Gate dashboard</p>
+          <Title order={2}>{ws?.name ?? t('gates.title')}</Title>
+          <Text c="dimmed" size="sm">{t('gates.subtitle')}</Text>
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-1.5 bg-primary text-primary-foreground rounded-md px-3 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          Add gate
-        </button>
-      </div>
+        <Button leftSection={<Plus size={16} />} onClick={open}>
+          {t('gates.add')}
+        </Button>
+      </Group>
 
-      {showCreate && (
-        <div className="mb-6 max-w-4xl rounded-lg border border-border p-4 bg-card">
-          <h2 className="font-semibold mb-3">Add gate</h2>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              createGate.mutate({ name: gateName, integration_type: 'MQTT' })
-            }}
-            className="flex gap-2"
-          >
-            <input
+      <Modal opened={opened} onClose={close} title={t('gates.add')} size="md">
+        <form onSubmit={(e) => { e.preventDefault(); createGate.mutate() }}>
+          <Stack>
+            <TextInput
+              label={t('common.name')}
               value={gateName}
               onChange={(e) => setGateName(e.target.value)}
               required
-              className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring transition-shadow"
               placeholder="Parking entrance"
             />
-            <button
-              type="submit"
-              disabled={createGate.isPending}
-              className="bg-primary text-primary-foreground rounded-md px-3 py-2 text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
-            >
-              {createGate.isPending ? 'Adding…' : 'Add'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowCreate(false)}
-              className="rounded-md px-3 py-2 text-sm hover:bg-accent transition-colors"
-            >
-              Cancel
-            </button>
-          </form>
-        </div>
-      )}
+            <ActionConfigForm
+              label={t('gates.openAction')}
+              value={openConfig}
+              onChange={setOpenConfig}
+            />
+            <ActionConfigForm
+              label={t('gates.closeAction')}
+              value={closeConfig}
+              onChange={setCloseConfig}
+            />
+            <ActionConfigForm
+              label={t('gates.statusAction')}
+              value={statusConfig}
+              onChange={setStatusConfig}
+            />
+            <Group justify="flex-end">
+              <Button variant="default" onClick={close}>{t('common.cancel')}</Button>
+              <Button type="submit" loading={createGate.isPending}>{t('common.add')}</Button>
+            </Group>
+          </Stack>
+        </form>
+      </Modal>
 
       {isLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-4xl">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="h-36 rounded-xl border border-border bg-muted/40 animate-pulse" />
-          ))}
-        </div>
+        <Center py={80}><Loader /></Center>
       ) : gates?.length === 0 ? (
-        <div className="text-center py-16 text-muted-foreground max-w-4xl">
-          <DoorOpen className="w-10 h-10 mx-auto mb-3 opacity-40" />
-          <p className="font-medium">No gates yet</p>
-          <p className="text-sm mt-0.5">Add your first gate to get started</p>
-        </div>
+        <Center py={80}>
+          <Stack align="center" gap="xs">
+            <DoorOpen size={40} opacity={0.3} />
+            <Text fw={500}>{t('gates.noGates')}</Text>
+            <Text size="sm" c="dimmed">{t('gates.noGatesHint')}</Text>
+          </Stack>
+        </Center>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-4xl">
+        <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
           {gates?.map((gate) => (
-            <div
-              key={gate.id}
-              className="rounded-xl border border-border bg-card p-4 flex flex-col gap-3 hover:border-primary/30 transition-colors"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <StatusDot status={gate.status} />
-                  <span className="font-semibold truncate">{gate.name}</span>
-                </div>
-                <StatusIcon status={gate.status} />
-              </div>
-
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Globe className="w-3.5 h-3.5" />
-                <span className="capitalize">{gate.integration_type.toLowerCase()}</span>
-                <span>·</span>
-                <span className="capitalize">{gate.status}</span>
-              </div>
-
-              <div className="flex gap-2 mt-auto">
-                <button
+            <Card key={gate.id} withBorder radius="md" p="md">
+              <Group justify="space-between" mb="xs" wrap="nowrap">
+                <Text fw={600} truncate style={{ flex: 1 }}>{gate.name}</Text>
+                <StatusBadge status={gate.status} />
+              </Group>
+              <Text size="xs" c="dimmed" mb="md">
+                {gate.open_config?.type ?? gate.integration_type}
+              </Text>
+              <Group gap="xs">
+                <Button
+                  size="xs"
+                  leftSection={<Zap size={12} />}
+                  loading={triggeringId === gate.id}
                   onClick={() => triggerGate.mutate(gate.id)}
-                  disabled={triggeringId === gate.id}
-                  className="flex-1 flex items-center justify-center gap-1.5 bg-primary text-primary-foreground rounded-md py-1.5 text-xs font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                  style={{ flex: 1 }}
                 >
-                  <Zap className="w-3.5 h-3.5" />
-                  {triggeringId === gate.id ? 'Opening…' : 'Open'}
-                </button>
-                <button
-                  onClick={() => navigate(`/workspaces/${wsId}/gates/${gate.id}`)}
-                  className="flex items-center justify-center gap-1 px-2.5 rounded-md border border-border hover:bg-accent text-xs transition-colors"
-                >
-                  <ChevronRight className="w-3.5 h-3.5" />
-                  Details
-                </button>
-              </div>
-            </div>
+                  {t('gates.open')}
+                </Button>
+                <Tooltip label={t('common.details')}>
+                  <ActionIcon
+                    variant="default"
+                    size="sm"
+                    onClick={() => navigate(`/workspaces/${wsId}/gates/${gate.id}`)}
+                  >
+                    <ChevronRight size={14} />
+                  </ActionIcon>
+                </Tooltip>
+              </Group>
+            </Card>
           ))}
-        </div>
+        </SimpleGrid>
       )}
-    </div>
+    </Container>
   )
 }
