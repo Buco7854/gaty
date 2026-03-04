@@ -1,8 +1,25 @@
-import { NavLink, Outlet, useNavigate, useParams } from 'react-router'
+import { NavLink as RouterNavLink, Outlet, useNavigate, useParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
-import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import type { WorkspaceWithRole } from '@/types'
+import { workspacesApi } from '@/api'
+import { ThemeToggle } from '@/components/ThemeToggle'
+import { LangToggle } from '@/components/LangToggle'
+import { useTranslation } from 'react-i18next'
+import {
+  AppShell,
+  NavLink,
+  Stack,
+  Group,
+  Text,
+  Avatar,
+  Menu,
+  UnstyledButton,
+  Divider,
+  Tooltip,
+  ActionIcon,
+  ScrollArea,
+} from '@mantine/core'
 import {
   LayoutGrid,
   Users,
@@ -10,23 +27,21 @@ import {
   LogOut,
   ChevronDown,
   Home,
+  DoorOpen,
 } from 'lucide-react'
 import { useState } from 'react'
 
 export default function AppLayout() {
   const { wsId } = useParams<{ wsId?: string }>()
+  const { t } = useTranslation()
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
   const navigate = useNavigate()
-  const [menuOpen, setMenuOpen] = useState(false)
+  const [wsMenuOpen, setWsMenuOpen] = useState(false)
 
   const { data: workspaces } = useQuery<WorkspaceWithRole[]>({
     queryKey: ['workspaces'],
-    queryFn: () => api.get<{ workspaces: WorkspaceWithRole[] }>('/workspaces').then((r) => {
-      // Huma wraps arrays — handle both formats
-      const d = r.data as unknown as { workspaces?: WorkspaceWithRole[] } | WorkspaceWithRole[]
-      return Array.isArray(d) ? d : (d as { workspaces: WorkspaceWithRole[] }).workspaces ?? []
-    }),
+    queryFn: workspacesApi.list,
   })
 
   const currentWs = workspaces?.find((w) => w.id === wsId)
@@ -36,129 +51,134 @@ export default function AppLayout() {
     navigate('/login')
   }
 
-  return (
-    <div className="flex h-screen bg-background overflow-hidden">
-      {/* Sidebar */}
-      <aside className="w-60 shrink-0 border-r border-border flex flex-col bg-sidebar">
-        {/* Logo */}
-        <div className="h-14 flex items-center px-4 border-b border-border">
-          <NavLink to="/workspaces" className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-primary rounded-md flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-xs">G</span>
-            </div>
-            <span className="font-bold text-sidebar-foreground">GATY</span>
-          </NavLink>
-        </div>
+  const initials = user?.email?.slice(0, 2).toUpperCase() ?? 'U'
 
-        {/* Workspace switcher */}
-        {currentWs ? (
-          <div className="px-3 py-3 border-b border-border">
-            <button
-              className="w-full flex items-center justify-between text-left px-2 py-1.5 rounded-md hover:bg-sidebar-accent transition-colors text-sm"
-              onClick={() => setMenuOpen(!menuOpen)}
+  return (
+    <AppShell navbar={{ width: 240, breakpoint: 'sm' }} padding={0}>
+      <AppShell.Navbar>
+        <Stack gap={0} h="100%">
+          {/* Logo */}
+          <Group
+            px="md"
+            h={56}
+            style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}
+          >
+            <UnstyledButton
+              onClick={() => navigate('/workspaces')}
+              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
             >
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-5 h-5 rounded bg-primary/15 flex items-center justify-center shrink-0">
-                  <span className="text-primary font-bold text-[10px] uppercase">
-                    {currentWs.name[0]}
-                  </span>
-                </div>
-                <span className="truncate font-medium text-sidebar-foreground">{currentWs.name}</span>
-              </div>
-              <ChevronDown className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
-            </button>
-            {menuOpen && (
-              <div className="mt-1 rounded-md border border-border bg-popover shadow-md p-1 z-10">
-                {workspaces?.map((w) => (
-                  <button
-                    key={w.id}
-                    className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-accent transition-colors truncate"
-                    onClick={() => { navigate(`/workspaces/${w.id}`); setMenuOpen(false) }}
+              <Avatar size={28} color="indigo" radius="md">
+                <DoorOpen size={14} />
+              </Avatar>
+              <Text fw={700} size="md" ff="mono">GATY</Text>
+            </UnstyledButton>
+          </Group>
+
+          {/* Workspace switcher */}
+          <div style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}>
+            {currentWs ? (
+              <Menu opened={wsMenuOpen} onChange={setWsMenuOpen} width={220} shadow="md">
+                <Menu.Target>
+                  <UnstyledButton
+                    px="md"
+                    py="sm"
+                    style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
                   >
-                    {w.name}
-                  </button>
-                ))}
-                <div className="h-px bg-border my-1" />
-                <button
-                  className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-accent transition-colors text-muted-foreground"
-                  onClick={() => { navigate('/workspaces'); setMenuOpen(false) }}
-                >
-                  All workspaces
-                </button>
-              </div>
+                    <Group gap="xs">
+                      <Avatar size={22} color="indigo" radius="sm">
+                        {currentWs.name[0].toUpperCase()}
+                      </Avatar>
+                      <Text size="sm" fw={500} style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {currentWs.name}
+                      </Text>
+                    </Group>
+                    <ChevronDown size={14} />
+                  </UnstyledButton>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  {workspaces?.map((w) => (
+                    <Menu.Item
+                      key={w.id}
+                      leftSection={<Avatar size={16} color="indigo" radius="xs">{w.name[0].toUpperCase()}</Avatar>}
+                      onClick={() => { navigate(`/workspaces/${w.id}`); setWsMenuOpen(false) }}
+                    >
+                      <Text size="sm" truncate>{w.name}</Text>
+                    </Menu.Item>
+                  ))}
+                  <Divider />
+                  <Menu.Item
+                    leftSection={<Home size={14} />}
+                    onClick={() => { navigate('/workspaces'); setWsMenuOpen(false) }}
+                  >
+                    <Text size="sm">{t('workspaces.title')}</Text>
+                  </Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
+            ) : (
+              <NavLink
+                component={RouterNavLink as React.FC}
+                to="/workspaces"
+                label={t('workspaces.title')}
+                leftSection={<Home size={16} />}
+                px="md"
+                py="sm"
+              />
             )}
           </div>
-        ) : (
-          <div className="px-3 py-3 border-b border-border">
-            <NavLink
-              to="/workspaces"
-              className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-sidebar-accent text-sm text-sidebar-foreground"
-            >
-              <Home className="w-4 h-4" />
-              Workspaces
-            </NavLink>
+
+          {/* Navigation */}
+          <ScrollArea style={{ flex: 1 }}>
+            {wsId && (
+              <Stack gap={2} p="xs">
+                <NavLink
+                  component={RouterNavLink as React.FC}
+                  to={`/workspaces/${wsId}`}
+                  end
+                  label={t('gates.title')}
+                  leftSection={<LayoutGrid size={16} />}
+                />
+                <NavLink
+                  component={RouterNavLink as React.FC}
+                  to={`/workspaces/${wsId}/members`}
+                  label={t('members.title')}
+                  leftSection={<Users size={16} />}
+                />
+                <NavLink
+                  component={RouterNavLink as React.FC}
+                  to={`/workspaces/${wsId}/settings`}
+                  label={t('settings.title')}
+                  leftSection={<Settings size={16} />}
+                />
+              </Stack>
+            )}
+          </ScrollArea>
+
+          {/* User footer */}
+          <div style={{ borderTop: '1px solid var(--mantine-color-default-border)', padding: '8px 12px', flexShrink: 0 }}>
+            <Group justify="space-between" wrap="nowrap">
+              <Group gap="xs" style={{ minWidth: 0 }}>
+                <Avatar size={26} color="indigo" radius="xl">{initials}</Avatar>
+                <Text size="xs" c="dimmed" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {user?.email}
+                </Text>
+              </Group>
+              <Group gap={4} wrap="nowrap">
+                <LangToggle />
+                <ThemeToggle />
+                <Tooltip label={t('auth.signOut')}>
+                  <ActionIcon variant="subtle" color="gray" size="sm" onClick={handleLogout}>
+                    <LogOut size={14} />
+                  </ActionIcon>
+                </Tooltip>
+              </Group>
+            </Group>
           </div>
-        )}
+        </Stack>
+      </AppShell.Navbar>
 
-        {/* Nav links (workspace context) */}
-        {wsId && (
-          <nav className="flex-1 p-3 space-y-0.5">
-            <NavItem to={`/workspaces/${wsId}`} end icon={<LayoutGrid className="w-4 h-4" />} label="Gates" />
-            <NavItem to={`/workspaces/${wsId}/members`} icon={<Users className="w-4 h-4" />} label="Members" />
-            <NavItem to={`/workspaces/${wsId}/settings`} icon={<Settings className="w-4 h-4" />} label="Settings" />
-          </nav>
-        )}
-
-        {/* User footer */}
-        <div className="p-3 border-t border-border">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-sidebar-foreground truncate">{user?.email}</p>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="p-1.5 rounded-md hover:bg-sidebar-accent text-muted-foreground hover:text-foreground transition-colors shrink-0"
-              title="Sign out"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      {/* Main content */}
-      <main className="flex-1 overflow-auto">
+      <AppShell.Main style={{ overflow: 'auto' }}>
         <Outlet />
-      </main>
-    </div>
-  )
-}
-
-function NavItem({
-  to,
-  icon,
-  label,
-  end,
-}: {
-  to: string
-  icon: React.ReactNode
-  label: string
-  end?: boolean
-}) {
-  return (
-    <NavLink
-      to={to}
-      end={end}
-      className={({ isActive }) =>
-        `flex items-center gap-2.5 px-2 py-1.5 rounded-md text-sm transition-colors ${
-          isActive
-            ? 'bg-sidebar-accent text-sidebar-primary font-medium'
-            : 'text-sidebar-foreground hover:bg-sidebar-accent/60'
-        }`
-      }
-    >
-      {icon}
-      {label}
-    </NavLink>
+      </AppShell.Main>
+    </AppShell>
   )
 }

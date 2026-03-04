@@ -1,29 +1,80 @@
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '@/lib/api'
+import { gatesApi, pinsApi, domainsApi, policiesApi, membersApi } from '@/api'
+import type { ActionConfig, PinMetadata } from '@/api'
 import type { Gate, GatePin, CustomDomain, WorkspaceMembership, MembershipPolicy } from '@/types'
+import { useTranslation } from 'react-i18next'
 import {
-  ArrowLeft, Zap, Hash, Globe, Plus, Trash2,
-  CheckCircle2, XCircle, Clock, Copy, Check, Shield, Users
+  Container, Title, Text, Group, Button, Stack, Paper, Badge, ActionIcon,
+  TextInput, PasswordInput, Select, Tooltip, Modal, Code, Alert, Checkbox,
+  Table, NumberInput, Collapse, Anchor,
+} from '@mantine/core'
+import { useDisclosure, useClipboard } from '@mantine/hooks'
+import {
+  ArrowLeft, Zap, Hash, Globe, Plus, Trash2, CheckCircle2, XCircle,
+  Clock, Copy, Check, Settings2,
 } from 'lucide-react'
 
 const PERMISSIONS = [
-  { code: 'gate:read_status', label: 'View status' },
-  { code: 'gate:trigger_open', label: 'Open' },
-  { code: 'gate:manage', label: 'Manage' },
+  { code: 'gate:read_status', labelKey: 'permissions.viewStatus' },
+  { code: 'gate:trigger_open', labelKey: 'permissions.triggerOpen' },
+  { code: 'gate:manage', labelKey: 'permissions.manage' },
 ] as const
 
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false)
+function ActionConfigForm({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: ActionConfig | null
+  onChange: (v: ActionConfig | null) => void
+}) {
+  const { t } = useTranslation()
+  const driverType = value?.type ?? 'NONE'
+
   return (
-    <button
-      onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000) }}
-      className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
-      title="Copy"
-    >
-      {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
-    </button>
+    <Stack gap="xs">
+      <Select
+        label={label}
+        value={driverType}
+        onChange={(v) => {
+          const type = (v ?? 'NONE') as ActionConfig['type']
+          if (type === 'NONE') {
+            onChange(null)
+          } else {
+            onChange({ type, config: value?.config })
+          }
+        }}
+        data={[
+          { value: 'NONE', label: t('gates.noneDriver') },
+          { value: 'MQTT', label: t('gates.mqttDriver') },
+          { value: 'HTTP', label: t('gates.httpDriver') },
+        ]}
+      />
+      {driverType === 'HTTP' && (
+        <>
+          <TextInput
+            label={t('gates.httpUrl')}
+            value={(value?.config?.url as string) ?? ''}
+            onChange={(e) =>
+              onChange({ type: 'HTTP', config: { ...value?.config, url: e.target.value } })
+            }
+            placeholder="https://api.example.com/open"
+            required
+          />
+          <Select
+            label={t('gates.httpMethod')}
+            value={(value?.config?.method as string) ?? 'POST'}
+            onChange={(v) =>
+              onChange({ type: 'HTTP', config: { ...value?.config, method: v ?? 'POST' } })
+            }
+            data={['POST', 'GET', 'PUT', 'PATCH']}
+          />
+        </>
+      )}
+    </Stack>
   )
 }
 
@@ -31,119 +82,162 @@ export default function GatePage() {
   const { wsId, gateId } = useParams<{ wsId: string; gateId: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const { t } = useTranslation()
+  const clipboard = useClipboard({ timeout: 2000 })
 
-  // PIN state
-  const [showPinForm, setShowPinForm] = useState(false)
+  // Modal state
+  const [pinModalOpened, { open: openPinModal, close: closePinModal }] = useDisclosure(false)
+  const [domainModalOpened, { open: openDomainModal, close: closeDomainModal }] = useDisclosure(false)
+  const [configModalOpened, { open: openConfigModal, close: closeConfigModal }] = useDisclosure(false)
+
+  // PIN form
   const [pinLabel, setPinLabel] = useState('')
   const [pinValue, setPinValue] = useState('')
+  const [pinExpiresAt, setPinExpiresAt] = useState('')
+  const [pinType, setPinType] = useState<'one_shot' | 'session'>('one_shot')
+  const [pinSessionDuration, setPinSessionDuration] = useState<string>('')
+  const [pinCustomValue, setPinCustomValue] = useState<number | string>(1)
+  const [pinCustomUnit, setPinCustomUnit] = useState<string>('days')
+  const [pinAdvancedOpened, setPinAdvancedOpened] = useState(false)
 
-  // Domain state
-  const [showDomainForm, setShowDomainForm] = useState(false)
+  // Domain form
   const [domainValue, setDomainValue] = useState('')
   const [verifyResult, setVerifyResult] = useState<Record<string, { verified: boolean; message?: string }>>({})
 
+  // Config form
+  const [editOpenConfig, setEditOpenConfig] = useState<ActionConfig | null>(null)
+  const [editCloseConfig, setEditCloseConfig] = useState<ActionConfig | null>(null)
+  const [editStatusConfig, setEditStatusConfig] = useState<ActionConfig | null>(null)
+
+  const PIN_SESSION_PRESETS = [
+    { value: '', label: t('members.session7d') },
+    { value: '0', label: t('members.sessionInfinite') },
+    { value: '3600', label: t('members.session1h') },
+    { value: '28800', label: t('members.session8h') },
+    { value: '86400', label: t('members.session24h') },
+    { value: '2592000', label: t('members.session30d') },
+    { value: 'custom', label: t('members.sessionCustom') },
+  ]
+
+  function resolvePinSessionDurationSeconds(): number | undefined {
+    if (pinSessionDuration === '') return undefined
+    if (pinSessionDuration === '0') return 0
+    if (pinSessionDuration === 'custom') {
+      const n = typeof pinCustomValue === 'number' ? pinCustomValue : parseFloat(String(pinCustomValue))
+      if (!n || n <= 0) return undefined
+      const multipliers: Record<string, number> = { minutes: 60, hours: 3600, days: 86400 }
+      return Math.round(n * (multipliers[pinCustomUnit] ?? 3600))
+    }
+    return parseInt(pinSessionDuration, 10)
+  }
+
   const { data: gate } = useQuery<Gate>({
     queryKey: ['gate', wsId, gateId],
-    queryFn: () => api.get(`/workspaces/${wsId}/gates/${gateId}`).then((r) => r.data as Gate),
+    queryFn: () => gatesApi.get(wsId!, gateId!),
     refetchInterval: 10_000,
   })
 
   const { data: pins } = useQuery<GatePin[]>({
     queryKey: ['pins', wsId, gateId],
-    queryFn: () =>
-      api.get(`/workspaces/${wsId}/gates/${gateId}/pins`).then((r) => {
-        const d = r.data as unknown
-        if (Array.isArray(d)) return d as GatePin[]
-        return ((d as Record<string, unknown>).pins ?? []) as GatePin[]
-      }),
+    queryFn: () => pinsApi.list(wsId!, gateId!),
   })
 
   const { data: domains } = useQuery<CustomDomain[]>({
     queryKey: ['domains', wsId, gateId],
-    queryFn: () =>
-      api.get(`/workspaces/${wsId}/gates/${gateId}/domains`).then((r) => {
-        const d = r.data as unknown
-        if (Array.isArray(d)) return d as CustomDomain[]
-        return ((d as Record<string, unknown>).domains ?? []) as CustomDomain[]
-      }),
+    queryFn: () => domainsApi.list(wsId!, gateId!),
+  })
+
+  const { data: members } = useQuery<WorkspaceMembership[]>({
+    queryKey: ['members', wsId],
+    queryFn: () => membersApi.list(wsId!),
+  })
+
+  const { data: policies } = useQuery<MembershipPolicy[]>({
+    queryKey: ['policies', wsId, gateId],
+    queryFn: () => policiesApi.list(wsId!, gateId!),
   })
 
   const trigger = useMutation({
-    mutationFn: () => api.post(`/workspaces/${wsId}/gates/${gateId}/trigger`, {}),
+    mutationFn: () => gatesApi.trigger(wsId!, gateId!),
+  })
+
+  const updateConfig = useMutation({
+    mutationFn: () =>
+      gatesApi.update(wsId!, gateId!, {
+        open_config: editOpenConfig,
+        close_config: editCloseConfig,
+        status_config: editStatusConfig,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['gate', wsId, gateId] })
+      closeConfigModal()
+    },
   })
 
   const createPin = useMutation({
-    mutationFn: (body: { label?: string; pin: string }) =>
-      api.post(`/workspaces/${wsId}/gates/${gateId}/pins`, body),
+    mutationFn: () => {
+      const metadata: PinMetadata = { type: pinType }
+      if (pinExpiresAt) metadata.expires_at = new Date(pinExpiresAt).toISOString()
+      if (pinType === 'session') {
+        const dur = resolvePinSessionDurationSeconds()
+        if (dur !== undefined) metadata.session_duration = dur
+      }
+      return pinsApi.create(wsId!, gateId!, {
+        label: pinLabel || undefined,
+        pin: pinValue,
+        metadata,
+      })
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pins', wsId, gateId] })
-      setShowPinForm(false); setPinLabel(''); setPinValue('')
+      closePinModal()
+      setPinLabel('')
+      setPinValue('')
+      setPinExpiresAt('')
+      setPinType('one_shot')
+      setPinSessionDuration('')
+      setPinCustomValue(1)
+      setPinCustomUnit('days')
+      setPinAdvancedOpened(false)
     },
   })
 
   const deletePin = useMutation({
-    mutationFn: (pinId: string) => api.delete(`/workspaces/${wsId}/gates/${gateId}/pins/${pinId}`),
+    mutationFn: (pinId: string) => pinsApi.delete(wsId!, gateId!, pinId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pins', wsId, gateId] }),
   })
 
   const addDomain = useMutation({
-    mutationFn: (domain: string) =>
-      api.post(`/workspaces/${wsId}/gates/${gateId}/domains`, { domain }),
+    mutationFn: () => domainsApi.create(wsId!, gateId!, domainValue),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['domains', wsId, gateId] })
-      setShowDomainForm(false); setDomainValue('')
+      closeDomainModal()
+      setDomainValue('')
     },
   })
 
   const deleteDomain = useMutation({
-    mutationFn: (domainId: string) =>
-      api.delete(`/workspaces/${wsId}/gates/${gateId}/domains/${domainId}`),
+    mutationFn: (domainId: string) => domainsApi.delete(wsId!, gateId!, domainId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['domains', wsId, gateId] }),
   })
 
   const verifyDomain = useMutation({
-    mutationFn: (domainId: string) =>
-      api.post(`/workspaces/${wsId}/gates/${gateId}/domains/${domainId}/verify`, {}),
-    onSuccess: (res, domainId) => {
-      const data = res.data as { verified: boolean; message?: string }
+    mutationFn: (domainId: string) => domainsApi.verify(wsId!, gateId!, domainId),
+    onSuccess: (data, domainId) => {
       setVerifyResult((prev) => ({ ...prev, [domainId]: data }))
       if (data.verified) qc.invalidateQueries({ queryKey: ['domains', wsId, gateId] })
     },
   })
 
-  // Permissions
-  const { data: members } = useQuery<WorkspaceMembership[]>({
-    queryKey: ['members', wsId],
-    queryFn: () =>
-      api.get(`/workspaces/${wsId}/members`).then((r) => {
-        const d = r.data as unknown
-        if (Array.isArray(d)) return d as WorkspaceMembership[]
-        return ((d as Record<string, unknown>).members ?? []) as WorkspaceMembership[]
-      }),
-  })
-
-  const { data: policies } = useQuery<MembershipPolicy[]>({
-    queryKey: ['policies', wsId, gateId],
-    queryFn: () =>
-      api.get(`/workspaces/${wsId}/gates/${gateId}/policies`).then((r) => {
-        const d = r.data as unknown
-        if (Array.isArray(d)) return d as MembershipPolicy[]
-        return []
-      }),
-  })
-
   const grantPerm = useMutation({
     mutationFn: ({ membershipId, permCode }: { membershipId: string; permCode: string }) =>
-      api.post(`/workspaces/${wsId}/gates/${gateId}/policies`, {
-        membership_id: membershipId,
-        permission_code: permCode,
-      }),
+      policiesApi.grant(wsId!, gateId!, membershipId, permCode),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['policies', wsId, gateId] }),
   })
 
   const revokePerm = useMutation({
     mutationFn: ({ membershipId, permCode }: { membershipId: string; permCode: string }) =>
-      api.delete(`/workspaces/${wsId}/gates/${gateId}/policies/${membershipId}/${permCode}`),
+      policiesApi.revoke(wsId!, gateId!, membershipId, permCode),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['policies', wsId, gateId] }),
   })
 
@@ -161,246 +255,345 @@ export default function GatePage() {
     }
   }
 
-  const statusColor = {
-    online: 'text-green-600 bg-green-50 dark:bg-green-900/20',
-    offline: 'text-red-600 bg-red-50 dark:bg-red-900/20',
-    unknown: 'text-gray-500 bg-gray-50 dark:bg-gray-800',
-  }[gate?.status ?? 'unknown']
+  function openConfig() {
+    setEditOpenConfig(gate?.open_config ?? null)
+    setEditCloseConfig(gate?.close_config ?? null)
+    setEditStatusConfig(gate?.status_config ?? null)
+    openConfigModal()
+  }
+
+  const statusColor = gate?.status === 'online' ? 'green' : gate?.status === 'offline' ? 'red' : 'gray'
 
   return (
-    <div className="p-8 max-w-3xl space-y-8">
+    <Container size="sm" py="xl">
       {/* Header */}
-      <div>
-        <button
-          onClick={() => navigate(`/workspaces/${wsId}`)}
-          className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-3 transition-colors"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          Back to dashboard
-        </button>
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">{gate?.name ?? '…'}</h1>
+      <Button
+        variant="subtle"
+        color="gray"
+        size="xs"
+        leftSection={<ArrowLeft size={14} />}
+        mb="md"
+        onClick={() => navigate(`/workspaces/${wsId}`)}
+      >
+        {t('common.back')}
+      </Button>
+
+      <Group justify="space-between" mb="xl">
+        <div>
+          <Group gap="sm">
+            <Title order={2}>{gate?.name ?? '…'}</Title>
             {gate && (
-              <span className={`inline-block mt-1 text-xs font-medium px-2 py-0.5 rounded-full ${statusColor}`}>
-                {gate.status}
-              </span>
+              <Badge color={statusColor} variant="light">
+                {t(`common.${gate.status}`)}
+              </Badge>
             )}
-          </div>
-          <button
-            onClick={() => trigger.mutate()}
-            disabled={trigger.isPending}
-            className="flex items-center gap-1.5 bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
-          >
-            <Zap className="w-4 h-4" />
-            {trigger.isPending ? 'Opening…' : 'Open gate'}
-          </button>
+          </Group>
         </div>
-      </div>
+        <Group>
+          <Tooltip label={t('gates.integration')}>
+            <ActionIcon variant="default" size="lg" onClick={openConfig}>
+              <Settings2 size={16} />
+            </ActionIcon>
+          </Tooltip>
+          <Button
+            leftSection={<Zap size={16} />}
+            loading={trigger.isPending}
+            onClick={() => trigger.mutate()}
+          >
+            {t('gates.openGate')}
+          </Button>
+        </Group>
+      </Group>
+
+      {/* Integration config modal */}
+      <Modal opened={configModalOpened} onClose={closeConfigModal} title={t('gates.integration')} size="md">
+        <form onSubmit={(e) => { e.preventDefault(); updateConfig.mutate() }}>
+          <Stack>
+            <ActionConfigForm
+              label={t('gates.openAction')}
+              value={editOpenConfig}
+              onChange={setEditOpenConfig}
+            />
+            <ActionConfigForm
+              label={t('gates.closeAction')}
+              value={editCloseConfig}
+              onChange={setEditCloseConfig}
+            />
+            <ActionConfigForm
+              label={t('gates.statusAction')}
+              value={editStatusConfig}
+              onChange={setEditStatusConfig}
+            />
+            <Group justify="flex-end">
+              <Button variant="default" onClick={closeConfigModal}>{t('common.cancel')}</Button>
+              <Button type="submit" loading={updateConfig.isPending}>{t('common.save')}</Button>
+            </Group>
+          </Stack>
+        </form>
+      </Modal>
 
       {/* PIN codes */}
-      <section>
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Hash className="w-4 h-4 text-muted-foreground" />
-            <h2 className="font-semibold">PIN codes</h2>
-            <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{pins?.length ?? 0}</span>
-          </div>
-          <button
-            onClick={() => setShowPinForm(true)}
-            className="flex items-center gap-1 text-sm hover:bg-accent rounded-md px-2 py-1 transition-colors"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add PIN
-          </button>
-        </div>
+      <Paper withBorder p="md" radius="md" mb="md">
+        <Group justify="space-between" mb="sm">
+          <Group gap="xs">
+            <Hash size={16} opacity={0.6} />
+            <Text fw={600}>{t('pins.title')}</Text>
+            <Badge variant="light" size="xs">{pins?.length ?? 0}</Badge>
+          </Group>
+          <Button size="xs" variant="subtle" leftSection={<Plus size={14} />} onClick={openPinModal}>
+            {t('pins.add')}
+          </Button>
+        </Group>
 
-        {showPinForm && (
-          <form
-            onSubmit={(e) => { e.preventDefault(); createPin.mutate({ label: pinLabel || undefined, pin: pinValue }) }}
-            className="mb-3 p-3 rounded-lg border border-border bg-card flex gap-2"
-          >
-            <input
-              value={pinLabel}
-              onChange={(e) => setPinLabel(e.target.value)}
-              className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring transition-shadow"
-              placeholder="Label (optional)"
-            />
-            <input
-              value={pinValue}
-              onChange={(e) => setPinValue(e.target.value)}
-              required type="password" minLength={4}
-              className="w-28 rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring transition-shadow font-mono"
-              placeholder="PIN"
-            />
-            <button type="submit" disabled={createPin.isPending} className="bg-primary text-primary-foreground rounded-md px-3 py-1.5 text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors">
-              {createPin.isPending ? '…' : 'Add'}
-            </button>
-            <button type="button" onClick={() => setShowPinForm(false)} className="rounded-md px-2 py-1.5 text-sm hover:bg-accent transition-colors">✕</button>
+        <Modal opened={pinModalOpened} onClose={closePinModal} title={t('pins.add')}>
+          <form onSubmit={(e) => { e.preventDefault(); createPin.mutate() }}>
+            <Stack>
+              <TextInput
+                label={t('pins.label')}
+                value={pinLabel}
+                onChange={(e) => setPinLabel(e.target.value)}
+                placeholder={t('pins.labelPlaceholder')}
+              />
+              <PasswordInput
+                label={t('pins.pin')}
+                value={pinValue}
+                onChange={(e) => setPinValue(e.target.value)}
+                required
+                minLength={4}
+                styles={{ input: { fontFamily: 'monospace' } }}
+              />
+              <Select
+                label={t('pins.type')}
+                value={pinType}
+                onChange={(v) => setPinType((v ?? 'one_shot') as 'one_shot' | 'session')}
+                data={[
+                  { value: 'one_shot', label: t('pins.typeOneShot') },
+                  { value: 'session', label: t('pins.typeSession') },
+                ]}
+              />
+              {pinType === 'session' && (
+                <Stack gap="xs">
+                  <Select
+                    label={t('pins.sessionDuration')}
+                    value={pinSessionDuration}
+                    onChange={(v) => setPinSessionDuration(v ?? '')}
+                    data={PIN_SESSION_PRESETS}
+                  />
+                  {pinSessionDuration === 'custom' && (
+                    <Group gap="xs" grow>
+                      <NumberInput
+                        label={t('members.sessionCustomValue')}
+                        value={pinCustomValue}
+                        onChange={setPinCustomValue}
+                        min={1}
+                        step={1}
+                      />
+                      <Select
+                        label={t('members.sessionCustomUnit')}
+                        value={pinCustomUnit}
+                        onChange={(v) => setPinCustomUnit(v ?? 'days')}
+                        data={[
+                          { value: 'minutes', label: t('members.sessionUnitMinutes') },
+                          { value: 'hours', label: t('members.sessionUnitHours') },
+                          { value: 'days', label: t('members.sessionUnitDays') },
+                        ]}
+                      />
+                    </Group>
+                  )}
+                </Stack>
+              )}
+              <Anchor
+                component="button"
+                type="button"
+                size="xs"
+                c="dimmed"
+                onClick={() => setPinAdvancedOpened((o) => !o)}
+              >
+                {t('gates.advancedOptions')} {pinAdvancedOpened ? '▲' : '▼'}
+              </Anchor>
+              <Collapse in={pinAdvancedOpened}>
+                <TextInput
+                  label={t('pins.expires')}
+                  description={t('common.optional')}
+                  type="datetime-local"
+                  value={pinExpiresAt}
+                  onChange={(e) => setPinExpiresAt(e.target.value)}
+                />
+              </Collapse>
+              <Group justify="flex-end">
+                <Button variant="default" onClick={closePinModal}>{t('common.cancel')}</Button>
+                <Button type="submit" loading={createPin.isPending}>{t('common.add')}</Button>
+              </Group>
+            </Stack>
           </form>
-        )}
+        </Modal>
 
-        <div className="space-y-1">
-          {pins?.length === 0 && <p className="text-sm text-muted-foreground py-2">No PIN codes yet</p>}
-          {pins?.map((pin) => (
-            <div key={pin.id} className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-accent/40 transition-colors">
-              <div className="flex items-center gap-2">
-                <Hash className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="text-sm">{pin.label ?? <span className="text-muted-foreground italic">Unlabeled</span>}</span>
-                {(pin.metadata as { expires_at?: string }).expires_at && (
-                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <Clock className="w-3 h-3" />
-                    {new Date((pin.metadata as { expires_at: string }).expires_at).toLocaleDateString()}
-                  </span>
-                )}
-              </div>
-              <button onClick={() => deletePin.mutate(pin.id)} className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ))}
-        </div>
-      </section>
+        {pins?.length === 0 ? (
+          <Text size="sm" c="dimmed">{t('pins.noPins')}</Text>
+        ) : (
+          <Stack gap={2}>
+            {pins?.map((pin) => (
+              <Group key={pin.id} justify="space-between" py={4}>
+                <Group gap="sm">
+                  <Hash size={14} opacity={0.5} />
+                  <Text size="sm">
+                    {pin.label ?? <Text size="sm" c="dimmed" fs="italic" component="span">{t('pins.unlabeled')}</Text>}
+                  </Text>
+                  {(pin.metadata as { expires_at?: string }).expires_at && (
+                    <Group gap={4}>
+                      <Clock size={12} opacity={0.5} />
+                      <Text size="xs" c="dimmed">
+                        {new Date((pin.metadata as { expires_at: string }).expires_at).toLocaleDateString()}
+                      </Text>
+                    </Group>
+                  )}
+                </Group>
+                <ActionIcon variant="subtle" color="red" size="sm" onClick={() => deletePin.mutate(pin.id)}>
+                  <Trash2 size={14} />
+                </ActionIcon>
+              </Group>
+            ))}
+          </Stack>
+        )}
+      </Paper>
 
       {/* Custom domains */}
-      <section>
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Globe className="w-4 h-4 text-muted-foreground" />
-            <h2 className="font-semibold">Custom domains</h2>
-            <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{domains?.length ?? 0}</span>
-          </div>
-          <button onClick={() => setShowDomainForm(true)} className="flex items-center gap-1 text-sm hover:bg-accent rounded-md px-2 py-1 transition-colors">
-            <Plus className="w-3.5 h-3.5" />
-            Add domain
-          </button>
-        </div>
+      <Paper withBorder p="md" radius="md" mb="md">
+        <Group justify="space-between" mb="sm">
+          <Group gap="xs">
+            <Globe size={16} opacity={0.6} />
+            <Text fw={600}>{t('domains.title')}</Text>
+            <Badge variant="light" size="xs">{domains?.length ?? 0}</Badge>
+          </Group>
+          <Button size="xs" variant="subtle" leftSection={<Plus size={14} />} onClick={openDomainModal}>
+            {t('domains.add')}
+          </Button>
+        </Group>
 
-        {showDomainForm && (
-          <form
-            onSubmit={(e) => { e.preventDefault(); addDomain.mutate(domainValue) }}
-            className="mb-3 p-3 rounded-lg border border-border bg-card flex gap-2"
-          >
-            <input
-              value={domainValue}
-              onChange={(e) => setDomainValue(e.target.value)}
-              required
-              className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring transition-shadow font-mono"
-              placeholder="gate.example.com"
-            />
-            <button type="submit" disabled={addDomain.isPending} className="bg-primary text-primary-foreground rounded-md px-3 py-1.5 text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors">
-              {addDomain.isPending ? '…' : 'Add'}
-            </button>
-            <button type="button" onClick={() => setShowDomainForm(false)} className="rounded-md px-2 py-1.5 text-sm hover:bg-accent transition-colors">✕</button>
+        <Modal opened={domainModalOpened} onClose={closeDomainModal} title={t('domains.add')}>
+          <form onSubmit={(e) => { e.preventDefault(); addDomain.mutate() }}>
+            <Stack>
+              <TextInput
+                label={t('domains.domain')}
+                value={domainValue}
+                onChange={(e) => setDomainValue(e.target.value)}
+                required
+                placeholder={t('domains.domainPlaceholder')}
+                styles={{ input: { fontFamily: 'monospace' } }}
+              />
+              <Group justify="flex-end">
+                <Button variant="default" onClick={closeDomainModal}>{t('common.cancel')}</Button>
+                <Button type="submit" loading={addDomain.isPending}>{t('common.add')}</Button>
+              </Group>
+            </Stack>
           </form>
+        </Modal>
+
+        {domains?.length === 0 ? (
+          <Text size="sm" c="dimmed">{t('domains.noDomains')}</Text>
+        ) : (
+          <Stack gap="sm">
+            {domains?.map((d) => (
+              <Paper key={d.id} withBorder p="sm" radius="sm">
+                <Group justify="space-between" mb={d.verified_at ? 0 : 'xs'}>
+                  <Group gap="xs">
+                    {d.verified_at
+                      ? <CheckCircle2 size={16} color="var(--mantine-color-green-6)" />
+                      : <XCircle size={16} color="var(--mantine-color-orange-6)" />
+                    }
+                    <Text size="sm" ff="mono">{d.domain}</Text>
+                  </Group>
+                  <Group gap="xs">
+                    {!d.verified_at && (
+                      <Button
+                        size="xs"
+                        variant="light"
+                        color="orange"
+                        loading={verifyDomain.isPending}
+                        onClick={() => verifyDomain.mutate(d.id)}
+                      >
+                        {t('domains.verifyDns')}
+                      </Button>
+                    )}
+                    <ActionIcon variant="subtle" color="red" size="sm" onClick={() => deleteDomain.mutate(d.id)}>
+                      <Trash2 size={14} />
+                    </ActionIcon>
+                  </Group>
+                </Group>
+
+                {!d.verified_at && (
+                  <Alert variant="light" color="gray" mt="xs">
+                    <Text size="xs" c="dimmed" mb={4}>{t('domains.dnsInstructions')}</Text>
+                    <Group gap="xs" wrap="nowrap">
+                      <Code style={{ flex: 1, fontSize: 11 }}>
+                        _gaty.{d.domain} → {d.dns_challenge_token}
+                      </Code>
+                      <Tooltip label={clipboard.copied ? t('common.copied') : t('common.copy')}>
+                        <ActionIcon
+                          variant="subtle"
+                          size="sm"
+                          onClick={() => clipboard.copy(d.dns_challenge_token)}
+                        >
+                          {clipboard.copied ? <Check size={12} /> : <Copy size={12} />}
+                        </ActionIcon>
+                      </Tooltip>
+                    </Group>
+                    {verifyResult[d.id] && !verifyResult[d.id].verified && (
+                      <Text size="xs" c="red" mt={4}>{verifyResult[d.id].message}</Text>
+                    )}
+                  </Alert>
+                )}
+              </Paper>
+            ))}
+          </Stack>
         )}
+      </Paper>
 
-        <div className="space-y-2">
-          {domains?.length === 0 && <p className="text-sm text-muted-foreground py-2">No custom domains yet</p>}
-          {domains?.map((d) => (
-            <div key={d.id} className="rounded-lg border border-border bg-card p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  {d.verified_at
-                    ? <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
-                    : <XCircle className="w-4 h-4 text-amber-500 shrink-0" />
-                  }
-                  <span className="font-mono text-sm">{d.domain}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  {!d.verified_at && (
-                    <button
-                      onClick={() => verifyDomain.mutate(d.id)}
-                      disabled={verifyDomain.isPending}
-                      className="text-xs px-2 py-1 rounded-md bg-amber-100 text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 transition-colors"
-                    >
-                      Verify DNS
-                    </button>
-                  )}
-                  <button onClick={() => deleteDomain.mutate(d.id)} className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              {!d.verified_at && (
-                <div className="text-xs bg-muted rounded-md p-2 space-y-1">
-                  <p className="text-muted-foreground">Add a DNS TXT record to verify ownership:</p>
-                  <div className="flex items-center gap-1 font-mono">
-                    <span className="text-foreground">_gaty.{d.domain}</span>
-                    <span className="text-muted-foreground mx-1">→</span>
-                    <span className="text-foreground break-all">{d.dns_challenge_token}</span>
-                    <CopyButton text={d.dns_challenge_token} />
-                  </div>
-                  {verifyResult[d.id] && !verifyResult[d.id].verified && (
-                    <p className="text-destructive">{verifyResult[d.id].message}</p>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Permissions */}
-      <section>
-        <div className="flex items-center gap-2 mb-3">
-          <Users className="w-4 h-4 text-muted-foreground" />
-          <h2 className="font-semibold">Member permissions</h2>
-          <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{regularMembers.length}</span>
-        </div>
+      {/* Member permissions */}
+      <Paper withBorder p="md" radius="md">
+        <Group gap="xs" mb="sm">
+          <Text fw={600}>{t('permissions.title')}</Text>
+          <Badge variant="light" size="xs">{regularMembers.length}</Badge>
+        </Group>
 
         {regularMembers.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-2">No regular members in this workspace</p>
+          <Text size="sm" c="dimmed">No regular members in this workspace</Text>
         ) : (
-          <div className="rounded-lg border border-border overflow-hidden">
-            {/* Header row */}
-            <div className="grid bg-muted/50 border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground"
-              style={{ gridTemplateColumns: '1fr repeat(3, auto)' }}>
-              <span>Member</span>
-              {PERMISSIONS.map((p) => (
-                <span key={p.code} className="text-center w-20">{p.label}</span>
+          <Table>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Member</Table.Th>
+                {PERMISSIONS.map((p) => (
+                  <Table.Th key={p.code} ta="center">{t(p.labelKey)}</Table.Th>
+                ))}
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {regularMembers.map((m) => (
+                <Table.Tr key={m.id}>
+                  <Table.Td>
+                    <Text size="sm" truncate maw={160}>
+                      {m.display_name ?? m.local_username ?? `Member ${m.id.slice(0, 8)}`}
+                    </Text>
+                  </Table.Td>
+                  {PERMISSIONS.map((p) => {
+                    const checked = hasPermission(m.id, p.code)
+                    return (
+                      <Table.Td key={p.code} ta="center">
+                        <Checkbox
+                          checked={checked}
+                          onChange={() => togglePermission(m.id, p.code)}
+                          disabled={grantPerm.isPending || revokePerm.isPending}
+                        />
+                      </Table.Td>
+                    )
+                  })}
+                </Table.Tr>
               ))}
-            </div>
-            {/* Member rows */}
-            {regularMembers.map((m) => (
-              <div
-                key={m.id}
-                className="grid items-center px-3 py-2.5 border-b border-border last:border-0 hover:bg-accent/20 transition-colors"
-                style={{ gridTemplateColumns: '1fr repeat(3, auto)' }}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center shrink-0">
-                    <Shield className="w-3 h-3 text-muted-foreground" />
-                  </div>
-                  <span className="text-sm truncate">
-                    {m.display_name ?? m.local_username ?? `Member ${m.id.slice(0, 8)}`}
-                  </span>
-                </div>
-                {PERMISSIONS.map((p) => {
-                  const checked = hasPermission(m.id, p.code)
-                  return (
-                    <div key={p.code} className="w-20 flex justify-center">
-                      <button
-                        onClick={() => togglePermission(m.id, p.code)}
-                        disabled={grantPerm.isPending || revokePerm.isPending}
-                        className={`w-5 h-5 rounded flex items-center justify-center border transition-colors disabled:opacity-40 ${
-                          checked
-                            ? 'bg-primary border-primary text-primary-foreground'
-                            : 'border-input bg-background hover:bg-accent'
-                        }`}
-                        title={checked ? `Revoke "${p.label}"` : `Grant "${p.label}"`}
-                      >
-                        {checked && <Check className="w-3 h-3" />}
-                      </button>
-                    </div>
-                  )
-                })}
-              </div>
-            ))}
-          </div>
+            </Table.Tbody>
+          </Table>
         )}
-      </section>
-    </div>
+      </Paper>
+    </Container>
   )
 }

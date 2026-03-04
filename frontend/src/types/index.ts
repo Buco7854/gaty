@@ -23,12 +23,20 @@ export interface WorkspaceWithRole extends Workspace {
   role: WorkspaceRole
 }
 
+export interface ActionConfig {
+  type: 'MQTT' | 'HTTP' | 'NONE'
+  config?: Record<string, unknown>
+}
+
 export interface Gate {
   id: string
   workspace_id: string
   name: string
   integration_type: GateIntegrationType
   integration_config: Record<string, unknown>
+  open_config?: ActionConfig | null
+  close_config?: ActionConfig | null
+  status_config?: ActionConfig | null
   status: GateStatus
   last_seen_at?: string
   created_at: string

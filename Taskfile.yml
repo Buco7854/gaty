@@ -4,7 +4,7 @@ dotenv: [".env"]
 
 tasks:
   dev-infra:
-    desc: "Start infra services (PostgreSQL, Redis, Mosquitto, Caddy)"
+    desc: "Start infra services (PostgreSQL, Valkey, Mosquitto, Caddy)"
     cmd: docker compose up -d
 
   dev-infra-down:
@@ -20,14 +20,27 @@ tasks:
     dir: frontend
     cmd: npm run dev
 
+  dev:
+    desc: "Start API + frontend concurrently"
+    deps: [dev-api, dev-frontend]
+
   build:
     desc: "Build Go binary"
-    cmd: go build -o bin/server.exe ./cmd/server/
+    cmd: go build -o bin/server ./cmd/server/
 
   build-frontend:
     desc: "Build React frontend"
     dir: frontend
     cmd: npm run build
+
+  build-all:
+    desc: "Build backend and frontend"
+    deps: [build, build-frontend]
+
+  install-frontend:
+    desc: "Install frontend npm dependencies"
+    dir: frontend
+    cmd: npm install
 
   test:
     desc: "Run Go tests"

@@ -1,212 +1,308 @@
 import { useState } from 'react'
 import { useParams } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '@/lib/api'
+import { membersApi } from '@/api'
 import type { WorkspaceMembership } from '@/types'
-import { UserPlus, Trash2, Users, Shield } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import {
+  Container, Title, Text, Group, Button, Modal, Stack, Alert, Tabs,
+  TextInput, PasswordInput, Select, Badge, Avatar, ActionIcon, Center, Skeleton,
+  Collapse, Anchor, NumberInput,
+} from '@mantine/core'
+import { useDisclosure } from '@mantine/hooks'
+import { UserPlus, Trash2, Users, AlertCircle } from 'lucide-react'
 
-const ROLE_BADGE: Record<string, string> = {
-  OWNER: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
-  ADMIN: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
-  MEMBER: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
+const ROLE_COLOR: Record<string, string> = {
+  OWNER: 'yellow',
+  ADMIN: 'blue',
+  MEMBER: 'gray',
+}
+
+// session_duration preset values in seconds; '' = workspace default (7d); 'custom' triggers free input
+const SESSION_PRESET_OPTIONS = [
+  { value: '', labelKey: 'members.session7d' },
+  { value: '0', labelKey: 'members.sessionInfinite' },
+  { value: '3600', labelKey: 'members.session1h' },
+  { value: '28800', labelKey: 'members.session8h' },
+  { value: '86400', labelKey: 'members.session24h' },
+  { value: '2592000', labelKey: 'members.session30d' },
+  { value: 'custom', labelKey: 'members.sessionCustom' },
+] as const
+
+const UNIT_MULTIPLIERS: Record<string, number> = {
+  minutes: 60,
+  hours: 3600,
+  days: 86400,
 }
 
 export default function MembersPage() {
   const { wsId } = useParams<{ wsId: string }>()
   const qc = useQueryClient()
-  const [tab, setTab] = useState<'invite' | 'create'>('invite')
-  const [showForm, setShowForm] = useState(false)
+  const { t } = useTranslation()
+  const [opened, { open, close }] = useDisclosure(false)
+  const [advancedOpened, setAdvancedOpened] = useState(false)
+  const [activeTab, setActiveTab] = useState<string | null>('invite')
   const [email, setEmail] = useState('')
   const [username, setUsername] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
   const [role, setRole] = useState('MEMBER')
+  const [sessionDuration, setSessionDuration] = useState<string>('')  // preset value or 'custom'
+  const [customValue, setCustomValue] = useState<number | string>(1)
+  const [customUnit, setCustomUnit] = useState<string>('days')
   const [error, setError] = useState<string | null>(null)
 
   const { data: members, isLoading } = useQuery<WorkspaceMembership[]>({
     queryKey: ['members', wsId],
-    queryFn: () =>
-      api.get(`/workspaces/${wsId}/members`).then((r) => {
-        const d = r.data as unknown
-        if (Array.isArray(d)) return d as WorkspaceMembership[]
-        return ((d as Record<string, unknown>).members ?? []) as WorkspaceMembership[]
-      }),
+    queryFn: () => membersApi.list(wsId!),
   })
 
   const invite = useMutation({
-    mutationFn: (body: { email: string; role: string }) =>
-      api.post(`/workspaces/${wsId}/members/invite`, body),
+    mutationFn: () => membersApi.invite(wsId!, email, role),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['members', wsId] })
-      setShowForm(false); setEmail(''); setError(null)
+      resetAndClose()
     },
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { title?: string } } })?.response?.data?.title
-      setError(msg ?? 'Failed to invite')
+      setError(msg ?? t('common.error'))
     },
   })
 
+  function resolveSessionDurationSeconds(): number | undefined {
+    if (sessionDuration === '') return undefined // use workspace default
+    if (sessionDuration === '0') return 0         // infinite
+    if (sessionDuration === 'custom') {
+      const n = typeof customValue === 'number' ? customValue : parseFloat(String(customValue))
+      if (!n || n <= 0) return undefined
+      return Math.round(n * (UNIT_MULTIPLIERS[customUnit] ?? 3600))
+    }
+    return parseInt(sessionDuration, 10)
+  }
+
   const createLocal = useMutation({
-    mutationFn: (body: { local_username: string; display_name?: string; password: string; role: string }) =>
-      api.post(`/workspaces/${wsId}/members`, body),
+    mutationFn: () => {
+      const sessionDurationNum = resolveSessionDurationSeconds()
+      return membersApi.createLocal(wsId!, {
+        local_username: username,
+        display_name: displayName || undefined,
+        password,
+        role,
+        auth_config: sessionDurationNum !== undefined
+          ? { session_duration: sessionDurationNum }
+          : undefined,
+      })
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['members', wsId] })
-      setShowForm(false); setUsername(''); setDisplayName(''); setPassword(''); setError(null)
+      resetAndClose()
     },
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { title?: string } } })?.response?.data?.title
-      setError(msg ?? 'Failed to create')
+      setError(msg ?? t('common.error'))
     },
   })
 
   const deleteMember = useMutation({
-    mutationFn: (memberId: string) => api.delete(`/workspaces/${wsId}/members/${memberId}`),
+    mutationFn: (memberId: string) => membersApi.delete(wsId!, memberId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['members', wsId] }),
   })
+
+  function resetAndClose() {
+    close()
+    setEmail('')
+    setUsername('')
+    setDisplayName('')
+    setPassword('')
+    setRole('MEMBER')
+    setSessionDuration('')
+    setCustomValue(1)
+    setCustomUnit('days')
+    setAdvancedOpened(false)
+    setError(null)
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
-    if (tab === 'invite') {
-      invite.mutate({ email, role })
+    if (activeTab === 'invite') {
+      invite.mutate()
     } else {
-      createLocal.mutate({ local_username: username, display_name: displayName || undefined, password, role })
+      createLocal.mutate()
     }
   }
 
-  return (
-    <div className="p-8 max-w-3xl">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-bold">Members</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Manage workspace access</p>
-        </div>
-        <button
-          onClick={() => setShowForm(true)}
-          className="flex items-center gap-1.5 bg-primary text-primary-foreground rounded-md px-3 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
-        >
-          <UserPlus className="w-4 h-4" />
-          Add member
-        </button>
-      </div>
+  const isPending = invite.isPending || createLocal.isPending
 
-      {showForm && (
-        <div className="mb-6 rounded-lg border border-border p-4 bg-card space-y-4">
-          <div className="flex gap-2 text-sm">
-            <button
-              className={`px-3 py-1 rounded-md font-medium transition-colors ${tab === 'invite' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}
-              onClick={() => setTab('invite')}
-            >
-              Invite by email
-            </button>
-            <button
-              className={`px-3 py-1 rounded-md font-medium transition-colors ${tab === 'create' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}
-              onClick={() => setTab('create')}
-            >
-              Create local member
-            </button>
-          </div>
-          <form onSubmit={handleSubmit} className="space-y-3">
-            {tab === 'invite' ? (
-              <input
+  const sessionPresetOptions = SESSION_PRESET_OPTIONS.map(({ value, labelKey }) => ({
+    value,
+    label: t(labelKey),
+  }))
+
+  return (
+    <Container size="sm" py="xl">
+      <Group justify="space-between" mb="xl">
+        <div>
+          <Title order={2}>{t('members.title')}</Title>
+          <Text c="dimmed" size="sm">{t('members.subtitle')}</Text>
+        </div>
+        <Button leftSection={<UserPlus size={16} />} onClick={open}>
+          {t('members.add')}
+        </Button>
+      </Group>
+
+      <Modal opened={opened} onClose={resetAndClose} title={t('members.add')}>
+        <Tabs value={activeTab} onChange={setActiveTab}>
+          <Tabs.List mb="md">
+            <Tabs.Tab value="invite">{t('members.inviteByEmail')}</Tabs.Tab>
+            <Tabs.Tab value="create">{t('members.createLocal')}</Tabs.Tab>
+          </Tabs.List>
+        </Tabs>
+
+        <form onSubmit={handleSubmit}>
+          <Stack>
+            {activeTab === 'invite' ? (
+              <TextInput
+                label={t('auth.email')}
+                type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                required type="email"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring transition-shadow"
+                required
                 placeholder="user@example.com"
               />
             ) : (
               <>
-                <input
+                <TextInput
+                  label={t('members.username')}
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   required
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring transition-shadow"
-                  placeholder="Username (local login)"
+                  placeholder={t('members.usernamePlaceholder')}
                 />
-                <input
+                <TextInput
+                  label={t('members.displayName')}
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring transition-shadow"
-                  placeholder="Display name (optional)"
+                  placeholder={t('members.displayNamePlaceholder')}
                 />
-                <input
+                <PasswordInput
+                  label={t('auth.password')}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  required type="password" minLength={8}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring transition-shadow"
-                  placeholder="Password"
+                  required
+                  minLength={8}
                 />
+                <Anchor
+                  component="button"
+                  type="button"
+                  size="xs"
+                  c="dimmed"
+                  onClick={() => setAdvancedOpened((o) => !o)}
+                >
+                  {t('gates.advancedOptions')} {advancedOpened ? '▲' : '▼'}
+                </Anchor>
+                <Collapse in={advancedOpened}>
+                  <Stack gap="xs">
+                    <Select
+                      label={t('members.sessionDuration')}
+                      value={sessionDuration}
+                      onChange={(v) => setSessionDuration(v ?? '')}
+                      data={sessionPresetOptions}
+                    />
+                    {sessionDuration === 'custom' && (
+                      <Group gap="xs" grow>
+                        <NumberInput
+                          label={t('members.sessionCustomValue')}
+                          value={customValue}
+                          onChange={setCustomValue}
+                          min={1}
+                          step={1}
+                        />
+                        <Select
+                          label={t('members.sessionCustomUnit')}
+                          value={customUnit}
+                          onChange={(v) => setCustomUnit(v ?? 'days')}
+                          data={[
+                            { value: 'minutes', label: t('members.sessionUnitMinutes') },
+                            { value: 'hours', label: t('members.sessionUnitHours') },
+                            { value: 'days', label: t('members.sessionUnitDays') },
+                          ]}
+                        />
+                      </Group>
+                    )}
+                  </Stack>
+                </Collapse>
               </>
             )}
-            <select
+            <Select
+              label={t('common.role')}
               value={role}
-              onChange={(e) => setRole(e.target.value)}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring transition-shadow"
-            >
-              <option value="MEMBER">Member</option>
-              <option value="ADMIN">Admin</option>
-            </select>
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            <div className="flex gap-2">
-              <button
-                type="submit"
-                disabled={invite.isPending || createLocal.isPending}
-                className="bg-primary text-primary-foreground rounded-md px-3 py-1.5 text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
-              >
-                {invite.isPending || createLocal.isPending ? 'Adding…' : 'Add'}
-              </button>
-              <button type="button" onClick={() => setShowForm(false)} className="rounded-md px-3 py-1.5 text-sm hover:bg-accent transition-colors">
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+              onChange={(v) => setRole(v ?? 'MEMBER')}
+              data={[
+                { value: 'MEMBER', label: 'Member' },
+                { value: 'ADMIN', label: 'Admin' },
+              ]}
+            />
+            {error && (
+              <Alert icon={<AlertCircle size={16} />} color="red" variant="light">
+                {error}
+              </Alert>
+            )}
+            <Group justify="flex-end">
+              <Button variant="default" onClick={resetAndClose}>{t('common.cancel')}</Button>
+              <Button type="submit" loading={isPending}>{t('common.add')}</Button>
+            </Group>
+          </Stack>
+        </form>
+      </Modal>
 
       {isLoading ? (
-        <div className="space-y-2">
-          {[0, 1, 2].map((i) => <div key={i} className="h-14 rounded-lg border border-border bg-muted/40 animate-pulse" />)}
-        </div>
+        <Stack>
+          {[0, 1, 2].map((i) => <Skeleton key={i} height={56} radius="md" />)}
+        </Stack>
       ) : members?.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground">
-          <Users className="w-8 h-8 mx-auto mb-2 opacity-40" />
-          <p className="font-medium text-sm">No members yet</p>
-        </div>
+        <Center py={80}>
+          <Stack align="center" gap="xs">
+            <Users size={36} opacity={0.3} />
+            <Text size="sm" c="dimmed">{t('members.noMembers')}</Text>
+          </Stack>
+        </Center>
       ) : (
-        <div className="space-y-1">
+        <Stack gap={2}>
           {members?.map((m) => (
-            <div key={m.id} className="flex items-center justify-between p-3 rounded-lg hover:bg-accent/40 transition-colors">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
-                  <Shield className="w-3.5 h-3.5 text-muted-foreground" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-medium truncate">
+            <Group key={m.id} justify="space-between" p="sm" style={{ borderRadius: 8 }}>
+              <Group gap="sm">
+                <Avatar color="indigo" radius="xl" size={32}>
+                  {(m.display_name ?? m.local_username ?? '?')[0].toUpperCase()}
+                </Avatar>
+                <div>
+                  <Text size="sm" fw={500}>
                     {m.display_name ?? m.local_username ?? `User ${m.id.slice(0, 8)}`}
-                  </p>
+                  </Text>
                   {m.local_username && (
-                    <p className="text-xs text-muted-foreground font-mono">{m.local_username}</p>
+                    <Text size="xs" c="dimmed" ff="mono">{m.local_username}</Text>
                   )}
                 </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${ROLE_BADGE[m.role]}`}>
+              </Group>
+              <Group gap="xs">
+                <Badge color={ROLE_COLOR[m.role] ?? 'gray'} variant="light" size="sm">
                   {m.role}
-                </span>
+                </Badge>
                 {m.role !== 'OWNER' && (
-                  <button
+                  <ActionIcon
+                    variant="subtle"
+                    color="red"
+                    size="sm"
                     onClick={() => deleteMember.mutate(m.id)}
-                    className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                    <Trash2 size={14} />
+                  </ActionIcon>
                 )}
-              </div>
-            </div>
+              </Group>
+            </Group>
           ))}
-        </div>
+        </Stack>
       )}
-    </div>
+    </Container>
   )
 }

@@ -25,9 +25,9 @@ var (
 )
 
 const (
-	accessTokenTTL   = 15 * time.Minute
-	refreshTokenTTL  = 7 * 24 * time.Hour
-	refreshKeyPrefix = "refresh:"
+	accessTokenTTL      = 15 * time.Minute
+	defaultSessionTTL   = 7 * 24 * time.Hour
+	refreshKeyPrefix    = "refresh:"
 )
 
 type TokenPair struct {
@@ -36,13 +36,14 @@ type TokenPair struct {
 }
 
 type AuthService struct {
-	users       *repository.UserRepository
-	credentials *repository.CredentialRepository
-	memberships *repository.WorkspaceMembershipRepository
-	memberCreds *repository.MembershipCredentialRepository
-	workspaces  *repository.WorkspaceRepository
-	redis       *redis.Client
-	jwtSecret   []byte
+	users                 *repository.UserRepository
+	credentials           *repository.CredentialRepository
+	memberships           *repository.WorkspaceMembershipRepository
+	memberCreds           *repository.MembershipCredentialRepository
+	workspaces            *repository.WorkspaceRepository
+	redis                 *redis.Client
+	jwtSecret             []byte
+	globalSessionDuration time.Duration // 0 = infinite
 }
 
 func NewAuthService(
@@ -53,15 +54,17 @@ func NewAuthService(
 	workspaces *repository.WorkspaceRepository,
 	redisClient *redis.Client,
 	jwtSecret string,
+	globalSessionDuration time.Duration,
 ) *AuthService {
 	return &AuthService{
-		users:       users,
-		credentials: credentials,
-		memberships: memberships,
-		memberCreds: memberCreds,
-		workspaces:  workspaces,
-		redis:       redisClient,
-		jwtSecret:   []byte(jwtSecret),
+		users:                 users,
+		credentials:           credentials,
+		memberships:           memberships,
+		memberCreds:           memberCreds,
+		workspaces:            workspaces,
+		redis:                 redisClient,
+		jwtSecret:             []byte(jwtSecret),
+		globalSessionDuration: globalSessionDuration,
 	}
 }
 
@@ -90,7 +93,7 @@ func (s *AuthService) Register(ctx context.Context, email, password string) (*To
 		return nil, nil, fmt.Errorf("create credential: %w", err)
 	}
 
-	tokens, err := s.issueGlobalTokenPair(ctx, user.ID)
+	tokens, err := s.issueGlobalTokenPair(ctx, user.ID, s.globalSessionDuration)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -119,7 +122,7 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*Token
 		return nil, nil, ErrInvalidCredentials
 	}
 
-	tokens, err := s.issueGlobalTokenPair(ctx, user.ID)
+	tokens, err := s.issueGlobalTokenPair(ctx, user.ID, s.globalSessionDuration)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -127,7 +130,8 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*Token
 }
 
 // LoginLocal authenticates a managed member by workspace slug + local username + password.
-// Issues a local token pair (sub = membership_id).
+// Issues a local token pair (sub = membership_id) with a session duration resolved from
+// the member's auth_config, falling back to the workspace default, then to defaultSessionTTL.
 func (s *AuthService) LoginLocal(ctx context.Context, workspaceSlug, localUsername, password string) (*TokenPair, *model.WorkspaceMembership, error) {
 	ws, err := s.workspaces.GetBySlug(ctx, workspaceSlug)
 	if errors.Is(err, repository.ErrNotFound) {
@@ -157,43 +161,66 @@ func (s *AuthService) LoginLocal(ctx context.Context, workspaceSlug, localUserna
 		return nil, nil, ErrInvalidCredentials
 	}
 
-	tokens, err := s.issueLocalTokenPair(ctx, membership.ID, ws.ID, membership.Role)
+	sessionDuration := resolveSessionDuration(membership.AuthConfig, ws.MemberAuthConfig)
+	tokens, err := s.issueLocalTokenPair(ctx, membership.ID, ws.ID, membership.Role, sessionDuration)
 	if err != nil {
 		return nil, nil, err
 	}
 	return tokens, membership, nil
 }
 
-// Refresh redeems a refresh token and issues a new token pair of the same type.
+// Refresh redeems a refresh token and issues a new token pair of the same type,
+// preserving the original session duration.
 func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenPair, error) {
 	val, err := s.redis.GetDel(ctx, refreshKeyPrefix+refreshToken).Result()
 	if err != nil {
 		return nil, ErrInvalidToken
 	}
 
-	// Try to decode as JSON (local token payload).
-	var payload map[string]string
+	var payload map[string]any
 	if jsonErr := json.Unmarshal([]byte(val), &payload); jsonErr == nil {
-		if payload["type"] == "local" {
-			membershipID, err := uuid.Parse(payload["sub"])
+		sessionDuration := payloadSessionDuration(payload)
+		typ, _ := payload["type"].(string)
+
+		switch typ {
+		case "local":
+			membershipID, err := uuid.Parse(payload["sub"].(string))
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
-			workspaceID, err := uuid.Parse(payload["wid"])
+			workspaceID, err := uuid.Parse(payload["wid"].(string))
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
-			role := model.WorkspaceRole(payload["role"])
-			return s.issueLocalTokenPair(ctx, membershipID, workspaceID, role)
+			role := model.WorkspaceRole(payload["role"].(string))
+			return s.issueLocalTokenPair(ctx, membershipID, workspaceID, role, sessionDuration)
+
+		case "global":
+			userID, err := uuid.Parse(payload["sub"].(string))
+			if err != nil {
+				return nil, ErrInvalidToken
+			}
+			return s.issueGlobalTokenPair(ctx, userID, sessionDuration)
+
+		case "pin_session":
+			pinID, err := uuid.Parse(payload["sub"].(string))
+			if err != nil {
+				return nil, ErrInvalidToken
+			}
+			gateID, err := uuid.Parse(payload["gate_id"].(string))
+			if err != nil {
+				return nil, ErrInvalidToken
+			}
+			return s.IssueGatePinSession(ctx, pinID, gateID, sessionDuration)
 		}
 	}
 
-	// Otherwise treat as raw user_id string (global token).
+	// Backward compat: plain UUID string for old global tokens.
 	userID, err := uuid.Parse(val)
 	if err != nil {
 		return nil, ErrInvalidToken
 	}
-	return s.issueGlobalTokenPair(ctx, userID)
+	return s.issueGlobalTokenPair(ctx, userID, s.globalSessionDuration)
 }
 
 // Merge links a local membership to the authenticated platform user.
@@ -292,10 +319,78 @@ func (s *AuthService) ValidateMemberToken(tokenStr string) (membershipID, worksp
 	return membershipID, workspaceID, role, nil
 }
 
+// IssueGatePinSession issues a short-lived JWT for a PIN session.
+// sub = pin_id, type = "pin_session", gate_id embedded in claims.
+func (s *AuthService) IssueGatePinSession(ctx context.Context, pinID, gateID uuid.UUID, sessionDuration time.Duration) (*TokenPair, error) {
+	accessToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub":     pinID.String(),
+		"type":    "pin_session",
+		"gate_id": gateID.String(),
+		"iat":     time.Now().Unix(),
+		"exp":     time.Now().Add(accessTokenTTL).Unix(),
+	}).SignedString(s.jwtSecret)
+	if err != nil {
+		return nil, fmt.Errorf("sign pin session access token: %w", err)
+	}
+
+	refreshToken, err := newRefreshToken()
+	if err != nil {
+		return nil, fmt.Errorf("generate pin session refresh token: %w", err)
+	}
+
+	payload, _ := json.Marshal(map[string]any{
+		"type":             "pin_session",
+		"sub":              pinID.String(),
+		"gate_id":          gateID.String(),
+		"session_duration": sessionDuration.Seconds(),
+	})
+	if err := s.redis.Set(ctx, refreshKeyPrefix+refreshToken, string(payload), sessionDuration).Err(); err != nil {
+		return nil, fmt.Errorf("store pin session refresh token: %w", err)
+	}
+
+	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken}, nil
+}
+
+// ValidatePinSessionToken validates a pin_session JWT and returns pin ID and gate ID.
+func (s *AuthService) ValidatePinSessionToken(tokenStr string) (pinID, gateID uuid.UUID, err error) {
+	token, parseErr := jwt.Parse(tokenStr, s.keyFunc, jwt.WithExpirationRequired())
+	if parseErr != nil {
+		return uuid.Nil, uuid.Nil, ErrInvalidToken
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return uuid.Nil, uuid.Nil, ErrInvalidToken
+	}
+	if typ, _ := claims["type"].(string); typ != "pin_session" {
+		return uuid.Nil, uuid.Nil, ErrInvalidToken
+	}
+
+	pinID, err = uuid.Parse(claims["sub"].(string))
+	if err != nil {
+		return uuid.Nil, uuid.Nil, ErrInvalidToken
+	}
+	gateID, err = uuid.Parse(claims["gate_id"].(string))
+	if err != nil {
+		return uuid.Nil, uuid.Nil, ErrInvalidToken
+	}
+	return pinID, gateID, nil
+}
+
 // IssueLocalTokenPair issues a local JWT pair for a managed member.
 // Called by SSOService after a successful SSO callback.
+// Session duration is resolved from the member's auth_config and workspace defaults.
 func (s *AuthService) IssueLocalTokenPair(ctx context.Context, membershipID, workspaceID uuid.UUID, role model.WorkspaceRole) (*TokenPair, error) {
-	return s.issueLocalTokenPair(ctx, membershipID, workspaceID, role)
+	membership, err := s.memberships.GetByID(ctx, membershipID, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("get membership: %w", err)
+	}
+	ws, err := s.workspaces.GetByID(ctx, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("get workspace: %w", err)
+	}
+	sessionDuration := resolveSessionDuration(membership.AuthConfig, ws.MemberAuthConfig)
+	return s.issueLocalTokenPair(ctx, membershipID, workspaceID, role, sessionDuration)
 }
 
 func (s *AuthService) keyFunc(t *jwt.Token) (any, error) {
@@ -305,7 +400,7 @@ func (s *AuthService) keyFunc(t *jwt.Token) (any, error) {
 	return s.jwtSecret, nil
 }
 
-func (s *AuthService) issueGlobalTokenPair(ctx context.Context, userID uuid.UUID) (*TokenPair, error) {
+func (s *AuthService) issueGlobalTokenPair(ctx context.Context, userID uuid.UUID, sessionDuration time.Duration) (*TokenPair, error) {
 	accessToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub":  userID.String(),
 		"type": "global",
@@ -321,14 +416,19 @@ func (s *AuthService) issueGlobalTokenPair(ctx context.Context, userID uuid.UUID
 		return nil, fmt.Errorf("generate refresh token: %w", err)
 	}
 
-	if err := s.redis.Set(ctx, refreshKeyPrefix+refreshToken, userID.String(), refreshTokenTTL).Err(); err != nil {
+	payload, _ := json.Marshal(map[string]any{
+		"type":             "global",
+		"sub":              userID.String(),
+		"session_duration": sessionDuration.Seconds(),
+	})
+	if err := s.redis.Set(ctx, refreshKeyPrefix+refreshToken, string(payload), sessionDuration).Err(); err != nil {
 		return nil, fmt.Errorf("store refresh token: %w", err)
 	}
 
 	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken}, nil
 }
 
-func (s *AuthService) issueLocalTokenPair(ctx context.Context, membershipID, workspaceID uuid.UUID, role model.WorkspaceRole) (*TokenPair, error) {
+func (s *AuthService) issueLocalTokenPair(ctx context.Context, membershipID, workspaceID uuid.UUID, role model.WorkspaceRole, sessionDuration time.Duration) (*TokenPair, error) {
 	accessToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub":  membershipID.String(),
 		"type": "local",
@@ -346,17 +446,63 @@ func (s *AuthService) issueLocalTokenPair(ctx context.Context, membershipID, wor
 		return nil, fmt.Errorf("generate refresh token: %w", err)
 	}
 
-	payload, _ := json.Marshal(map[string]string{
-		"type": "local",
-		"sub":  membershipID.String(),
-		"wid":  workspaceID.String(),
-		"role": string(role),
+	payload, _ := json.Marshal(map[string]any{
+		"type":             "local",
+		"sub":              membershipID.String(),
+		"wid":              workspaceID.String(),
+		"role":             string(role),
+		"session_duration": sessionDuration.Seconds(),
 	})
-	if err := s.redis.Set(ctx, refreshKeyPrefix+refreshToken, string(payload), refreshTokenTTL).Err(); err != nil {
+	if err := s.redis.Set(ctx, refreshKeyPrefix+refreshToken, string(payload), sessionDuration).Err(); err != nil {
 		return nil, fmt.Errorf("store refresh token: %w", err)
 	}
 
 	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken}, nil
+}
+
+// resolveSessionDuration reads session_duration (in seconds) from member-level auth_config,
+// falling back to the workspace member_auth_config default, then to defaultSessionTTL.
+// A value of 0 means infinite (no expiry).
+func resolveSessionDuration(memberAuthConfig, workspaceAuthConfig map[string]any) time.Duration {
+	for _, cfg := range []map[string]any{memberAuthConfig, workspaceAuthConfig} {
+		if cfg == nil {
+			continue
+		}
+		v, ok := cfg["session_duration"]
+		if !ok {
+			continue
+		}
+		secs, ok := v.(float64) // JSON numbers unmarshal as float64
+		if !ok {
+			continue
+		}
+		if secs == 0 {
+			return 0 // infinite
+		}
+		if secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return defaultSessionTTL
+}
+
+// payloadSessionDuration extracts the session_duration from a stored Redis payload.
+func payloadSessionDuration(payload map[string]any) time.Duration {
+	v, ok := payload["session_duration"]
+	if !ok {
+		return defaultSessionTTL
+	}
+	secs, ok := v.(float64)
+	if !ok {
+		return defaultSessionTTL
+	}
+	if secs == 0 {
+		return 0 // infinite
+	}
+	if secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	return defaultSessionTTL
 }
 
 func newRefreshToken() (string, error) {

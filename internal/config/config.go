@@ -5,21 +5,23 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	Port         int
-	DatabaseURL  string
-	RedisURL     string
-	MQTTBroker   string
-	MQTTUsername string // optional, empty = anonymous
-	MQTTPassword string // optional
-	JWTSecret    string
-	CORSOrigins  []string
-	BaseURL      string // public base URL of this API, e.g. https://api.example.com
-	FrontendURL  string // public URL of the frontend SPA, for post-SSO redirects
+	Port                  int
+	DatabaseURL           string
+	RedisURL              string
+	MQTTBroker            string
+	MQTTUsername          string // optional, empty = anonymous
+	MQTTPassword          string // optional
+	JWTSecret             string
+	CORSOrigins           []string
+	BaseURL               string        // public base URL of this API, e.g. https://api.example.com
+	FrontendURL           string        // public URL of the frontend SPA, for post-SSO redirects
+	GlobalSessionDuration time.Duration // refresh token TTL for platform users (0 = infinite)
 }
 
 func Load() (*Config, error) {
@@ -73,6 +75,21 @@ func Load() (*Config, error) {
 	cfg.FrontendURL = os.Getenv("FRONTEND_URL")
 	if cfg.FrontendURL == "" {
 		cfg.FrontendURL = "http://localhost:5173"
+	}
+
+	// AUTH_SESSION_DURATION: refresh token lifetime for platform users, in seconds.
+	// 0 means infinite (no expiry). Default: 7 days.
+	cfg.GlobalSessionDuration = 7 * 24 * time.Hour
+	if v := os.Getenv("AUTH_SESSION_DURATION"); v != "" {
+		secs, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid AUTH_SESSION_DURATION: %w", err)
+		}
+		if secs == 0 {
+			cfg.GlobalSessionDuration = 0
+		} else {
+			cfg.GlobalSessionDuration = time.Duration(secs) * time.Second
+		}
 	}
 
 	return cfg, nil
