@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next'
 import {
   Container, Title, Text, Group, Button, Modal, Stack, Alert, Tabs,
   TextInput, PasswordInput, Select, Badge, Avatar, ActionIcon, Center, Skeleton,
-  Collapse, Anchor,
+  Collapse, Anchor, NumberInput,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { UserPlus, Trash2, Users, AlertCircle } from 'lucide-react'
@@ -18,15 +18,22 @@ const ROLE_COLOR: Record<string, string> = {
   MEMBER: 'gray',
 }
 
-// session_duration in seconds; '' = use workspace default (7 days)
-const SESSION_DURATION_OPTIONS = [
-  { value: '', labelKey: 'members.session7d' },       // default = 7 days
+// session_duration preset values in seconds; '' = workspace default (7d); 'custom' triggers free input
+const SESSION_PRESET_OPTIONS = [
+  { value: '', labelKey: 'members.session7d' },
   { value: '0', labelKey: 'members.sessionInfinite' },
   { value: '3600', labelKey: 'members.session1h' },
   { value: '28800', labelKey: 'members.session8h' },
   { value: '86400', labelKey: 'members.session24h' },
   { value: '2592000', labelKey: 'members.session30d' },
+  { value: 'custom', labelKey: 'members.sessionCustom' },
 ] as const
+
+const UNIT_MULTIPLIERS: Record<string, number> = {
+  minutes: 60,
+  hours: 3600,
+  days: 86400,
+}
 
 export default function MembersPage() {
   const { wsId } = useParams<{ wsId: string }>()
@@ -40,7 +47,9 @@ export default function MembersPage() {
   const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
   const [role, setRole] = useState('MEMBER')
-  const [sessionDuration, setSessionDuration] = useState<string>('')
+  const [sessionDuration, setSessionDuration] = useState<string>('')  // preset value or 'custom'
+  const [customValue, setCustomValue] = useState<number | string>(1)
+  const [customUnit, setCustomUnit] = useState<string>('days')
   const [error, setError] = useState<string | null>(null)
 
   const { data: members, isLoading } = useQuery<WorkspaceMembership[]>({
@@ -60,11 +69,20 @@ export default function MembersPage() {
     },
   })
 
+  function resolveSessionDurationSeconds(): number | undefined {
+    if (sessionDuration === '') return undefined // use workspace default
+    if (sessionDuration === '0') return 0         // infinite
+    if (sessionDuration === 'custom') {
+      const n = typeof customValue === 'number' ? customValue : parseFloat(String(customValue))
+      if (!n || n <= 0) return undefined
+      return Math.round(n * (UNIT_MULTIPLIERS[customUnit] ?? 3600))
+    }
+    return parseInt(sessionDuration, 10)
+  }
+
   const createLocal = useMutation({
     mutationFn: () => {
-      const sessionDurationNum = sessionDuration === '' ? undefined
-        : sessionDuration === '0' ? 0
-        : parseInt(sessionDuration, 10)
+      const sessionDurationNum = resolveSessionDurationSeconds()
       return membersApi.createLocal(wsId!, {
         local_username: username,
         display_name: displayName || undefined,
@@ -98,6 +116,8 @@ export default function MembersPage() {
     setPassword('')
     setRole('MEMBER')
     setSessionDuration('')
+    setCustomValue(1)
+    setCustomUnit('days')
     setAdvancedOpened(false)
     setError(null)
   }
@@ -114,7 +134,7 @@ export default function MembersPage() {
 
   const isPending = invite.isPending || createLocal.isPending
 
-  const sessionOptions = SESSION_DURATION_OPTIONS.map(({ value, labelKey }) => ({
+  const sessionPresetOptions = SESSION_PRESET_OPTIONS.map(({ value, labelKey }) => ({
     value,
     label: t(labelKey),
   }))
@@ -182,12 +202,35 @@ export default function MembersPage() {
                   {t('gates.advancedOptions')} {advancedOpened ? '▲' : '▼'}
                 </Anchor>
                 <Collapse in={advancedOpened}>
-                  <Select
-                    label={t('members.sessionDuration')}
-                    value={sessionDuration}
-                    onChange={(v) => setSessionDuration(v ?? '')}
-                    data={sessionOptions}
-                  />
+                  <Stack gap="xs">
+                    <Select
+                      label={t('members.sessionDuration')}
+                      value={sessionDuration}
+                      onChange={(v) => setSessionDuration(v ?? '')}
+                      data={sessionPresetOptions}
+                    />
+                    {sessionDuration === 'custom' && (
+                      <Group gap="xs" grow>
+                        <NumberInput
+                          label={t('members.sessionCustomValue')}
+                          value={customValue}
+                          onChange={setCustomValue}
+                          min={1}
+                          step={1}
+                        />
+                        <Select
+                          label={t('members.sessionCustomUnit')}
+                          value={customUnit}
+                          onChange={(v) => setCustomUnit(v ?? 'days')}
+                          data={[
+                            { value: 'minutes', label: t('members.sessionUnitMinutes') },
+                            { value: 'hours', label: t('members.sessionUnitHours') },
+                            { value: 'days', label: t('members.sessionUnitDays') },
+                          ]}
+                        />
+                      </Group>
+                    )}
+                  </Stack>
                 </Collapse>
               </>
             )}

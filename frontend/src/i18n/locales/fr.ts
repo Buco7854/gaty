@@ -106,6 +106,12 @@ const fr: Translations = {
     session24h: '24 heures',
     session7d: '7 jours',
     session30d: '30 jours',
+    sessionCustom: 'Personnalisée…',
+    sessionCustomValue: 'Durée',
+    sessionCustomUnit: 'Unité',
+    sessionUnitMinutes: 'minutes',
+    sessionUnitHours: 'heures',
+    sessionUnitDays: 'jours',
   },
   permissions: {
     title: 'Permissions des membres',

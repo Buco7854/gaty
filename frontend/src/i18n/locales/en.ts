@@ -104,6 +104,12 @@ const en = {
     session24h: '24 hours',
     session7d: '7 days',
     session30d: '30 days',
+    sessionCustom: 'Custom…',
+    sessionCustomValue: 'Duration',
+    sessionCustomUnit: 'Unit',
+    sessionUnitMinutes: 'minutes',
+    sessionUnitHours: 'hours',
+    sessionUnitDays: 'days',
   },
   permissions: {
     title: 'Member permissions',
