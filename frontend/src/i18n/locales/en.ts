@@ -127,6 +127,10 @@ const en = {
     expires: 'Expires on',
     expiresPlaceholder: 'No expiry',
     unlabeled: 'Unlabeled',
+    type: 'Type',
+    typeOneShot: 'One-shot (opens once, no session)',
+    typeSession: 'Session (issues a reusable session)',
+    sessionDuration: 'Session duration',
   },
   domains: {
     title: 'Custom domains',
@@ -165,6 +169,11 @@ const en = {
     workspace: 'Workspace',
     invalidCredentials: 'Invalid credentials',
     openWithCredentials: 'Open',
+    openGate: 'Open gate',
+    sessionActive: 'Session active',
+    sessionExpired: 'Session expired, please authenticate again',
+    useAnotherMethod: 'Authenticate differently',
+    signOut: 'Sign out',
   },
 } as const
 

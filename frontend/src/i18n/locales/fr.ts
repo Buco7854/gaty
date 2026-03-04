@@ -129,6 +129,10 @@ const fr: Translations = {
     expires: 'Expire le',
     expiresPlaceholder: 'Sans expiration',
     unlabeled: 'Sans libellé',
+    type: 'Type',
+    typeOneShot: 'Usage unique (ouvre direct, sans session)',
+    typeSession: 'Session (émet une session réutilisable)',
+    sessionDuration: 'Durée de session',
   },
   domains: {
     title: 'Domaines personnalisés',
@@ -167,6 +171,11 @@ const fr: Translations = {
     workspace: 'Espace de travail',
     invalidCredentials: 'Identifiants invalides',
     openWithCredentials: 'Ouvrir',
+    openGate: 'Ouvrir le portail',
+    sessionActive: 'Session active',
+    sessionExpired: 'Session expirée, veuillez vous reconnecter',
+    useAnotherMethod: 'Autre méthode',
+    signOut: 'Se déconnecter',
   },
 }
 

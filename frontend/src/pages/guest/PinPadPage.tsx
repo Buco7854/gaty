@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router'
 import { publicApi, authApi } from '@/api'
+import type { GateSession } from '@/api/public'
 import type { DomainResolveResult } from '@/types'
 import { useTranslation } from 'react-i18next'
 import { Center, Stack, Group, Text, Title, Loader, Button, TextInput, PasswordInput, Anchor } from '@mantine/core'
@@ -11,6 +12,10 @@ type Mode = 'pin' | 'password'
 
 const MAX_PIN = 12
 const DIGITS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫']
+
+function sessionKey(gateId: string) {
+  return `gaty_session_${gateId}`
+}
 
 export default function PinPadPage() {
   const { gateId: gateIdParam } = useParams<{ gateId?: string }>()
@@ -23,6 +28,9 @@ export default function PinPadPage() {
   const [pin, setPin] = useState('')
   const [state, setState] = useState<PadState>('idle')
   const [errorMsg, setErrorMsg] = useState('')
+
+  // Stored session
+  const [session, setSession] = useState<GateSession | null>(null)
 
   // Member credentials form
   const [localUsername, setLocalUsername] = useState('')
@@ -39,6 +47,30 @@ export default function PinPadPage() {
 
   const effectiveGateId = gateIdParam ?? resolved?.gate_id
 
+  // Load stored session when gate ID is known
+  useEffect(() => {
+    if (!effectiveGateId) return
+    const raw = localStorage.getItem(sessionKey(effectiveGateId))
+    if (!raw) return
+    try {
+      setSession(JSON.parse(raw) as GateSession)
+    } catch {
+      localStorage.removeItem(sessionKey(effectiveGateId))
+    }
+  }, [effectiveGateId])
+
+  function storeSession(sess: GateSession) {
+    if (!effectiveGateId) return
+    localStorage.setItem(sessionKey(effectiveGateId), JSON.stringify(sess))
+    setSession(sess)
+  }
+
+  function clearSession() {
+    if (!effectiveGateId) return
+    localStorage.removeItem(sessionKey(effectiveGateId))
+    setSession(null)
+  }
+
   function showFeedback(result: 'success' | 'error', msg = '') {
     setState(result)
     setErrorMsg(msg)
@@ -49,11 +81,59 @@ export default function PinPadPage() {
     }, 3000)
   }
 
+  async function triggerWithSession(sess: GateSession): Promise<'success' | 'expired' | 'error'> {
+    try {
+      if (sess.type === 'pin') {
+        await publicApi.triggerWithPinSession(sess.access_token)
+      } else {
+        const gateId = effectiveGateId ?? resolved?.gate_id
+        await publicApi.triggerAsLocal(sess.workspace_id!, gateId!, sess.access_token)
+      }
+      return 'success'
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status !== 401) return 'error'
+      // Try refresh
+      try {
+        const newTokens = await publicApi.refreshSession(sess.refresh_token)
+        const updated: GateSession = { ...sess, access_token: newTokens.access_token, refresh_token: newTokens.refresh_token }
+        storeSession(updated)
+        // Retry
+        if (updated.type === 'pin') {
+          await publicApi.triggerWithPinSession(updated.access_token)
+        } else {
+          const gateId = effectiveGateId ?? resolved?.gate_id
+          await publicApi.triggerAsLocal(updated.workspace_id!, gateId!, updated.access_token)
+        }
+        return 'success'
+      } catch {
+        return 'expired'
+      }
+    }
+  }
+
+  async function openGateWithSession() {
+    if (!session || state !== 'idle') return
+    setState('loading')
+    const result = await triggerWithSession(session)
+    if (result === 'success') {
+      showFeedback('success')
+    } else if (result === 'expired') {
+      clearSession()
+      showFeedback('error', t('pinpad.sessionExpired'))
+    } else {
+      showFeedback('error', t('pinpad.unreachable'))
+    }
+  }
+
   async function submitPin(finalPin: string) {
     if (!effectiveGateId || finalPin.length < 4) return
     setState('loading')
     try {
-      await publicApi.unlock(effectiveGateId, finalPin)
+      const result = await publicApi.open(effectiveGateId, finalPin)
+      if (result.session) {
+        storeSession({ type: 'pin', ...result.session })
+      }
       showFeedback('success')
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status
@@ -70,6 +150,12 @@ export default function PinPadPage() {
     try {
       const auth = await authApi.loginLocal(resolved.workspace_slug, localUsername, localPassword)
       await publicApi.triggerAsLocal(resolved.workspace_id, resolved.gate_id, auth.access_token)
+      storeSession({
+        type: 'member',
+        access_token: auth.access_token,
+        refresh_token: auth.refresh_token,
+        workspace_id: resolved.workspace_id,
+      })
       showFeedback('success')
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status
@@ -126,7 +212,11 @@ export default function PinPadPage() {
           )}
           <Title order={2}>{gateName}</Title>
           <Text size="sm" c="dimmed">
-            {mode === 'pin' ? t('pinpad.enterPin') : t('pinpad.memberAccess')}
+            {session
+              ? t('pinpad.sessionActive')
+              : mode === 'pin'
+                ? t('pinpad.enterPin')
+                : t('pinpad.memberAccess')}
           </Text>
         </Stack>
 
@@ -138,7 +228,7 @@ export default function PinPadPage() {
             <XCircle size={40} color="var(--mantine-color-red-6)" />
           ) : state === 'loading' ? (
             <Loader size="md" />
-          ) : mode === 'pin' ? (
+          ) : !session && mode === 'pin' ? (
             <Group gap="sm">
               {Array.from({ length: Math.max(pin.length, 4) }).map((_, i) => (
                 <div
@@ -165,8 +255,26 @@ export default function PinPadPage() {
           </Text>
         )}
 
+        {/* Session active — show open button */}
+        {session && state === 'idle' && (
+          <Stack align="center" w="100%" gap="sm">
+            <Button size="lg" radius="xl" fullWidth onClick={openGateWithSession}>
+              {t('pinpad.openGate')}
+            </Button>
+            <Anchor
+              component="button"
+              type="button"
+              size="xs"
+              c="dimmed"
+              onClick={clearSession}
+            >
+              {t('pinpad.useAnotherMethod')}
+            </Anchor>
+          </Stack>
+        )}
+
         {/* PIN mode */}
-        {mode === 'pin' && state === 'idle' && (
+        {!session && mode === 'pin' && state === 'idle' && (
           <>
             <div
               style={{
@@ -240,7 +348,7 @@ export default function PinPadPage() {
         )}
 
         {/* Password mode — only available when domain-resolved */}
-        {mode === 'password' && state === 'idle' && resolved && (
+        {!session && mode === 'password' && state === 'idle' && resolved && (
           <form onSubmit={submitCredentials} style={{ width: '100%' }}>
             <Stack>
               <TextInput
@@ -264,8 +372,8 @@ export default function PinPadPage() {
           </form>
         )}
 
-        {/* Mode toggle — only when domain-resolved (has workspace info) */}
-        {resolved && state === 'idle' && (
+        {/* Mode toggle — only when domain-resolved and no active session */}
+        {!session && resolved && state === 'idle' && (
           <Anchor
             component="button"
             type="button"

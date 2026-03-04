@@ -180,8 +180,10 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenP
 	var payload map[string]any
 	if jsonErr := json.Unmarshal([]byte(val), &payload); jsonErr == nil {
 		sessionDuration := payloadSessionDuration(payload)
+		typ, _ := payload["type"].(string)
 
-		if typ, _ := payload["type"].(string); typ == "local" {
+		switch typ {
+		case "local":
 			membershipID, err := uuid.Parse(payload["sub"].(string))
 			if err != nil {
 				return nil, ErrInvalidToken
@@ -192,15 +194,24 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenP
 			}
 			role := model.WorkspaceRole(payload["role"].(string))
 			return s.issueLocalTokenPair(ctx, membershipID, workspaceID, role, sessionDuration)
-		}
 
-		if typ, _ := payload["type"].(string); typ == "global" {
-			sub, _ := payload["sub"].(string)
-			userID, err := uuid.Parse(sub)
+		case "global":
+			userID, err := uuid.Parse(payload["sub"].(string))
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
 			return s.issueGlobalTokenPair(ctx, userID, sessionDuration)
+
+		case "pin_session":
+			pinID, err := uuid.Parse(payload["sub"].(string))
+			if err != nil {
+				return nil, ErrInvalidToken
+			}
+			gateID, err := uuid.Parse(payload["gate_id"].(string))
+			if err != nil {
+				return nil, ErrInvalidToken
+			}
+			return s.IssueGatePinSession(ctx, pinID, gateID, sessionDuration)
 		}
 	}
 
@@ -306,6 +317,64 @@ func (s *AuthService) ValidateMemberToken(tokenStr string) (membershipID, worksp
 
 	role = model.WorkspaceRole(claims["role"].(string))
 	return membershipID, workspaceID, role, nil
+}
+
+// IssueGatePinSession issues a short-lived JWT for a PIN session.
+// sub = pin_id, type = "pin_session", gate_id embedded in claims.
+func (s *AuthService) IssueGatePinSession(ctx context.Context, pinID, gateID uuid.UUID, sessionDuration time.Duration) (*TokenPair, error) {
+	accessToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub":     pinID.String(),
+		"type":    "pin_session",
+		"gate_id": gateID.String(),
+		"iat":     time.Now().Unix(),
+		"exp":     time.Now().Add(accessTokenTTL).Unix(),
+	}).SignedString(s.jwtSecret)
+	if err != nil {
+		return nil, fmt.Errorf("sign pin session access token: %w", err)
+	}
+
+	refreshToken, err := newRefreshToken()
+	if err != nil {
+		return nil, fmt.Errorf("generate pin session refresh token: %w", err)
+	}
+
+	payload, _ := json.Marshal(map[string]any{
+		"type":             "pin_session",
+		"sub":              pinID.String(),
+		"gate_id":          gateID.String(),
+		"session_duration": sessionDuration.Seconds(),
+	})
+	if err := s.redis.Set(ctx, refreshKeyPrefix+refreshToken, string(payload), sessionDuration).Err(); err != nil {
+		return nil, fmt.Errorf("store pin session refresh token: %w", err)
+	}
+
+	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken}, nil
+}
+
+// ValidatePinSessionToken validates a pin_session JWT and returns pin ID and gate ID.
+func (s *AuthService) ValidatePinSessionToken(tokenStr string) (pinID, gateID uuid.UUID, err error) {
+	token, parseErr := jwt.Parse(tokenStr, s.keyFunc, jwt.WithExpirationRequired())
+	if parseErr != nil {
+		return uuid.Nil, uuid.Nil, ErrInvalidToken
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return uuid.Nil, uuid.Nil, ErrInvalidToken
+	}
+	if typ, _ := claims["type"].(string); typ != "pin_session" {
+		return uuid.Nil, uuid.Nil, ErrInvalidToken
+	}
+
+	pinID, err = uuid.Parse(claims["sub"].(string))
+	if err != nil {
+		return uuid.Nil, uuid.Nil, ErrInvalidToken
+	}
+	gateID, err = uuid.Parse(claims["gate_id"].(string))
+	if err != nil {
+		return uuid.Nil, uuid.Nil, ErrInvalidToken
+	}
+	return pinID, gateID, nil
 }
 
 // IssueLocalTokenPair issues a local JWT pair for a managed member.

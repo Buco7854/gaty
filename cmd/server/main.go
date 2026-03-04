@@ -143,7 +143,7 @@ func main() {
 	handler.NewGateHandler(gateRepo, policyRepo, auditRepo, mqttClient).RegisterRoutes(api, wsMember, wsAdmin)
 	handler.NewPolicyHandler(policyRepo).RegisterRoutes(api, wsAdmin)
 	handler.NewMemberHandler(membershipSvc).RegisterRoutes(api, wsAdmin)
-	handler.NewGatePinHandler(gatePinRepo, gateRepo, mqttClient, redisClient).RegisterRoutes(api, wsAdmin)
+	handler.NewGatePinHandler(gatePinRepo, gateRepo, mqttClient, redisClient, authSvc).RegisterRoutes(api, wsAdmin)
 	handler.NewSSOHandler(ssoSvc, authSvc, wsRepo, cfg.FrontendURL).RegisterRoutes(api, wsAdmin)
 	handler.NewCredentialHandler(credRepo, memberCredRepo, membershipRepo).RegisterRoutes(api, requireAuth, requireMembership, wsAdmin)
 	handler.NewCustomDomainHandler(domainRepo, gateRepo).RegisterRoutes(api, wsAdmin)

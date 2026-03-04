@@ -2,13 +2,13 @@ import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { gatesApi, pinsApi, domainsApi, policiesApi, membersApi } from '@/api'
-import type { ActionConfig } from '@/api'
+import type { ActionConfig, PinMetadata } from '@/api'
 import type { Gate, GatePin, CustomDomain, WorkspaceMembership, MembershipPolicy } from '@/types'
 import { useTranslation } from 'react-i18next'
 import {
   Container, Title, Text, Group, Button, Stack, Paper, Badge, ActionIcon,
   TextInput, PasswordInput, Select, Tooltip, Modal, Code, Alert, Checkbox,
-  Table,
+  Table, NumberInput, Collapse, Anchor,
 } from '@mantine/core'
 import { useDisclosure, useClipboard } from '@mantine/hooks'
 import {
@@ -94,6 +94,11 @@ export default function GatePage() {
   const [pinLabel, setPinLabel] = useState('')
   const [pinValue, setPinValue] = useState('')
   const [pinExpiresAt, setPinExpiresAt] = useState('')
+  const [pinType, setPinType] = useState<'one_shot' | 'session'>('one_shot')
+  const [pinSessionDuration, setPinSessionDuration] = useState<string>('')
+  const [pinCustomValue, setPinCustomValue] = useState<number | string>(1)
+  const [pinCustomUnit, setPinCustomUnit] = useState<string>('days')
+  const [pinAdvancedOpened, setPinAdvancedOpened] = useState(false)
 
   // Domain form
   const [domainValue, setDomainValue] = useState('')
@@ -103,6 +108,28 @@ export default function GatePage() {
   const [editOpenConfig, setEditOpenConfig] = useState<ActionConfig | null>(null)
   const [editCloseConfig, setEditCloseConfig] = useState<ActionConfig | null>(null)
   const [editStatusConfig, setEditStatusConfig] = useState<ActionConfig | null>(null)
+
+  const PIN_SESSION_PRESETS = [
+    { value: '', label: t('members.session7d') },
+    { value: '0', label: t('members.sessionInfinite') },
+    { value: '3600', label: t('members.session1h') },
+    { value: '28800', label: t('members.session8h') },
+    { value: '86400', label: t('members.session24h') },
+    { value: '2592000', label: t('members.session30d') },
+    { value: 'custom', label: t('members.sessionCustom') },
+  ]
+
+  function resolvePinSessionDurationSeconds(): number | undefined {
+    if (pinSessionDuration === '') return undefined
+    if (pinSessionDuration === '0') return 0
+    if (pinSessionDuration === 'custom') {
+      const n = typeof pinCustomValue === 'number' ? pinCustomValue : parseFloat(String(pinCustomValue))
+      if (!n || n <= 0) return undefined
+      const multipliers: Record<string, number> = { minutes: 60, hours: 3600, days: 86400 }
+      return Math.round(n * (multipliers[pinCustomUnit] ?? 3600))
+    }
+    return parseInt(pinSessionDuration, 10)
+  }
 
   const { data: gate } = useQuery<Gate>({
     queryKey: ['gate', wsId, gateId],
@@ -148,17 +175,30 @@ export default function GatePage() {
   })
 
   const createPin = useMutation({
-    mutationFn: () => pinsApi.create(wsId!, gateId!, {
-      label: pinLabel || undefined,
-      pin: pinValue,
-      expires_at: pinExpiresAt ? new Date(pinExpiresAt).toISOString() : undefined,
-    }),
+    mutationFn: () => {
+      const metadata: PinMetadata = { type: pinType }
+      if (pinExpiresAt) metadata.expires_at = new Date(pinExpiresAt).toISOString()
+      if (pinType === 'session') {
+        const dur = resolvePinSessionDurationSeconds()
+        if (dur !== undefined) metadata.session_duration = dur
+      }
+      return pinsApi.create(wsId!, gateId!, {
+        label: pinLabel || undefined,
+        pin: pinValue,
+        metadata,
+      })
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pins', wsId, gateId] })
       closePinModal()
       setPinLabel('')
       setPinValue('')
       setPinExpiresAt('')
+      setPinType('one_shot')
+      setPinSessionDuration('')
+      setPinCustomValue(1)
+      setPinCustomUnit('days')
+      setPinAdvancedOpened(false)
     },
   })
 
@@ -322,13 +362,64 @@ export default function GatePage() {
                 minLength={4}
                 styles={{ input: { fontFamily: 'monospace' } }}
               />
-              <TextInput
-                label={t('pins.expires')}
-                description={t('common.optional')}
-                type="datetime-local"
-                value={pinExpiresAt}
-                onChange={(e) => setPinExpiresAt(e.target.value)}
+              <Select
+                label={t('pins.type')}
+                value={pinType}
+                onChange={(v) => setPinType((v ?? 'one_shot') as 'one_shot' | 'session')}
+                data={[
+                  { value: 'one_shot', label: t('pins.typeOneShot') },
+                  { value: 'session', label: t('pins.typeSession') },
+                ]}
               />
+              {pinType === 'session' && (
+                <Stack gap="xs">
+                  <Select
+                    label={t('pins.sessionDuration')}
+                    value={pinSessionDuration}
+                    onChange={(v) => setPinSessionDuration(v ?? '')}
+                    data={PIN_SESSION_PRESETS}
+                  />
+                  {pinSessionDuration === 'custom' && (
+                    <Group gap="xs" grow>
+                      <NumberInput
+                        label={t('members.sessionCustomValue')}
+                        value={pinCustomValue}
+                        onChange={setPinCustomValue}
+                        min={1}
+                        step={1}
+                      />
+                      <Select
+                        label={t('members.sessionCustomUnit')}
+                        value={pinCustomUnit}
+                        onChange={(v) => setPinCustomUnit(v ?? 'days')}
+                        data={[
+                          { value: 'minutes', label: t('members.sessionUnitMinutes') },
+                          { value: 'hours', label: t('members.sessionUnitHours') },
+                          { value: 'days', label: t('members.sessionUnitDays') },
+                        ]}
+                      />
+                    </Group>
+                  )}
+                </Stack>
+              )}
+              <Anchor
+                component="button"
+                type="button"
+                size="xs"
+                c="dimmed"
+                onClick={() => setPinAdvancedOpened((o) => !o)}
+              >
+                {t('gates.advancedOptions')} {pinAdvancedOpened ? '▲' : '▼'}
+              </Anchor>
+              <Collapse in={pinAdvancedOpened}>
+                <TextInput
+                  label={t('pins.expires')}
+                  description={t('common.optional')}
+                  type="datetime-local"
+                  value={pinExpiresAt}
+                  onChange={(e) => setPinExpiresAt(e.target.value)}
+                />
+              </Collapse>
               <Group justify="flex-end">
                 <Button variant="default" onClick={closePinModal}>{t('common.cancel')}</Button>
                 <Button type="submit" loading={createPin.isPending}>{t('common.add')}</Button>
