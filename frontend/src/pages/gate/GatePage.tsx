@@ -1,26 +1,23 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { gatesApi, pinsApi, domainsApi, policiesApi, membersApi } from '@/api'
+import { gatesApi, pinsApi, domainsApi, policiesApi } from '@/api'
 import type { ActionConfig, PinMetadata } from '@/api'
-import type { Gate, GatePin, CustomDomain, WorkspaceMembership, MembershipPolicy } from '@/types'
+import type { Gate, GatePin, CustomDomain, WorkspaceWithRole } from '@/types'
+import { useAuthStore } from '@/store/auth'
+import { findLocalSession } from '@/utils/session'
 import { useTranslation } from 'react-i18next'
+import { notifications } from '@mantine/notifications'
 import {
   Container, Title, Text, Group, Button, Stack, Paper, Badge, ActionIcon,
-  TextInput, PasswordInput, Select, Tooltip, Modal, Code, Alert, Checkbox,
-  Table, NumberInput, Collapse, Anchor,
+  TextInput, PasswordInput, Select, Tooltip, Modal, Code, Alert,
+  NumberInput, Anchor, Checkbox,
 } from '@mantine/core'
 import { useDisclosure, useClipboard } from '@mantine/hooks'
 import {
   ArrowLeft, Zap, Hash, Globe, Plus, Trash2, CheckCircle2, XCircle,
-  Clock, Copy, Check, Settings2,
+  Clock, Copy, Check, Settings2, Pencil, Info,
 } from 'lucide-react'
-
-const PERMISSIONS = [
-  { code: 'gate:read_status', labelKey: 'permissions.viewStatus' },
-  { code: 'gate:trigger_open', labelKey: 'permissions.triggerOpen' },
-  { code: 'gate:manage', labelKey: 'permissions.manage' },
-] as const
 
 function ActionConfigForm({
   label,
@@ -85,6 +82,24 @@ export default function GatePage() {
   const { t } = useTranslation()
   const clipboard = useClipboard({ timeout: 2000 })
 
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const globalAuth = isAuthenticated()
+  const localSession = useMemo(
+    () => (!globalAuth && wsId ? findLocalSession(wsId) : null),
+    [wsId, globalAuth]
+  )
+  const ws = qc.getQueryData<WorkspaceWithRole[]>(['workspaces'])?.find((w) => w.id === wsId)
+  const effectiveRole = globalAuth ? ws?.role : localSession?.role
+  const canManage = effectiveRole === 'ADMIN' || effectiveRole === 'OWNER'
+
+  const { data: myPolicies } = useQuery({
+    queryKey: ['policies-me', wsId],
+    queryFn: () => policiesApi.listMine(wsId!),
+    enabled: !canManage && (globalAuth || !!localSession),
+  })
+  const canManageGate = canManage ||
+    myPolicies?.some((p) => p.gate_id === gateId && p.permission_code === 'gate:manage')
+
   // Modal state
   const [pinModalOpened, { open: openPinModal, close: closePinModal }] = useDisclosure(false)
   const [domainModalOpened, { open: openDomainModal, close: closeDomainModal }] = useDisclosure(false)
@@ -94,11 +109,14 @@ export default function GatePage() {
   const [pinLabel, setPinLabel] = useState('')
   const [pinValue, setPinValue] = useState('')
   const [pinExpiresAt, setPinExpiresAt] = useState('')
-  const [pinType, setPinType] = useState<'one_shot' | 'session'>('one_shot')
   const [pinSessionDuration, setPinSessionDuration] = useState<string>('')
   const [pinCustomValue, setPinCustomValue] = useState<number | string>(1)
   const [pinCustomUnit, setPinCustomUnit] = useState<string>('days')
-  const [pinAdvancedOpened, setPinAdvancedOpened] = useState(false)
+  const [pinMaxUses, setPinMaxUses] = useState<number | string>('')
+  const [pinPermissions, setPinPermissions] = useState<string[]>(['gate:trigger_open'])
+  const [pinCodeType, setPinCodeType] = useState<'pin' | 'password'>('pin')
+  const [pinModalMode, setPinModalMode] = useState<'create' | 'edit'>('create')
+  const [editingPinId, setEditingPinId] = useState<string | null>(null)
 
   // Domain form
   const [domainValue, setDomainValue] = useState('')
@@ -147,18 +165,10 @@ export default function GatePage() {
     queryFn: () => domainsApi.list(wsId!, gateId!),
   })
 
-  const { data: members } = useQuery<WorkspaceMembership[]>({
-    queryKey: ['members', wsId],
-    queryFn: () => membersApi.list(wsId!),
-  })
-
-  const { data: policies } = useQuery<MembershipPolicy[]>({
-    queryKey: ['policies', wsId, gateId],
-    queryFn: () => policiesApi.list(wsId!, gateId!),
-  })
-
   const trigger = useMutation({
     mutationFn: () => gatesApi.trigger(wsId!, gateId!),
+    onSuccess: () => notifications.show({ color: 'green', message: t('pinpad.gateOpened'), autoClose: 3000 }),
+    onError: () => notifications.show({ color: 'red', message: t('pinpad.unreachable'), autoClose: 4000 }),
   })
 
   const updateConfig = useMutation({
@@ -176,29 +186,66 @@ export default function GatePage() {
 
   const createPin = useMutation({
     mutationFn: () => {
-      const metadata: PinMetadata = { type: pinType }
+      const metadata: PinMetadata = { permissions: pinPermissions }
       if (pinExpiresAt) metadata.expires_at = new Date(pinExpiresAt).toISOString()
-      if (pinType === 'session') {
-        const dur = resolvePinSessionDurationSeconds()
-        if (dur !== undefined) metadata.session_duration = dur
-      }
+      const dur = resolvePinSessionDurationSeconds()
+      if (dur !== undefined) metadata.session_duration = dur
+      const maxUses = typeof pinMaxUses === 'number' ? pinMaxUses : parseInt(String(pinMaxUses), 10)
+      if (maxUses > 0) metadata.max_uses = maxUses
       return pinsApi.create(wsId!, gateId!, {
-        label: pinLabel || undefined,
+        label: pinLabel,
         pin: pinValue,
+        code_type: pinCodeType,
         metadata,
       })
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pins', wsId, gateId] })
       closePinModal()
-      setPinLabel('')
-      setPinValue('')
-      setPinExpiresAt('')
-      setPinType('one_shot')
-      setPinSessionDuration('')
-      setPinCustomValue(1)
-      setPinCustomUnit('days')
-      setPinAdvancedOpened(false)
+      resetPinForm()
+    },
+  })
+
+  function resetPinForm() {
+    setPinLabel(''); setPinValue(''); setPinExpiresAt(''); setPinSessionDuration('')
+    setPinCustomValue(1); setPinCustomUnit('days'); setPinMaxUses(''); setPinPermissions(['gate:trigger_open'])
+    setPinCodeType('pin'); setPinModalMode('create'); setEditingPinId(null)
+  }
+
+  function openEditModal(pin: GatePin) {
+    const meta = pin.metadata as {
+      code_type?: 'pin' | 'password'; expires_at?: string
+      permissions?: string[]; session_duration?: number; max_uses?: number
+    }
+    setPinModalMode('edit')
+    setEditingPinId(pin.id)
+    setPinLabel(pin.label)
+    setPinCodeType(meta.code_type ?? 'pin')
+    setPinExpiresAt(meta.expires_at ? new Date(meta.expires_at).toISOString().slice(0, 16) : '')
+    setPinPermissions(meta.permissions ?? ['gate:trigger_open'])
+    const sd = meta.session_duration
+    setPinSessionDuration(sd === undefined ? '' : sd === 0 ? '0' : String(sd))
+    setPinMaxUses(meta.max_uses ?? '')
+    openPinModal()
+  }
+
+  const updatePin = useMutation({
+    mutationFn: () => {
+      const metadata: PinMetadata = { permissions: pinPermissions, code_type: pinCodeType }
+      metadata.expires_at = pinExpiresAt ? new Date(pinExpiresAt).toISOString() : null
+      const dur = resolvePinSessionDurationSeconds()
+      metadata.session_duration = dur !== undefined ? dur : null
+      const maxUses = typeof pinMaxUses === 'number' ? pinMaxUses : parseInt(String(pinMaxUses), 10)
+      metadata.max_uses = maxUses > 0 ? maxUses : null
+      return pinsApi.update(wsId!, gateId!, editingPinId!, {
+        label: pinLabel,
+        metadata,
+      })
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pins', wsId, gateId] })
+      closePinModal()
+      resetPinForm()
     },
   })
 
@@ -228,32 +275,6 @@ export default function GatePage() {
       if (data.verified) qc.invalidateQueries({ queryKey: ['domains', wsId, gateId] })
     },
   })
-
-  const grantPerm = useMutation({
-    mutationFn: ({ membershipId, permCode }: { membershipId: string; permCode: string }) =>
-      policiesApi.grant(wsId!, gateId!, membershipId, permCode),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['policies', wsId, gateId] }),
-  })
-
-  const revokePerm = useMutation({
-    mutationFn: ({ membershipId, permCode }: { membershipId: string; permCode: string }) =>
-      policiesApi.revoke(wsId!, gateId!, membershipId, permCode),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['policies', wsId, gateId] }),
-  })
-
-  const regularMembers = members?.filter((m) => m.role === 'MEMBER') ?? []
-
-  function hasPermission(membershipId: string, permCode: string) {
-    return policies?.some((p) => p.membership_id === membershipId && p.permission_code === permCode) ?? false
-  }
-
-  function togglePermission(membershipId: string, permCode: string) {
-    if (hasPermission(membershipId, permCode)) {
-      revokePerm.mutate({ membershipId, permCode })
-    } else {
-      grantPerm.mutate({ membershipId, permCode })
-    }
-  }
 
   function openConfig() {
     setEditOpenConfig(gate?.open_config ?? null)
@@ -290,11 +311,13 @@ export default function GatePage() {
           </Group>
         </div>
         <Group>
-          <Tooltip label={t('gates.integration')}>
-            <ActionIcon variant="default" size="lg" onClick={openConfig}>
-              <Settings2 size={16} />
-            </ActionIcon>
-          </Tooltip>
+          {canManageGate && (
+            <Tooltip label={t('gates.integration')}>
+              <ActionIcon variant="default" size="lg" onClick={openConfig}>
+                <Settings2 size={16} />
+              </ActionIcon>
+            </Tooltip>
+          )}
           <Button
             leftSection={<Zap size={16} />}
             loading={trigger.isPending}
@@ -332,7 +355,7 @@ export default function GatePage() {
         </form>
       </Modal>
 
-      {/* PIN codes */}
+      {/* Access codes */}
       <Paper withBorder p="md" radius="md" mb="md">
         <Group justify="space-between" mb="sm">
           <Group gap="xs">
@@ -340,122 +363,159 @@ export default function GatePage() {
             <Text fw={600}>{t('pins.title')}</Text>
             <Badge variant="light" size="xs">{pins?.length ?? 0}</Badge>
           </Group>
-          <Button size="xs" variant="subtle" leftSection={<Plus size={14} />} onClick={openPinModal}>
-            {t('pins.add')}
-          </Button>
+          {canManageGate && (
+            <Button size="xs" variant="subtle" leftSection={<Plus size={14} />} onClick={() => { resetPinForm(); openPinModal() }}>
+              {t('pins.add')}
+            </Button>
+          )}
         </Group>
+        {(pins?.length ?? 0) === 0 ? (
+          <Text size="sm" c="dimmed">{t('pins.noPins')}</Text>
+        ) : (
+          <Stack gap={2}>
+            {pins?.map((pin) => {
+              const codeType = (pin.metadata.code_type as 'pin' | 'password') ?? 'pin'
+              return (
+                <Group key={pin.id} justify="space-between" py={4}>
+                  <Group gap="sm">
+                    <Hash size={14} opacity={0.5} />
+                    <Text size="sm">{pin.label}</Text>
+                    <Badge size="xs" variant="dot" color={codeType === 'pin' ? 'indigo' : 'violet'}>
+                      {codeType === 'pin' ? 'PIN' : t('pins.passwords')}
+                    </Badge>
+                    {(pin.metadata as { expires_at?: string }).expires_at && (
+                      <Group gap={4}>
+                        <Clock size={12} opacity={0.5} />
+                        <Text size="xs" c="dimmed">
+                          {new Date((pin.metadata as { expires_at: string }).expires_at).toLocaleDateString()}
+                        </Text>
+                      </Group>
+                    )}
+                  </Group>
+                  {canManageGate && (
+                    <Group gap={4}>
+                      <ActionIcon variant="subtle" size="sm" onClick={() => openEditModal(pin)}>
+                        <Pencil size={14} />
+                      </ActionIcon>
+                      <ActionIcon variant="subtle" color="red" size="sm" onClick={() => deletePin.mutate(pin.id)}>
+                        <Trash2 size={14} />
+                      </ActionIcon>
+                    </Group>
+                  )}
+                </Group>
+              )
+            })}
+          </Stack>
+        )}
+      </Paper>
 
-        <Modal opened={pinModalOpened} onClose={closePinModal} title={t('pins.add')}>
-          <form onSubmit={(e) => { e.preventDefault(); createPin.mutate() }}>
+      {/* Access code create/edit modal */}
+      <Modal
+        opened={pinModalOpened}
+        onClose={() => { closePinModal(); resetPinForm() }}
+        title={pinModalMode === 'edit' ? t('pins.editCode') : t('pins.add')}
+      >
+          <form onSubmit={(e) => { e.preventDefault(); pinModalMode === 'edit' ? updatePin.mutate() : createPin.mutate() }}>
             <Stack>
               <TextInput
                 label={t('pins.label')}
                 value={pinLabel}
                 onChange={(e) => setPinLabel(e.target.value)}
                 placeholder={t('pins.labelPlaceholder')}
-              />
-              <PasswordInput
-                label={t('pins.pin')}
-                value={pinValue}
-                onChange={(e) => setPinValue(e.target.value)}
                 required
-                minLength={4}
-                styles={{ input: { fontFamily: 'monospace' } }}
               />
               <Select
-                label={t('pins.type')}
-                value={pinType}
-                onChange={(v) => setPinType((v ?? 'one_shot') as 'one_shot' | 'session')}
+                label={t('pins.codeType')}
+                value={pinCodeType}
+                onChange={(v) => { setPinCodeType((v as 'pin' | 'password') ?? 'pin'); setPinValue('') }}
                 data={[
-                  { value: 'one_shot', label: t('pins.typeOneShot') },
-                  { value: 'session', label: t('pins.typeSession') },
+                  { value: 'pin', label: t('pins.codeTypePin') },
+                  { value: 'password', label: t('pins.codeTypePassword') },
                 ]}
               />
-              {pinType === 'session' && (
-                <Stack gap="xs">
-                  <Select
-                    label={t('pins.sessionDuration')}
-                    value={pinSessionDuration}
-                    onChange={(v) => setPinSessionDuration(v ?? '')}
-                    data={PIN_SESSION_PRESETS}
-                  />
-                  {pinSessionDuration === 'custom' && (
-                    <Group gap="xs" grow>
-                      <NumberInput
-                        label={t('members.sessionCustomValue')}
-                        value={pinCustomValue}
-                        onChange={setPinCustomValue}
-                        min={1}
-                        step={1}
-                      />
-                      <Select
-                        label={t('members.sessionCustomUnit')}
-                        value={pinCustomUnit}
-                        onChange={(v) => setPinCustomUnit(v ?? 'days')}
-                        data={[
-                          { value: 'minutes', label: t('members.sessionUnitMinutes') },
-                          { value: 'hours', label: t('members.sessionUnitHours') },
-                          { value: 'days', label: t('members.sessionUnitDays') },
-                        ]}
-                      />
-                    </Group>
-                  )}
-                </Stack>
-              )}
-              <Anchor
-                component="button"
-                type="button"
-                size="xs"
-                c="dimmed"
-                onClick={() => setPinAdvancedOpened((o) => !o)}
-              >
-                {t('gates.advancedOptions')} {pinAdvancedOpened ? '▲' : '▼'}
-              </Anchor>
-              <Collapse in={pinAdvancedOpened}>
-                <TextInput
-                  label={t('pins.expires')}
-                  description={t('common.optional')}
-                  type="datetime-local"
-                  value={pinExpiresAt}
-                  onChange={(e) => setPinExpiresAt(e.target.value)}
+              <Alert color="blue" variant="light" icon={<Info size={14} />} p="xs">
+                <Text size="xs">{pinCodeType === 'pin' ? t('pins.methodWarningPin') : t('pins.methodWarningPassword')}</Text>
+              </Alert>
+              {pinModalMode === 'create' && (
+                <PasswordInput
+                  label={t('pins.code')}
+                  value={pinValue}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setPinValue(pinCodeType === 'pin' ? v.replace(/\D/g, '') : v)
+                  }}
+                  required
+                  minLength={1}
+                  inputMode={pinCodeType === 'pin' ? 'numeric' : undefined}
+                  styles={pinCodeType === 'pin' ? { input: { fontFamily: 'monospace', letterSpacing: '0.2em' } } : undefined}
                 />
-              </Collapse>
+              )}
+              <Stack gap="xs">
+                <Select
+                  label={t('pins.sessionDuration')}
+                  description={t('pins.sessionDurationDesc')}
+                  value={pinSessionDuration}
+                  onChange={(v) => setPinSessionDuration(v ?? '')}
+                  data={PIN_SESSION_PRESETS}
+                />
+                {pinSessionDuration === 'custom' && (
+                  <Group gap="xs" grow>
+                    <NumberInput
+                      label={t('members.sessionCustomValue')}
+                      value={pinCustomValue}
+                      onChange={setPinCustomValue}
+                      min={1}
+                      step={1}
+                    />
+                    <Select
+                      label={t('members.sessionCustomUnit')}
+                      value={pinCustomUnit}
+                      onChange={(v) => setPinCustomUnit(v ?? 'days')}
+                      data={[
+                        { value: 'minutes', label: t('members.sessionUnitMinutes') },
+                        { value: 'hours', label: t('members.sessionUnitHours') },
+                        { value: 'days', label: t('members.sessionUnitDays') },
+                      ]}
+                    />
+                  </Group>
+                )}
+              </Stack>
+              <NumberInput
+                label={t('pins.maxUses')}
+                description={t('pins.maxUsesDesc')}
+                value={pinMaxUses}
+                onChange={setPinMaxUses}
+                min={1}
+                step={1}
+                allowDecimal={false}
+              />
+              <Checkbox.Group
+                label={t('pins.permissions')}
+                value={pinPermissions}
+                onChange={setPinPermissions}
+              >
+                <Stack gap="xs" mt={4}>
+                  <Checkbox value="gate:trigger_open" label={t('permissions.triggerOpen')} />
+                  <Checkbox value="gate:trigger_close" label={t('permissions.triggerClose')} />
+                  <Checkbox value="gate:read_status" label={t('permissions.viewStatus')} />
+                </Stack>
+              </Checkbox.Group>
+              <TextInput
+                label={t('pins.expires')}
+                description={t('common.optional')}
+                type="datetime-local"
+                value={pinExpiresAt}
+                onChange={(e) => setPinExpiresAt(e.target.value)}
+              />
               <Group justify="flex-end">
-                <Button variant="default" onClick={closePinModal}>{t('common.cancel')}</Button>
-                <Button type="submit" loading={createPin.isPending}>{t('common.add')}</Button>
+                <Button variant="default" onClick={() => { closePinModal(); resetPinForm() }}>{t('common.cancel')}</Button>
+                <Button type="submit" loading={createPin.isPending || updatePin.isPending}>
+                  {pinModalMode === 'edit' ? t('common.save') : t('common.add')}
+                </Button>
               </Group>
             </Stack>
           </form>
         </Modal>
-
-        {pins?.length === 0 ? (
-          <Text size="sm" c="dimmed">{t('pins.noPins')}</Text>
-        ) : (
-          <Stack gap={2}>
-            {pins?.map((pin) => (
-              <Group key={pin.id} justify="space-between" py={4}>
-                <Group gap="sm">
-                  <Hash size={14} opacity={0.5} />
-                  <Text size="sm">
-                    {pin.label ?? <Text size="sm" c="dimmed" fs="italic" component="span">{t('pins.unlabeled')}</Text>}
-                  </Text>
-                  {(pin.metadata as { expires_at?: string }).expires_at && (
-                    <Group gap={4}>
-                      <Clock size={12} opacity={0.5} />
-                      <Text size="xs" c="dimmed">
-                        {new Date((pin.metadata as { expires_at: string }).expires_at).toLocaleDateString()}
-                      </Text>
-                    </Group>
-                  )}
-                </Group>
-                <ActionIcon variant="subtle" color="red" size="sm" onClick={() => deletePin.mutate(pin.id)}>
-                  <Trash2 size={14} />
-                </ActionIcon>
-              </Group>
-            ))}
-          </Stack>
-        )}
-      </Paper>
 
       {/* Custom domains */}
       <Paper withBorder p="md" radius="md" mb="md">
@@ -465,9 +525,11 @@ export default function GatePage() {
             <Text fw={600}>{t('domains.title')}</Text>
             <Badge variant="light" size="xs">{domains?.length ?? 0}</Badge>
           </Group>
-          <Button size="xs" variant="subtle" leftSection={<Plus size={14} />} onClick={openDomainModal}>
-            {t('domains.add')}
-          </Button>
+          {canManageGate && (
+            <Button size="xs" variant="subtle" leftSection={<Plus size={14} />} onClick={openDomainModal}>
+              {t('domains.add')}
+            </Button>
+          )}
         </Group>
 
         <Modal opened={domainModalOpened} onClose={closeDomainModal} title={t('domains.add')}>
@@ -504,7 +566,7 @@ export default function GatePage() {
                     <Text size="sm" ff="mono">{d.domain}</Text>
                   </Group>
                   <Group gap="xs">
-                    {!d.verified_at && (
+                    {!d.verified_at && canManageGate && (
                       <Button
                         size="xs"
                         variant="light"
@@ -515,9 +577,11 @@ export default function GatePage() {
                         {t('domains.verifyDns')}
                       </Button>
                     )}
-                    <ActionIcon variant="subtle" color="red" size="sm" onClick={() => deleteDomain.mutate(d.id)}>
-                      <Trash2 size={14} />
-                    </ActionIcon>
+                    {canManageGate && (
+                      <ActionIcon variant="subtle" color="red" size="sm" onClick={() => deleteDomain.mutate(d.id)}>
+                        <Trash2 size={14} />
+                      </ActionIcon>
+                    )}
                   </Group>
                 </Group>
 
@@ -549,51 +613,6 @@ export default function GatePage() {
         )}
       </Paper>
 
-      {/* Member permissions */}
-      <Paper withBorder p="md" radius="md">
-        <Group gap="xs" mb="sm">
-          <Text fw={600}>{t('permissions.title')}</Text>
-          <Badge variant="light" size="xs">{regularMembers.length}</Badge>
-        </Group>
-
-        {regularMembers.length === 0 ? (
-          <Text size="sm" c="dimmed">No regular members in this workspace</Text>
-        ) : (
-          <Table>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Member</Table.Th>
-                {PERMISSIONS.map((p) => (
-                  <Table.Th key={p.code} ta="center">{t(p.labelKey)}</Table.Th>
-                ))}
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {regularMembers.map((m) => (
-                <Table.Tr key={m.id}>
-                  <Table.Td>
-                    <Text size="sm" truncate maw={160}>
-                      {m.display_name ?? m.local_username ?? `Member ${m.id.slice(0, 8)}`}
-                    </Text>
-                  </Table.Td>
-                  {PERMISSIONS.map((p) => {
-                    const checked = hasPermission(m.id, p.code)
-                    return (
-                      <Table.Td key={p.code} ta="center">
-                        <Checkbox
-                          checked={checked}
-                          onChange={() => togglePermission(m.id, p.code)}
-                          disabled={grantPerm.isPending || revokePerm.isPending}
-                        />
-                      </Table.Td>
-                    )
-                  })}
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        )}
-      </Paper>
     </Container>
   )
 }

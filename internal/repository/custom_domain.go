@@ -128,7 +128,6 @@ type DomainResolveResult struct {
 	GateID          uuid.UUID
 	GateName        string
 	WorkspaceID     uuid.UUID
-	WorkspaceSlug   string
 	WorkspaceName   string
 }
 
@@ -137,13 +136,13 @@ type DomainResolveResult struct {
 func (r *CustomDomainRepository) ResolveByDomain(ctx context.Context, domain string) (*DomainResolveResult, error) {
 	var res DomainResolveResult
 	err := r.pool.QueryRow(ctx,
-		`SELECT g.id, g.name, w.id, w.slug, w.name
+		`SELECT g.id, g.name, w.id, w.name
 		 FROM custom_domains cd
 		 JOIN gates g       ON g.id = cd.gate_id
 		 JOIN workspaces w  ON w.id = cd.workspace_id
 		 WHERE cd.domain = $1 AND cd.verified_at IS NOT NULL`,
 		domain,
-	).Scan(&res.GateID, &res.GateName, &res.WorkspaceID, &res.WorkspaceSlug, &res.WorkspaceName)
+	).Scan(&res.GateID, &res.GateName, &res.WorkspaceID, &res.WorkspaceName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

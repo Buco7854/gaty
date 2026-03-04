@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/Buco7854/gaty/internal/middleware"
 	"github.com/Buco7854/gaty/internal/model"
 	"github.com/Buco7854/gaty/internal/repository"
 	"github.com/danielgtaylor/huma/v2"
@@ -91,16 +92,74 @@ func (h *PolicyHandler) RevokePermission(ctx context.Context, input *RevokePermi
 	return nil, nil
 }
 
+// --- List policies for a membership ---
+
+type MembershipPoliciesPathParam struct {
+	WorkspaceID  uuid.UUID `path:"ws_id"`
+	MembershipID uuid.UUID `path:"membership_id"`
+}
+
+func (h *PolicyHandler) ListByMembership(ctx context.Context, input *MembershipPoliciesPathParam) (*ListPoliciesOutput, error) {
+	policies, err := h.policies.ListForMembership(ctx, input.MembershipID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to list membership policies")
+	}
+	if policies == nil {
+		policies = []model.MembershipPolicy{}
+	}
+	return &ListPoliciesOutput{Body: policies}, nil
+}
+
+// --- List policies for the authenticated member (used by PIN pad gate portal) ---
+
+func (h *PolicyHandler) ListMine(ctx context.Context, input *WorkspacePathParam) (*ListPoliciesOutput, error) {
+	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized("not authenticated")
+	}
+	policies, err := h.policies.ListForMembership(ctx, membershipID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to list policies")
+	}
+	if policies == nil {
+		policies = []model.MembershipPolicy{}
+	}
+	return &ListPoliciesOutput{Body: policies}, nil
+}
+
 // RegisterRoutes wires policy endpoints onto the Huma API.
-func (h *PolicyHandler) RegisterRoutes(api huma.API, wsAdmin func(huma.Context, func(huma.Context))) {
+func (h *PolicyHandler) RegisterRoutes(
+	api huma.API,
+	wsMember func(huma.Context, func(huma.Context)),
+	wsAdmin func(huma.Context, func(huma.Context)),
+	wsGateManager func(huma.Context, func(huma.Context)),
+) {
+	huma.Register(api, huma.Operation{
+		OperationID: "policy-list-mine",
+		Method:      http.MethodGet,
+		Path:        "/api/workspaces/{ws_id}/policies/me",
+		Summary:     "List all policies for the authenticated member",
+		Tags:        []string{"Policies"},
+		Middlewares: huma.Middlewares{wsMember},
+	}, h.ListMine)
+
 	huma.Register(api, huma.Operation{
 		OperationID: "policy-list",
 		Method:      http.MethodGet,
 		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/policies",
 		Summary:     "List membership policies for a gate",
 		Tags:        []string{"Policies"},
-		Middlewares: huma.Middlewares{wsAdmin},
+		Middlewares: huma.Middlewares{wsMember, wsGateManager},
 	}, h.List)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "policy-list-by-membership",
+		Method:      http.MethodGet,
+		Path:        "/api/workspaces/{ws_id}/members/{membership_id}/policies",
+		Summary:     "List all policies for a membership",
+		Tags:        []string{"Policies"},
+		Middlewares: huma.Middlewares{wsAdmin},
+	}, h.ListByMembership)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "policy-grant",
@@ -108,7 +167,7 @@ func (h *PolicyHandler) RegisterRoutes(api huma.API, wsAdmin func(huma.Context, 
 		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/policies",
 		Summary:     "Grant a permission to a membership on a gate",
 		Tags:        []string{"Policies"},
-		Middlewares: huma.Middlewares{wsAdmin},
+		Middlewares: huma.Middlewares{wsMember, wsGateManager},
 	}, h.Grant)
 
 	huma.Register(api, huma.Operation{
@@ -117,7 +176,7 @@ func (h *PolicyHandler) RegisterRoutes(api huma.API, wsAdmin func(huma.Context, 
 		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/policies/{membership_id}",
 		Summary:     "Revoke all permissions from a membership on a gate",
 		Tags:        []string{"Policies"},
-		Middlewares: huma.Middlewares{wsAdmin},
+		Middlewares: huma.Middlewares{wsMember, wsGateManager},
 	}, h.Revoke)
 
 	huma.Register(api, huma.Operation{
@@ -126,6 +185,6 @@ func (h *PolicyHandler) RegisterRoutes(api huma.API, wsAdmin func(huma.Context, 
 		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/policies/{membership_id}/{permission_code}",
 		Summary:     "Revoke a specific permission from a membership on a gate",
 		Tags:        []string{"Policies"},
-		Middlewares: huma.Middlewares{wsAdmin},
+		Middlewares: huma.Middlewares{wsMember, wsGateManager},
 	}, h.RevokePermission)
 }

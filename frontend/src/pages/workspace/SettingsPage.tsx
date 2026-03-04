@@ -1,66 +1,137 @@
 import { useState } from 'react'
 import { useParams } from 'react-router'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { workspacesApi } from '@/api'
-import type { WorkspaceWithRole } from '@/types'
 import { useTranslation } from 'react-i18next'
 import {
   Container, Title, Text, Stack, Paper, Group, Button, TextInput, PasswordInput, Select, Alert,
+  Switch, Divider, ActionIcon, Badge, Modal, NumberInput, Loader, Center, Collapse, Anchor,
 } from '@mantine/core'
-import { KeyRound, Save, CheckCircle2, AlertCircle } from 'lucide-react'
+import { useDisclosure } from '@mantine/hooks'
+import { KeyRound, Save, CheckCircle2, Plus, Trash2, Pencil } from 'lucide-react'
 
-export default function SettingsPage() {
-  const { wsId } = useParams<{ wsId: string }>()
-  const qc = useQueryClient()
+interface RoleMappingEntry {
+  claim: string
+  role: string
+}
+
+interface SSOProvider {
+  id: string
+  name: string
+  type: string
+  client_id: string
+  client_secret: string
+  issuer: string
+  scopes: string[]
+  auth_endpoint: string
+  token_endpoint: string
+  jwks_uri: string
+  auto_provision: boolean
+  default_role: string
+  role_claim: string
+  role_mapping: Record<string, string>
+}
+
+const ROLE_OPTIONS = [
+  { value: 'MEMBER', label: 'Member' },
+  { value: 'ADMIN', label: 'Admin' },
+  { value: 'OWNER', label: 'Owner' },
+]
+
+const PROVIDER_TYPE_OPTIONS = [
+  { value: 'oidc', label: 'OIDC' },
+]
+
+function ProviderModal({
+  opened,
+  onClose,
+  initial,
+  onSave,
+}: {
+  opened: boolean
+  onClose: () => void
+  initial: SSOProvider | null
+  onSave: (p: SSOProvider) => void
+}) {
   const { t } = useTranslation()
-  const [saved, setSaved] = useState(false)
+  const isNew = !initial?.id
 
-  const ws = qc.getQueryData<WorkspaceWithRole[]>(['workspaces'])?.find((w) => w.id === wsId)
-
-  const sso = (ws?.sso_settings ?? {}) as Record<string, string>
-  const [issuer, setIssuer] = useState(sso.issuer ?? '')
-  const [clientId, setClientId] = useState(sso.client_id ?? '')
+  const [name, setName] = useState(initial?.name ?? '')
+  const [type, setType] = useState(initial?.type ?? 'oidc')
+  const [issuer, setIssuer] = useState(initial?.issuer ?? '')
+  const [clientId, setClientId] = useState(initial?.client_id ?? '')
   const [clientSecret, setClientSecret] = useState('')
-  const [provider, setProvider] = useState(sso.provider ?? 'oidc')
+  const [scopes, setScopes] = useState((initial?.scopes ?? []).join(' '))
+  const [authEndpoint, setAuthEndpoint] = useState(initial?.auth_endpoint ?? '')
+  const [tokenEndpoint, setTokenEndpoint] = useState(initial?.token_endpoint ?? '')
+  const [jwksUri, setJwksUri] = useState(initial?.jwks_uri ?? '')
+  const [advancedOpen, setAdvancedOpen] = useState(!!(initial?.auth_endpoint))
+  const [autoProvision, setAutoProvision] = useState(initial?.auto_provision ?? false)
+  const [defaultRole, setDefaultRole] = useState(initial?.default_role ?? 'MEMBER')
+  const [roleClaim, setRoleClaim] = useState(initial?.role_claim ?? '')
+  const [roleMapping, setRoleMapping] = useState<RoleMappingEntry[]>(
+    Object.entries(initial?.role_mapping ?? {}).map(([claim, role]) => ({ claim, role }))
+  )
 
-  const updateSSO = useMutation({
-    mutationFn: (body: Record<string, string>) =>
-      workspacesApi.updateSsoSettings(wsId!, body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['workspaces'] })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    },
-  })
+  function addRoleMappingEntry() {
+    setRoleMapping((prev) => [...prev, { claim: '', role: 'MEMBER' }])
+  }
 
-  function handleSSOSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    const body: Record<string, string> = { provider, issuer, client_id: clientId }
-    if (clientSecret) body.client_secret = clientSecret
-    updateSSO.mutate(body)
+  function removeRoleMappingEntry(i: number) {
+    setRoleMapping((prev) => prev.filter((_, idx) => idx !== i))
+  }
+
+  function updateRoleMappingEntry(i: number, field: 'claim' | 'role', value: string) {
+    setRoleMapping((prev) => prev.map((e, idx) => idx === i ? { ...e, [field]: value } : e))
+  }
+
+  function handleSave() {
+    const provider: SSOProvider = {
+      id: initial?.id || crypto.randomUUID().slice(0, 8),
+      name,
+      type,
+      issuer,
+      client_id: clientId,
+      client_secret: clientSecret || (initial?.client_secret ? '***' : ''),
+      scopes: scopes.split(/\s+/).filter(Boolean),
+      auth_endpoint: authEndpoint,
+      token_endpoint: tokenEndpoint,
+      jwks_uri: jwksUri,
+      auto_provision: autoProvision,
+      default_role: defaultRole,
+      role_claim: roleClaim,
+      role_mapping: Object.fromEntries(
+        roleMapping.filter((m) => m.claim.trim()).map((m) => [m.claim.trim(), m.role])
+      ),
+    }
+    onSave(provider)
+    onClose()
   }
 
   return (
-    <Container size="sm" py="xl">
-      <Stack mb="xl" gap={4}>
-        <Title order={2}>{t('settings.title')}</Title>
-        <Text c="dimmed" size="sm">{t('settings.subtitle')}</Text>
-      </Stack>
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title={isNew ? t('settings.addProvider') : t('settings.editProvider')}
+      size="md"
+    >
+      <Stack>
+        <TextInput
+          label={t('settings.providerName')}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={t('settings.providerNamePlaceholder')}
+          required
+        />
+        <Select
+          label={t('settings.providerType')}
+          value={type}
+          onChange={(v) => setType(v ?? 'oidc')}
+          data={PROVIDER_TYPE_OPTIONS}
+        />
 
-      <Paper withBorder p="lg" radius="md">
-        <Group gap="xs" mb="md">
-          <KeyRound size={18} opacity={0.6} />
-          <Text fw={600}>{t('settings.sso')}</Text>
-        </Group>
-
-        <form onSubmit={handleSSOSubmit}>
-          <Stack>
-            <Select
-              label={t('settings.provider')}
-              value={provider}
-              onChange={(v) => setProvider(v ?? 'oidc')}
-              data={[{ value: 'oidc', label: 'OIDC' }]}
-            />
+        {type === 'oidc' && (
+          <>
             <TextInput
               label={t('settings.issuerUrl')}
               value={issuer}
@@ -77,27 +148,326 @@ export default function SettingsPage() {
               label={t('settings.clientSecret')}
               value={clientSecret}
               onChange={(e) => setClientSecret(e.target.value)}
-              placeholder={t('settings.clientSecretPlaceholder')}
+              placeholder={isNew ? '' : t('settings.clientSecretPlaceholder')}
             />
+            <TextInput
+              label={t('settings.providerScopes')}
+              description={t('common.optional')}
+              value={scopes}
+              onChange={(e) => setScopes(e.target.value)}
+              placeholder={t('settings.providerScopesPlaceholder')}
+            />
+            <Anchor
+              component="button"
+              type="button"
+              size="xs"
+              c="dimmed"
+              onClick={() => setAdvancedOpen((o) => !o)}
+            >
+              {t('settings.advancedEndpoints')} {advancedOpen ? '▲' : '▼'}
+            </Anchor>
+            <Collapse in={advancedOpen}>
+              <Stack gap="xs">
+                <TextInput
+                  label={t('settings.authEndpoint')}
+                  value={authEndpoint}
+                  onChange={(e) => setAuthEndpoint(e.target.value)}
+                  placeholder="https://provider.com/oauth/authorize"
+                />
+                <TextInput
+                  label={t('settings.tokenEndpoint')}
+                  value={tokenEndpoint}
+                  onChange={(e) => setTokenEndpoint(e.target.value)}
+                  placeholder="https://provider.com/oauth/token"
+                />
+                <TextInput
+                  label={t('settings.jwksUri')}
+                  value={jwksUri}
+                  onChange={(e) => setJwksUri(e.target.value)}
+                  placeholder="https://provider.com/.well-known/jwks.json"
+                />
+              </Stack>
+            </Collapse>
+          </>
+        )}
 
-            {saved && (
-              <Alert icon={<CheckCircle2 size={16} />} color="green" variant="light">
-                {t('settings.saved')}
-              </Alert>
-            )}
+        <Divider my="xs" />
 
-            <Group>
-              <Button
-                type="submit"
-                loading={updateSSO.isPending}
-                leftSection={<Save size={16} />}
-              >
-                {t('settings.saveSso')}
-              </Button>
+        <Switch
+          label={t('settings.autoProvision')}
+          description={t('settings.autoProvisionHint')}
+          checked={autoProvision}
+          onChange={(e) => setAutoProvision(e.currentTarget.checked)}
+        />
+        <Select
+          label={t('settings.defaultRole')}
+          value={defaultRole}
+          onChange={(v) => setDefaultRole(v ?? 'MEMBER')}
+          data={ROLE_OPTIONS}
+        />
+
+        <Divider my="xs" />
+
+        <TextInput
+          label={t('settings.roleClaim')}
+          description={t('settings.roleClaimHint')}
+          value={roleClaim}
+          onChange={(e) => setRoleClaim(e.target.value)}
+          placeholder="groups"
+        />
+
+        <Stack gap="xs">
+          <Group justify="space-between">
+            <Text size="sm" fw={500}>{t('settings.roleMapping')}</Text>
+            <Button size="xs" variant="subtle" leftSection={<Plus size={14} />} onClick={addRoleMappingEntry} type="button">
+              {t('settings.addRoleMapping')}
+            </Button>
+          </Group>
+          {roleMapping.length === 0 && (
+            <Text size="xs" c="dimmed">{t('settings.roleMappingHint')}</Text>
+          )}
+          {roleMapping.map((entry, i) => (
+            <Group key={i} gap="xs" align="flex-end">
+              <TextInput
+                placeholder={t('settings.claimValue')}
+                value={entry.claim}
+                onChange={(e) => updateRoleMappingEntry(i, 'claim', e.target.value)}
+                style={{ flex: 1 }}
+                size="xs"
+              />
+              <Select
+                value={entry.role}
+                onChange={(v) => updateRoleMappingEntry(i, 'role', v ?? 'MEMBER')}
+                data={ROLE_OPTIONS}
+                size="xs"
+                style={{ width: 110 }}
+              />
+              <ActionIcon variant="subtle" color="red" size="sm" onClick={() => removeRoleMappingEntry(i)} type="button">
+                <Trash2 size={14} />
+              </ActionIcon>
             </Group>
-          </Stack>
-        </form>
+          ))}
+        </Stack>
+
+        <Group justify="flex-end" mt="sm">
+          <Button variant="default" onClick={onClose}>{t('common.cancel')}</Button>
+          <Button onClick={handleSave} disabled={!name.trim()}>{t('common.save')}</Button>
+        </Group>
+      </Stack>
+    </Modal>
+  )
+}
+
+export default function SettingsPage() {
+  const { wsId } = useParams<{ wsId: string }>()
+  const qc = useQueryClient()
+  const { t } = useTranslation()
+  const [saved, setSaved] = useState(false)
+  const [macSaved, setMacSaved] = useState(false)
+  const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false)
+  const [editingProvider, setEditingProvider] = useState<SSOProvider | null>(null)
+  const [modalKey, setModalKey] = useState(0)
+
+  const { data: ssoData, isLoading: ssoLoading } = useQuery({
+    queryKey: ['sso-settings', wsId],
+    queryFn: () => workspacesApi.getSsoSettings(wsId!),
+    enabled: !!wsId,
+  })
+
+  const { data: macData, isLoading: macLoading } = useQuery({
+    queryKey: ['member-auth-config', wsId],
+    queryFn: () => workspacesApi.getMemberAuthConfig(wsId!),
+    enabled: !!wsId,
+  })
+
+  const providers: SSOProvider[] = (ssoData?.providers ?? []) as SSOProvider[]
+
+  const [passwordAuth, setPasswordAuth] = useState<boolean>(true)
+  const [ssoAuth, setSsoAuth] = useState<boolean>(false)
+  const [apiTokenAuth, setApiTokenAuth] = useState<boolean>(false)
+  const [apiTokenMax, setApiTokenMax] = useState<number>(5)
+
+  // Sync MAC state once data is loaded (only on first load)
+  const [macInitialized, setMacInitialized] = useState(false)
+  if (macData && !macInitialized) {
+    setPasswordAuth((macData.password as boolean) ?? true)
+    setSsoAuth((macData.sso as boolean) ?? false)
+    setApiTokenAuth((macData.api_token as boolean) ?? false)
+    setApiTokenMax((macData.api_token_max as number) ?? 5)
+    setMacInitialized(true)
+  }
+
+  const updateSSO = useMutation({
+    mutationFn: (body: Record<string, unknown>) => workspacesApi.updateSsoSettings(wsId!, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sso-settings', wsId] })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    },
+  })
+
+  const updateMAC = useMutation({
+    mutationFn: (body: Record<string, unknown>) => workspacesApi.updateMemberAuthConfig(wsId!, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['member-auth-config', wsId] })
+      setMacSaved(true)
+      setTimeout(() => setMacSaved(false), 2000)
+    },
+  })
+
+  function openAddProvider() {
+    setEditingProvider(null)
+    setModalKey((k) => k + 1)
+    openModal()
+  }
+
+  function openEditProvider(p: SSOProvider) {
+    setEditingProvider(p)
+    setModalKey((k) => k + 1)
+    openModal()
+  }
+
+  function handleSaveProvider(p: SSOProvider) {
+    const updated = editingProvider
+      ? providers.map((existing) => existing.id === editingProvider.id ? p : existing)
+      : [...providers, p]
+    updateSSO.mutate({ providers: updated })
+  }
+
+  function handleDeleteProvider(id: string) {
+    updateSSO.mutate({ providers: providers.filter((p) => p.id !== id) })
+  }
+
+  function handleSaveMemberAuth() {
+    updateMAC.mutate({
+      password: passwordAuth,
+      sso: ssoAuth,
+      api_token: apiTokenAuth,
+      api_token_max: apiTokenMax,
+    })
+  }
+
+  if (ssoLoading || macLoading) {
+    return (
+      <Center py="xl">
+        <Loader />
+      </Center>
+    )
+  }
+
+  return (
+    <Container size="sm" py="xl">
+      <Stack mb="xl" gap={4}>
+        <Title order={2}>{t('settings.title')}</Title>
+        <Text c="dimmed" size="sm">{t('settings.subtitle')}</Text>
+      </Stack>
+
+      {/* SSO Providers */}
+      <Paper withBorder p="lg" radius="md" mb="md">
+        <Group justify="space-between" mb="md">
+          <Group gap="xs">
+            <KeyRound size={18} opacity={0.6} />
+            <Text fw={600}>{t('settings.sso')}</Text>
+          </Group>
+          <Button size="xs" variant="light" leftSection={<Plus size={14} />} onClick={openAddProvider}>
+            {t('settings.addProvider')}
+          </Button>
+        </Group>
+
+        {providers.length === 0 && (
+          <Text size="sm" c="dimmed">{t('settings.noProviders')}</Text>
+        )}
+
+        <Stack gap="xs">
+          {providers.map((p) => (
+            <Paper key={p.id} withBorder p="sm" radius="sm">
+              <Group justify="space-between">
+                <Group gap="sm">
+                  <Text size="sm" fw={500}>{p.name}</Text>
+                  <Badge size="xs" variant="light">{p.type.toUpperCase()}</Badge>
+                </Group>
+                <Group gap={4}>
+                  <ActionIcon variant="subtle" size="sm" onClick={() => openEditProvider(p)}>
+                    <Pencil size={14} />
+                  </ActionIcon>
+                  <ActionIcon variant="subtle" color="red" size="sm" onClick={() => handleDeleteProvider(p.id)}>
+                    <Trash2 size={14} />
+                  </ActionIcon>
+                </Group>
+              </Group>
+              {p.issuer && (
+                <Text size="xs" c="dimmed" mt={4}>{p.issuer}</Text>
+              )}
+            </Paper>
+          ))}
+        </Stack>
+
+        {saved && (
+          <Alert icon={<CheckCircle2 size={16} />} color="green" variant="light" mt="md">
+            {t('settings.saved')}
+          </Alert>
+        )}
       </Paper>
+
+      {/* Member auth defaults */}
+      <Paper withBorder p="lg" radius="md">
+        <Stack gap="xs" mb="md">
+          <Text fw={600}>{t('settings.memberAuthDefaults')}</Text>
+          <Text size="xs" c="dimmed">{t('settings.memberAuthDefaultsHint')}</Text>
+        </Stack>
+
+        <Stack gap="md">
+          <Switch
+            label={t('settings.passwordAuth')}
+            checked={passwordAuth}
+            onChange={(e) => setPasswordAuth(e.currentTarget.checked)}
+          />
+          <Switch
+            label={t('settings.ssoAuth')}
+            checked={ssoAuth}
+            onChange={(e) => setSsoAuth(e.currentTarget.checked)}
+          />
+          <Switch
+            label={t('settings.apiTokenAuth')}
+            checked={apiTokenAuth}
+            onChange={(e) => setApiTokenAuth(e.currentTarget.checked)}
+          />
+          {apiTokenAuth && (
+            <NumberInput
+              label={t('settings.apiTokenMax')}
+              value={apiTokenMax}
+              onChange={(v) => setApiTokenMax(Number(v) || 5)}
+              min={1}
+              max={100}
+              w={120}
+            />
+          )}
+        </Stack>
+
+        {macSaved && (
+          <Alert icon={<CheckCircle2 size={16} />} color="green" variant="light" mt="md">
+            {t('settings.saved')}
+          </Alert>
+        )}
+
+        <Group mt="md">
+          <Button
+            onClick={handleSaveMemberAuth}
+            loading={updateMAC.isPending}
+            leftSection={<Save size={16} />}
+          >
+            {t('settings.saveSso')}
+          </Button>
+        </Group>
+      </Paper>
+
+      <ProviderModal
+        key={modalKey}
+        opened={modalOpened}
+        onClose={closeModal}
+        initial={editingProvider}
+        onSave={handleSaveProvider}
+      />
     </Container>
   )
 }

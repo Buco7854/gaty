@@ -11,7 +11,6 @@ export interface User {
 
 export interface Workspace {
   id: string
-  slug: string
   name: string
   owner_id: string
   sso_settings: Record<string, unknown>
@@ -57,7 +56,7 @@ export interface WorkspaceMembership {
 export interface GatePin {
   id: string
   gate_id: string
-  label?: string
+  label: string
   metadata: Record<string, unknown>
   created_at: string
 }
@@ -101,6 +100,5 @@ export interface DomainResolveResult {
   gate_id: string
   gate_name: string
   workspace_id: string
-  workspace_slug: string
   workspace_name: string
 }

@@ -30,7 +30,6 @@ type WorkspacePathParam struct {
 
 type CreateWorkspaceInput struct {
 	Body struct {
-		Slug string `json:"slug" minLength:"1" maxLength:"50" pattern:"^[a-z0-9-]+$" doc:"URL-safe slug, lowercase letters, numbers and hyphens only"`
 		Name string `json:"name" minLength:"1" maxLength:"100"`
 	}
 }
@@ -44,7 +43,7 @@ func (h *WorkspaceHandler) Create(ctx context.Context, input *CreateWorkspaceInp
 	if !ok {
 		return nil, huma.Error401Unauthorized("unauthorized")
 	}
-	ws, err := h.workspaces.Create(ctx, input.Body.Slug, input.Body.Name, userID)
+	ws, err := h.workspaces.Create(ctx, input.Body.Name, userID)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create workspace")
 	}
@@ -99,10 +98,54 @@ func (h *WorkspaceHandler) Get(ctx context.Context, input *WorkspacePathParam) (
 	return &WorkspaceOutput{Body: model.WorkspaceWithRole{Workspace: *ws, Role: role}}, nil
 }
 
+// --- Get member auth config ---
+
+type MemberAuthConfigOutput struct {
+	Body map[string]any
+}
+
+func (h *WorkspaceHandler) GetMemberAuthConfig(ctx context.Context, input *WorkspacePathParam) (*MemberAuthConfigOutput, error) {
+	ws, err := h.workspaces.GetByID(ctx, input.WorkspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("workspace not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get workspace")
+	}
+	cfg := ws.MemberAuthConfig
+	if cfg == nil {
+		cfg = map[string]any{}
+	}
+	return &MemberAuthConfigOutput{Body: cfg}, nil
+}
+
+// --- Update member auth config ---
+
+type UpdateMemberAuthConfigInput struct {
+	WorkspaceID uuid.UUID      `path:"ws_id"`
+	Body        map[string]any `doc:"Member auth configuration"`
+}
+
+func (h *WorkspaceHandler) UpdateMemberAuthConfig(ctx context.Context, input *UpdateMemberAuthConfigInput) (*MemberAuthConfigOutput, error) {
+	ws, err := h.workspaces.UpdateMemberAuthConfig(ctx, input.WorkspaceID, input.Body)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("workspace not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to update member auth config")
+	}
+	cfg := ws.MemberAuthConfig
+	if cfg == nil {
+		cfg = map[string]any{}
+	}
+	return &MemberAuthConfigOutput{Body: cfg}, nil
+}
+
 // RegisterRoutes wires workspace endpoints onto the Huma API.
 func (h *WorkspaceHandler) RegisterRoutes(
 	api huma.API,
 	requireAuth func(huma.Context, func(huma.Context)),
+	wsAdmin func(huma.Context, func(huma.Context)),
 ) {
 	huma.Register(api, huma.Operation{
 		OperationID:   "workspace-create",
@@ -131,5 +174,23 @@ func (h *WorkspaceHandler) RegisterRoutes(
 		Tags:        []string{"Workspaces"},
 		Middlewares: huma.Middlewares{requireAuth},
 	}, h.Get)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "workspace-get-member-auth-config",
+		Method:      http.MethodGet,
+		Path:        "/api/workspaces/{ws_id}/member-auth-config",
+		Summary:     "Get workspace default member auth configuration",
+		Tags:        []string{"Workspaces"},
+		Middlewares: huma.Middlewares{wsAdmin},
+	}, h.GetMemberAuthConfig)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "workspace-update-member-auth-config",
+		Method:      http.MethodPatch,
+		Path:        "/api/workspaces/{ws_id}/member-auth-config",
+		Summary:     "Update workspace default member auth configuration",
+		Tags:        []string{"Workspaces"},
+		Middlewares: huma.Middlewares{wsAdmin},
+	}, h.UpdateMemberAuthConfig)
 }
 

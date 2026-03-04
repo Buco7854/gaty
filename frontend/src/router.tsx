@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate, Outlet } from 'react-router'
+import { createBrowserRouter, Navigate, Outlet, useLocation } from 'react-router'
 import { useAuthStore } from '@/store/auth'
 import AppLayout from '@/layouts/AppLayout'
 import AuthLayout from '@/layouts/AuthLayout'
@@ -9,11 +9,33 @@ import WorkspacePage from '@/pages/workspace/WorkspacePage'
 import GatePage from '@/pages/gate/GatePage'
 import MembersPage from '@/pages/workspace/MembersPage'
 import SettingsPage from '@/pages/workspace/SettingsPage'
+import GatePortalPage from '@/pages/guest/GatePortalPage'
 import PinPadPage from '@/pages/guest/PinPadPage'
+import PasswordAccessPage from '@/pages/guest/PasswordAccessPage'
+import MemberLoginPage from '@/pages/guest/MemberLoginPage'
+import SsoCallbackPage from '@/pages/auth/SsoCallbackPage'
+
+function hasLocalMemberSession(wsId: string): boolean {
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (!key?.startsWith('gaty_session_')) continue
+    try {
+      const s = JSON.parse(localStorage.getItem(key)!)
+      if (s?.type === 'member' && s?.workspace_id === wsId && s?.access_token) return true
+    } catch { /* ignore */ }
+  }
+  return false
+}
 
 function RequireAuth() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
-  if (!isAuthenticated()) return <Navigate to="/login" replace />
+  const { pathname } = useLocation()
+  if (!isAuthenticated()) {
+    // Allow local members to access all workspace sub-paths
+    const m = pathname.match(/^\/workspaces\/([^/]+)/)
+    if (m && hasLocalMemberSession(m[1])) return <Outlet />
+    return <Navigate to="/login" replace />
+  }
   return <Outlet />
 }
 
@@ -54,7 +76,13 @@ export const router = createBrowserRouter([
       },
     ],
   },
-  // Public guest PIN pad (no auth required)
-  { path: '/unlock', element: <PinPadPage /> },
-  { path: '/unlock/:gateId', element: <PinPadPage /> },
+  // Public gate portal (no auth required)
+  { path: '/unlock', element: <GatePortalPage /> },                                       // custom domain entry
+  { path: '/workspaces/:wsId/gates/:gateId/public', element: <GatePortalPage /> },       // standard portal
+  { path: '/workspaces/:wsId/gates/:gateId/public/pin', element: <PinPadPage /> },
+  { path: '/workspaces/:wsId/gates/:gateId/public/password', element: <PasswordAccessPage /> },
+  // Member login — workspace-scoped, gate_id optional for redirect context
+  { path: '/workspaces/:wsId/login', element: <MemberLoginPage /> },
+  // SSO callback — handles redirect from SSO provider after authentication
+  { path: '/auth/sso/callback', element: <SsoCallbackPage /> },
 ])

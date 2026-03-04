@@ -1,7 +1,7 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { gatesApi } from '@/api'
+import { gatesApi, policiesApi } from '@/api'
 import type { ActionConfig } from '@/api'
 import type { Gate, GateStatus, WorkspaceWithRole } from '@/types'
 import { useGateEvents } from '@/hooks/useGateEvents'
@@ -13,6 +13,15 @@ import {
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { Plus, DoorOpen, Zap, ChevronRight } from 'lucide-react'
+import { useAuthStore } from '@/store/auth'
+import { findLocalSession } from '@/utils/session'
+
+function normalizeGates(data: unknown): Gate[] {
+  if (Array.isArray(data)) return data as Gate[]
+  return ((data as Record<string, unknown>).gates ?? []) as Gate[]
+}
+
+// ---------- StatusBadge + ActionConfigForm ----------
 
 function StatusBadge({ status }: { status: Gate['status'] }) {
   const { t } = useTranslation()
@@ -65,11 +74,28 @@ function ActionConfigForm({
   )
 }
 
+// ---------- Workspace page ----------
+
 export default function WorkspacePage() {
   const { wsId } = useParams<{ wsId: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { t } = useTranslation()
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const globalAuth = isAuthenticated()
+
+  const localSession = useMemo(
+    () => (!globalAuth ? findLocalSession(wsId!) : null),
+    [wsId, globalAuth]
+  )
+  const localToken = localSession?.access_token
+
+  // Effective role: from global workspace list or from local JWT
+  const ws = qc.getQueryData<WorkspaceWithRole[]>(['workspaces'])?.find((w) => w.id === wsId)
+  const effectiveRole = globalAuth ? ws?.role : localSession?.role
+  const canManage = effectiveRole === 'ADMIN' || effectiveRole === 'OWNER'
+
+  // Modal state (admin only)
   const [opened, { open, close }] = useDisclosure(false)
   const [advancedOpened, setAdvancedOpened] = useState(false)
   const [gateName, setGateName] = useState('')
@@ -78,13 +104,22 @@ export default function WorkspacePage() {
   const [statusConfig, setStatusConfig] = useState<ActionConfig | null>(null)
   const [triggeringId, setTriggeringId] = useState<string | null>(null)
 
-  const ws = qc.getQueryData<WorkspaceWithRole[]>(['workspaces'])?.find((w) => w.id === wsId)
-
   const { data: gates, isLoading } = useQuery<Gate[]>({
     queryKey: ['gates', wsId],
     queryFn: () => gatesApi.list(wsId!),
-    refetchInterval: 10_000,
+    refetchInterval: globalAuth ? 10_000 : false,
+    enabled: globalAuth || !!localToken,
   })
+
+  // For non-admin members: fetch their policies to determine per-gate manage access.
+  const { data: myPolicies } = useQuery({
+    queryKey: ['policies-me', wsId],
+    queryFn: () => policiesApi.listMine(wsId!),
+    enabled: !canManage && (globalAuth || !!localToken),
+  })
+
+  const canManageGate = (gateId: string) =>
+    canManage || myPolicies?.some((p) => p.gate_id === gateId && p.permission_code === 'gate:manage')
 
   const handleGateEvent = useCallback(
     (event: GateEvent) => {
@@ -97,7 +132,7 @@ export default function WorkspacePage() {
     [qc, wsId]
   )
 
-  useGateEvents(wsId, handleGateEvent)
+  useGateEvents(globalAuth ? wsId : undefined, handleGateEvent)
 
   const createGate = useMutation({
     mutationFn: () =>
@@ -118,11 +153,14 @@ export default function WorkspacePage() {
     },
   })
 
-  const triggerGate = useMutation({
-    mutationFn: (gateId: string) => gatesApi.trigger(wsId!, gateId),
-    onMutate: (gateId) => setTriggeringId(gateId),
-    onSettled: () => setTriggeringId(null),
-  })
+  async function triggerGate(gateId: string) {
+    if (triggeringId) return
+    setTriggeringId(gateId)
+    try {
+      await gatesApi.trigger(wsId!, gateId)
+    } catch { /* fire-and-forget */ }
+    setTriggeringId(null)
+  }
 
   return (
     <Container size="lg" py="xl">
@@ -131,56 +169,60 @@ export default function WorkspacePage() {
           <Title order={2}>{ws?.name ?? t('gates.title')}</Title>
           <Text c="dimmed" size="sm">{t('gates.subtitle')}</Text>
         </div>
-        <Button leftSection={<Plus size={16} />} onClick={open}>
-          {t('gates.add')}
-        </Button>
+        {canManage && (
+          <Button leftSection={<Plus size={16} />} onClick={open}>
+            {t('gates.add')}
+          </Button>
+        )}
       </Group>
 
-      <Modal opened={opened} onClose={close} title={t('gates.add')} size="md">
-        <form onSubmit={(e) => { e.preventDefault(); createGate.mutate() }}>
-          <Stack>
-            <TextInput
-              label={t('common.name')}
-              value={gateName}
-              onChange={(e) => setGateName(e.target.value)}
-              required
-              placeholder="Parking entrance"
-            />
-            <Anchor
-              component="button"
-              type="button"
-              size="xs"
-              c="dimmed"
-              onClick={() => setAdvancedOpened((o) => !o)}
-            >
-              {t('gates.advancedOptions')} {advancedOpened ? '▲' : '▼'}
-            </Anchor>
-            <Collapse in={advancedOpened}>
-              <Stack gap="sm">
-                <ActionConfigForm
-                  label={t('gates.openAction')}
-                  value={openConfig}
-                  onChange={setOpenConfig}
-                />
-                <ActionConfigForm
-                  label={t('gates.closeAction')}
-                  value={closeConfig}
-                  onChange={setCloseConfig}
-                />
-                <ActionConfigForm
-                  label={t('gates.statusAction')}
-                  value={statusConfig}
-                  onChange={setStatusConfig}
-                />
-              </Stack>
-            </Collapse>
-            <Group justify="flex-end">
-              <Button variant="default" onClick={close}>{t('common.cancel')}</Button>
-              <Button type="submit" loading={createGate.isPending}>{t('common.add')}</Button>
-            </Group>
-          </Stack>
-        </form>
-      </Modal>
+      {canManage && (
+        <Modal opened={opened} onClose={close} title={t('gates.add')} size="md">
+          <form onSubmit={(e) => { e.preventDefault(); createGate.mutate() }}>
+            <Stack>
+              <TextInput
+                label={t('common.name')}
+                value={gateName}
+                onChange={(e) => setGateName(e.target.value)}
+                required
+                placeholder="Parking entrance"
+              />
+              <Anchor
+                component="button"
+                type="button"
+                size="xs"
+                c="dimmed"
+                onClick={() => setAdvancedOpened((o) => !o)}
+              >
+                {t('gates.advancedOptions')} {advancedOpened ? '▲' : '▼'}
+              </Anchor>
+              <Collapse in={advancedOpened}>
+                <Stack gap="sm">
+                  <ActionConfigForm
+                    label={t('gates.openAction')}
+                    value={openConfig}
+                    onChange={setOpenConfig}
+                  />
+                  <ActionConfigForm
+                    label={t('gates.closeAction')}
+                    value={closeConfig}
+                    onChange={setCloseConfig}
+                  />
+                  <ActionConfigForm
+                    label={t('gates.statusAction')}
+                    value={statusConfig}
+                    onChange={setStatusConfig}
+                  />
+                </Stack>
+              </Collapse>
+              <Group justify="flex-end">
+                <Button variant="default" onClick={close}>{t('common.cancel')}</Button>
+                <Button type="submit" loading={createGate.isPending}>{t('common.add')}</Button>
+              </Group>
+            </Stack>
+          </form>
+        </Modal>
+      )}
 
       {isLoading ? (
         <Center py={80}><Loader /></Center>
@@ -189,7 +231,7 @@ export default function WorkspacePage() {
           <Stack align="center" gap="xs">
             <DoorOpen size={40} opacity={0.3} />
             <Text fw={500}>{t('gates.noGates')}</Text>
-            <Text size="sm" c="dimmed">{t('gates.noGatesHint')}</Text>
+            {canManage && <Text size="sm" c="dimmed">{t('gates.noGatesHint')}</Text>}
           </Stack>
         </Center>
       ) : (
@@ -200,28 +242,32 @@ export default function WorkspacePage() {
                 <Text fw={600} truncate style={{ flex: 1 }}>{gate.name}</Text>
                 <StatusBadge status={gate.status} />
               </Group>
-              <Text size="xs" c="dimmed" mb="md">
-                {gate.open_config?.type ?? gate.integration_type}
-              </Text>
+              {canManage && (
+                <Text size="xs" c="dimmed" mb="md">
+                  {gate.open_config?.type ?? gate.integration_type}
+                </Text>
+              )}
               <Group gap="xs">
                 <Button
                   size="xs"
                   leftSection={<Zap size={12} />}
                   loading={triggeringId === gate.id}
-                  onClick={() => triggerGate.mutate(gate.id)}
+                  onClick={() => triggerGate(gate.id)}
                   style={{ flex: 1 }}
                 >
                   {t('gates.open')}
                 </Button>
-                <Tooltip label={t('common.details')}>
-                  <ActionIcon
-                    variant="default"
-                    size="sm"
-                    onClick={() => navigate(`/workspaces/${wsId}/gates/${gate.id}`)}
-                  >
-                    <ChevronRight size={14} />
-                  </ActionIcon>
-                </Tooltip>
+                {canManageGate(gate.id) && (
+                  <Tooltip label={t('common.details')}>
+                    <ActionIcon
+                      variant="default"
+                      size="sm"
+                      onClick={() => navigate(`/workspaces/${wsId}/gates/${gate.id}`)}
+                    >
+                      <ChevronRight size={14} />
+                    </ActionIcon>
+                  </Tooltip>
+                )}
               </Group>
             </Card>
           ))}

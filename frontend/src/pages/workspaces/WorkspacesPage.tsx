@@ -11,17 +11,12 @@ import {
 import { useDisclosure } from '@mantine/hooks'
 import { Plus, Building2, ChevronRight, AlertCircle } from 'lucide-react'
 
-function autoSlug(n: string) {
-  return n.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
-}
-
 export default function WorkspacesPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { t } = useTranslation()
   const [opened, { open, close }] = useDisclosure(false)
   const [name, setName] = useState('')
-  const [slug, setSlug] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   const { data: workspaces, isLoading } = useQuery<WorkspaceWithRole[]>({
@@ -30,12 +25,11 @@ export default function WorkspacesPage() {
   })
 
   const create = useMutation({
-    mutationFn: () => workspacesApi.create(name, slug),
+    mutationFn: () => workspacesApi.create(name),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['workspaces'] })
       close()
       setName('')
-      setSlug('')
       setError(null)
     },
     onError: (err: unknown) => {
@@ -68,21 +62,9 @@ export default function WorkspacesPage() {
             <TextInput
               label={t('common.name')}
               value={name}
-              onChange={(e) => {
-                setName(e.target.value)
-                if (!slug) setSlug(autoSlug(e.target.value))
-              }}
+              onChange={(e) => setName(e.target.value)}
               required
               placeholder="My Building"
-            />
-            <TextInput
-              label={t('common.slug')}
-              value={slug}
-              onChange={(e) => setSlug(autoSlug(e.target.value))}
-              required
-              placeholder="my-building"
-              description={t('workspaces.slugHint')}
-              styles={{ input: { fontFamily: 'monospace' } }}
             />
             {error && (
               <Alert icon={<AlertCircle size={16} />} color="red" variant="light">
@@ -128,8 +110,7 @@ export default function WorkspacesPage() {
                   <div>
                     <Text fw={600}>{ws.name}</Text>
                     <Group gap={4}>
-                      <Text size="xs" c="dimmed" ff="mono">{ws.slug}</Text>
-                      <Badge size="xs" variant="light">{ws.role}</Badge>
+                        <Badge size="xs" variant="light">{ws.role}</Badge>
                     </Group>
                   </div>
                 </Group>

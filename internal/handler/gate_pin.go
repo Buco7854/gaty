@@ -33,21 +33,23 @@ const (
 var dummyPINHash, _ = bcrypt.GenerateFromPassword([]byte("__dummy__"), bcrypt.DefaultCost)
 
 type GatePinHandler struct {
-	pins    *repository.GatePinRepository
-	gates   *repository.GateRepository
-	mqtt    *internalmqtt.Client
-	redis   *redis.Client
-	authSvc *service.AuthService
+	pins     *repository.GatePinRepository
+	gates    *repository.GateRepository
+	policies *repository.PolicyRepository
+	mqtt     *internalmqtt.Client
+	redis    *redis.Client
+	authSvc  *service.AuthService
 }
 
 func NewGatePinHandler(
 	pins *repository.GatePinRepository,
 	gates *repository.GateRepository,
+	policies *repository.PolicyRepository,
 	mqtt *internalmqtt.Client,
 	redis *redis.Client,
 	authSvc *service.AuthService,
 ) *GatePinHandler {
-	return &GatePinHandler{pins: pins, gates: gates, mqtt: mqtt, redis: redis, authSvc: authSvc}
+	return &GatePinHandler{pins: pins, gates: gates, policies: policies, mqtt: mqtt, redis: redis, authSvc: authSvc}
 }
 
 // --- Admin: Create PIN ---
@@ -56,8 +58,9 @@ type CreatePINInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	GateID      uuid.UUID `path:"gate_id"`
 	Body        struct {
-		PIN      string         `json:"pin" minLength:"4" maxLength:"20"`
-		Label    *string        `json:"label,omitempty" maxLength:"100"`
+		PIN      string         `json:"pin" minLength:"1"`
+		CodeType string         `json:"code_type,omitempty" enum:"pin,password" default:"pin"`
+		Label    string         `json:"label" minLength:"1" maxLength:"100"`
 		Metadata map[string]any `json:"metadata,omitempty"`
 	}
 }
@@ -67,11 +70,27 @@ type GatePinOutput struct {
 }
 
 func (h *GatePinHandler) CreatePIN(ctx context.Context, input *CreatePINInput) (*GatePinOutput, error) {
+	codeType := input.Body.CodeType
+	if codeType == "" {
+		codeType = "pin"
+	}
+	if codeType == "pin" {
+		for _, ch := range input.Body.PIN {
+			if ch < '0' || ch > '9' {
+				return nil, huma.Error400BadRequest("PIN code must contain digits only")
+			}
+		}
+	}
 	hashed, err := bcrypt.GenerateFromPassword([]byte(input.Body.PIN), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to hash pin")
 	}
-	pin, err := h.pins.Create(ctx, input.GateID, string(hashed), input.Body.Label, input.Body.Metadata)
+	meta := input.Body.Metadata
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	meta["code_type"] = codeType
+	pin, err := h.pins.Create(ctx, input.GateID, string(hashed), input.Body.Label, meta)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create pin")
 	}
@@ -95,6 +114,29 @@ func (h *GatePinHandler) ListPINs(ctx context.Context, input *GatePathParam) (*L
 	return &ListGatePinsOutput{Body: pins}, nil
 }
 
+// --- Admin: Update PIN ---
+
+type UpdatePINInput struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	GateID      uuid.UUID `path:"gate_id"`
+	PinID       uuid.UUID `path:"pin_id"`
+	Body        struct {
+		Label    string         `json:"label" minLength:"1" maxLength:"100"`
+		Metadata map[string]any `json:"metadata,omitempty"`
+	}
+}
+
+func (h *GatePinHandler) UpdatePIN(ctx context.Context, input *UpdatePINInput) (*GatePinOutput, error) {
+	pin, err := h.pins.Update(ctx, input.PinID, input.GateID, input.Body.Label, input.Body.Metadata)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("pin not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to update pin")
+	}
+	return &GatePinOutput{Body: pin}, nil
+}
+
 // --- Admin: Delete PIN ---
 
 type DeletePINInput struct {
@@ -111,6 +153,8 @@ func (h *GatePinHandler) DeletePIN(ctx context.Context, input *DeletePINInput) (
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to delete pin")
 	}
+	// Clean up the use counter for this PIN.
+	h.redis.Del(ctx, fmt.Sprintf("pin:uses:%s", input.PinID))
 	return nil, nil
 }
 
@@ -118,12 +162,16 @@ func (h *GatePinHandler) DeletePIN(ctx context.Context, input *DeletePINInput) (
 
 // pinMetadata holds optional business rules and session config stored in a gate pin's metadata.
 type pinMetadata struct {
-	// Type controls unlock behaviour: "one_shot" (default) opens immediately with no session;
-	// "session" issues a JWT that allows repeated opens without re-entering the PIN.
-	Type string `json:"type"` // "one_shot" | "session"
-
-	// SessionDuration is the refresh-token TTL in seconds (session type only). 0 = infinite.
+	// SessionDuration is the refresh-token TTL in seconds. 0 = infinite. Default: 7 days.
+	// Controls how long the browser session remains valid after entering the PIN.
 	SessionDuration *int64 `json:"session_duration"`
+
+	// MaxUses is the maximum number of times this PIN can be used. 0 or absent = unlimited.
+	MaxUses *int64 `json:"max_uses"`
+
+	// Permissions lists gate permission codes granted to this PIN session.
+	// Defaults to ["gate:trigger_open"] if empty. "gate:manage" is always excluded.
+	Permissions []string `json:"permissions"`
 
 	ExpiresAt         *time.Time `json:"expires_at"`
 	AllowedDays       []int      `json:"allowed_days"`        // 0=Sun … 6=Sat
@@ -279,28 +327,59 @@ func (h *GatePinHandler) OpenGate(ctx context.Context, input *OpenGateInput) (*O
 		return nil, err
 	}
 
-	out := &OpenGateOutput{}
+	// Check max_uses via atomic Redis increment (Lua ensures check-and-increment is atomic).
+	if meta.MaxUses != nil && *meta.MaxUses > 0 {
+		usesKey := fmt.Sprintf("pin:uses:%s", matched.ID)
+		script := redis.NewScript(`
+			local count = redis.call('INCR', KEYS[1])
+			local max = tonumber(ARGV[1])
+			if count > max then
+				redis.call('DECR', KEYS[1])
+				return 0
+			end
+			return count
+		`)
+		result, scriptErr := script.Run(ctx, h.redis, []string{usesKey}, *meta.MaxUses).Int64()
+		if scriptErr != nil {
+			slog.Warn("pin max_uses: redis script error, allowing use", "error", scriptErr)
+		} else if result == 0 {
+			return nil, huma.Error403Forbidden("pin max uses exceeded")
+		}
+	}
 
-	if meta.Type == "session" {
-		var sessionDuration time.Duration
-		if meta.SessionDuration != nil {
-			if *meta.SessionDuration == 0 {
-				sessionDuration = 0 // infinite
-			} else {
-				sessionDuration = time.Duration(*meta.SessionDuration) * time.Second
-			}
+	// Always issue a session JWT. SessionDuration controls the refresh-token TTL.
+	var sessionDuration time.Duration
+	if meta.SessionDuration != nil {
+		if *meta.SessionDuration == 0 {
+			sessionDuration = 0 // infinite
 		} else {
-			sessionDuration = 7 * 24 * time.Hour // default
+			sessionDuration = time.Duration(*meta.SessionDuration) * time.Second
 		}
+	} else {
+		sessionDuration = 7 * 24 * time.Hour // default: 7 days
+	}
 
-		tokens, err := h.authSvc.IssueGatePinSession(ctx, matched.ID, input.Body.GateID, sessionDuration)
-		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to issue session")
+	// Resolve permissions: use metadata if set, else default to trigger_open.
+	perms := meta.Permissions
+	if len(perms) == 0 {
+		perms = []string{"gate:trigger_open"}
+	}
+	// Never grant gate:manage via PIN.
+	filtered := make([]string, 0, len(perms))
+	for _, p := range perms {
+		if p != "gate:manage" {
+			filtered = append(filtered, p)
 		}
-		out.Body.Session = tokens
+	}
+
+	tokens, err := h.authSvc.IssueGatePinSession(ctx, matched.ID, input.Body.GateID, sessionDuration, filtered)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to issue session")
 	}
 
 	h.triggerGate(ctx, input.Body.GateID)
+	out := &OpenGateOutput{}
+	out.Body.Session = tokens
 	return out, nil
 }
 
@@ -308,22 +387,59 @@ func (h *GatePinHandler) OpenGate(ctx context.Context, input *OpenGateInput) (*O
 
 type PublicTriggerInput struct {
 	Authorization string `header:"Authorization" required:"true"`
+	Body          struct {
+		Action string `json:"action,omitempty" enum:"open,close" default:"open"`
+	}
 }
 
 func (h *GatePinHandler) PublicTrigger(ctx context.Context, input *PublicTriggerInput) (*struct{}, error) {
 	tokenStr := strings.TrimPrefix(input.Authorization, "Bearer ")
-	_, gateID, err := h.authSvc.ValidatePinSessionToken(tokenStr)
+	_, gateID, permissions, err := h.authSvc.ValidatePinSessionToken(tokenStr)
 	if err != nil {
 		return nil, huma.Error401Unauthorized("invalid or expired session")
 	}
-	h.triggerGate(ctx, gateID)
+
+	action := input.Body.Action
+	if action == "" {
+		action = "open"
+	}
+
+	// Check that the PIN session grants the requested action.
+	requiredPerm := "gate:trigger_open"
+	if action == "close" {
+		requiredPerm = "gate:trigger_close"
+	}
+	hasPermission := false
+	for _, p := range permissions {
+		if p == requiredPerm {
+			hasPermission = true
+			break
+		}
+	}
+	if !hasPermission {
+		return nil, huma.Error403Forbidden("missing " + requiredPerm + " permission")
+	}
+
+	gate, err := h.gates.GetByIDPublic(ctx, gateID)
+	if err != nil {
+		return nil, nil
+	}
+	if action == "close" {
+		driver, driverErr := integration.NewCloseDriver(gate, h.mqtt)
+		if driverErr == nil {
+			_ = driver.Execute(ctx, gate)
+		}
+	} else {
+		h.triggerGate(ctx, gateID)
+	}
 	return nil, nil
 }
 
 // RegisterRoutes wires gate pin endpoints onto the Huma API.
 func (h *GatePinHandler) RegisterRoutes(
 	api huma.API,
-	wsAdmin func(huma.Context, func(huma.Context)),
+	wsMember func(huma.Context, func(huma.Context)),
+	wsGateManager func(huma.Context, func(huma.Context)),
 ) {
 	huma.Register(api, huma.Operation{
 		OperationID:   "gate-pin-create",
@@ -332,7 +448,7 @@ func (h *GatePinHandler) RegisterRoutes(
 		Summary:       "Create a PIN code for a gate",
 		Tags:          []string{"Gate Pins"},
 		DefaultStatus: http.StatusCreated,
-		Middlewares:   huma.Middlewares{wsAdmin},
+		Middlewares:   huma.Middlewares{wsMember, wsGateManager},
 	}, h.CreatePIN)
 
 	huma.Register(api, huma.Operation{
@@ -341,16 +457,25 @@ func (h *GatePinHandler) RegisterRoutes(
 		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/pins",
 		Summary:     "List PIN codes for a gate",
 		Tags:        []string{"Gate Pins"},
-		Middlewares: huma.Middlewares{wsAdmin},
+		Middlewares: huma.Middlewares{wsMember, wsGateManager},
 	}, h.ListPINs)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "gate-pin-update",
+		Method:      http.MethodPatch,
+		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/pins/{pin_id}",
+		Summary:     "Update an access code (label, metadata)",
+		Tags:        []string{"Gate Pins"},
+		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+	}, h.UpdatePIN)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "gate-pin-delete",
 		Method:      http.MethodDelete,
 		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/pins/{pin_id}",
-		Summary:     "Delete a PIN code",
+		Summary:     "Delete an access code",
 		Tags:        []string{"Gate Pins"},
-		Middlewares: huma.Middlewares{wsAdmin},
+		Middlewares: huma.Middlewares{wsMember, wsGateManager},
 	}, h.DeletePIN)
 
 	// Backward-compatible one-shot unlock (always opens immediately, no session).

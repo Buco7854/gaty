@@ -6,7 +6,6 @@ CREATE TABLE users (
 
 CREATE TABLE workspaces (
     id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    slug               TEXT        NOT NULL UNIQUE,
     name               TEXT        NOT NULL,
     owner_id           UUID        NOT NULL REFERENCES users(id),
     sso_settings       JSONB       NOT NULL DEFAULT '{}',

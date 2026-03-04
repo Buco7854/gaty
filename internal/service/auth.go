@@ -129,11 +129,11 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*Token
 	return tokens, user, nil
 }
 
-// LoginLocal authenticates a managed member by workspace slug + local username + password.
+// LoginLocal authenticates a managed member by workspace ID + local username + password.
 // Issues a local token pair (sub = membership_id) with a session duration resolved from
 // the member's auth_config, falling back to the workspace default, then to defaultSessionTTL.
-func (s *AuthService) LoginLocal(ctx context.Context, workspaceSlug, localUsername, password string) (*TokenPair, *model.WorkspaceMembership, error) {
-	ws, err := s.workspaces.GetBySlug(ctx, workspaceSlug)
+func (s *AuthService) LoginLocal(ctx context.Context, workspaceID uuid.UUID, localUsername, password string) (*TokenPair, *model.WorkspaceMembership, error) {
+	ws, err := s.workspaces.GetByID(ctx, workspaceID)
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, nil, ErrInvalidCredentials
 	}
@@ -211,7 +211,15 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenP
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
-			return s.IssueGatePinSession(ctx, pinID, gateID, sessionDuration)
+			var perms []string
+			if raw, ok := payload["permissions"].([]interface{}); ok {
+				for _, v := range raw {
+					if s, ok := v.(string); ok {
+						perms = append(perms, s)
+					}
+				}
+			}
+			return s.IssueGatePinSession(ctx, pinID, gateID, sessionDuration, perms)
 		}
 	}
 
@@ -224,9 +232,9 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenP
 }
 
 // Merge links a local membership to the authenticated platform user.
-// The user proves ownership of the local account by providing workspace slug + local credentials.
-func (s *AuthService) Merge(ctx context.Context, userID uuid.UUID, workspaceSlug, localUsername, password string) error {
-	ws, err := s.workspaces.GetBySlug(ctx, workspaceSlug)
+// The user proves ownership of the local account by providing workspace ID + local credentials.
+func (s *AuthService) Merge(ctx context.Context, userID uuid.UUID, workspaceID uuid.UUID, localUsername, password string) error {
+	ws, err := s.workspaces.GetByID(ctx, workspaceID)
 	if errors.Is(err, repository.ErrNotFound) {
 		return ErrInvalidCredentials
 	}
@@ -320,14 +328,16 @@ func (s *AuthService) ValidateMemberToken(tokenStr string) (membershipID, worksp
 }
 
 // IssueGatePinSession issues a short-lived JWT for a PIN session.
-// sub = pin_id, type = "pin_session", gate_id embedded in claims.
-func (s *AuthService) IssueGatePinSession(ctx context.Context, pinID, gateID uuid.UUID, sessionDuration time.Duration) (*TokenPair, error) {
+// sub = pin_id, type = "pin_session", gate_id and permissions embedded in claims.
+// permissions should never include "gate:manage".
+func (s *AuthService) IssueGatePinSession(ctx context.Context, pinID, gateID uuid.UUID, sessionDuration time.Duration, permissions []string) (*TokenPair, error) {
 	accessToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":     pinID.String(),
-		"type":    "pin_session",
-		"gate_id": gateID.String(),
-		"iat":     time.Now().Unix(),
-		"exp":     time.Now().Add(accessTokenTTL).Unix(),
+		"sub":         pinID.String(),
+		"type":        "pin_session",
+		"gate_id":     gateID.String(),
+		"permissions": permissions,
+		"iat":         time.Now().Unix(),
+		"exp":         time.Now().Add(accessTokenTTL).Unix(),
 	}).SignedString(s.jwtSecret)
 	if err != nil {
 		return nil, fmt.Errorf("sign pin session access token: %w", err)
@@ -342,6 +352,7 @@ func (s *AuthService) IssueGatePinSession(ctx context.Context, pinID, gateID uui
 		"type":             "pin_session",
 		"sub":              pinID.String(),
 		"gate_id":          gateID.String(),
+		"permissions":      permissions,
 		"session_duration": sessionDuration.Seconds(),
 	})
 	if err := s.redis.Set(ctx, refreshKeyPrefix+refreshToken, string(payload), sessionDuration).Err(); err != nil {
@@ -351,30 +362,38 @@ func (s *AuthService) IssueGatePinSession(ctx context.Context, pinID, gateID uui
 	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken}, nil
 }
 
-// ValidatePinSessionToken validates a pin_session JWT and returns pin ID and gate ID.
-func (s *AuthService) ValidatePinSessionToken(tokenStr string) (pinID, gateID uuid.UUID, err error) {
+// ValidatePinSessionToken validates a pin_session JWT and returns pin ID, gate ID, and permissions.
+func (s *AuthService) ValidatePinSessionToken(tokenStr string) (pinID, gateID uuid.UUID, permissions []string, err error) {
 	token, parseErr := jwt.Parse(tokenStr, s.keyFunc, jwt.WithExpirationRequired())
 	if parseErr != nil {
-		return uuid.Nil, uuid.Nil, ErrInvalidToken
+		return uuid.Nil, uuid.Nil, nil, ErrInvalidToken
 	}
 
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return uuid.Nil, uuid.Nil, ErrInvalidToken
+		return uuid.Nil, uuid.Nil, nil, ErrInvalidToken
 	}
 	if typ, _ := claims["type"].(string); typ != "pin_session" {
-		return uuid.Nil, uuid.Nil, ErrInvalidToken
+		return uuid.Nil, uuid.Nil, nil, ErrInvalidToken
 	}
 
 	pinID, err = uuid.Parse(claims["sub"].(string))
 	if err != nil {
-		return uuid.Nil, uuid.Nil, ErrInvalidToken
+		return uuid.Nil, uuid.Nil, nil, ErrInvalidToken
 	}
 	gateID, err = uuid.Parse(claims["gate_id"].(string))
 	if err != nil {
-		return uuid.Nil, uuid.Nil, ErrInvalidToken
+		return uuid.Nil, uuid.Nil, nil, ErrInvalidToken
 	}
-	return pinID, gateID, nil
+
+	if raw, ok := claims["permissions"].([]interface{}); ok {
+		for _, v := range raw {
+			if s, ok := v.(string); ok {
+				permissions = append(permissions, s)
+			}
+		}
+	}
+	return pinID, gateID, permissions, nil
 }
 
 // IssueLocalTokenPair issues a local JWT pair for a managed member.

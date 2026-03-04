@@ -199,6 +199,33 @@ func (r *GateRepository) GetByIDPublic(ctx context.Context, gateID uuid.UUID) (*
 	return &g, nil
 }
 
+// GatePublicInfo holds the gate + workspace context needed for the public PIN pad.
+type GatePublicInfo struct {
+	GateID        uuid.UUID
+	GateName      string
+	WorkspaceID   uuid.UUID
+	WorkspaceName string
+}
+
+// GetPublicInfo returns gate + workspace info for the public PIN pad by gate ID alone.
+func (r *GateRepository) GetPublicInfo(ctx context.Context, gateID uuid.UUID) (*GatePublicInfo, error) {
+	info := &GatePublicInfo{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT g.id, g.name, w.id, w.name
+		 FROM gates g
+		 JOIN workspaces w ON w.id = g.workspace_id
+		 WHERE g.id = $1`,
+		gateID,
+	).Scan(&info.GateID, &info.GateName, &info.WorkspaceID, &info.WorkspaceName)
+	if err == pgx.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get gate public info: %w", err)
+	}
+	return info, nil
+}
+
 func (r *GateRepository) UpdateStatus(ctx context.Context, gateID uuid.UUID, status string) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE gates SET status = $2, last_seen_at = NOW() WHERE id = $1`,

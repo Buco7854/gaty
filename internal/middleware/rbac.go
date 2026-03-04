@@ -12,6 +12,35 @@ import (
 	"github.com/google/uuid"
 )
 
+// GateManager is a Huma per-operation middleware that allows ADMIN/OWNER unconditionally,
+// and MEMBER only if they have gate:manage permission on the gate in the {gate_id} path param.
+// Must be chained after WorkspaceMember (requires ws_role and ws_membership_id in context).
+func GateManager(api huma.API, policyRepo *repository.PolicyRepository) func(huma.Context, func(huma.Context)) {
+	return func(ctx huma.Context, next func(huma.Context)) {
+		role, _ := WorkspaceRoleFromContext(ctx.Context())
+		if role == model.RoleAdmin || role == model.RoleOwner {
+			next(ctx)
+			return
+		}
+		gateID, err := uuid.Parse(chi.URLParamFromCtx(ctx.Context(), "gate_id"))
+		if err != nil {
+			huma.WriteErr(api, ctx, http.StatusBadRequest, "invalid gate_id")
+			return
+		}
+		membershipID, ok := WorkspaceMembershipIDFromContext(ctx.Context())
+		if !ok {
+			huma.WriteErr(api, ctx, http.StatusForbidden, "forbidden")
+			return
+		}
+		ok, err = policyRepo.HasPermission(ctx.Context(), membershipID, gateID, "gate:manage")
+		if err != nil || !ok {
+			huma.WriteErr(api, ctx, http.StatusForbidden, "forbidden")
+			return
+		}
+		next(ctx)
+	}
+}
+
 const wsRoleKey contextKey = "ws_role"
 const wsMembershipIDKey contextKey = "ws_membership_id"
 

@@ -7,23 +7,31 @@ function normalizeList(data: unknown): GatePin[] {
 }
 
 export interface PinMetadata {
-  /** 'one_shot' (default) opens immediately; 'session' issues a JWT for repeat access. */
-  type?: 'one_shot' | 'session'
-  /** Refresh token TTL in seconds (session type only). 0 = infinite. */
-  session_duration?: number
-  /** ISO 8601 date after which this PIN code is no longer valid. */
-  expires_at?: string
+  /** Refresh token TTL in seconds. 0 = infinite. Default: 7 days. Null reverts to default.
+   *  Controls how long the browser session stays valid after entering the PIN. */
+  session_duration?: number | null
+  /** Maximum number of times this PIN can be used. 0 or absent = unlimited. Null clears the limit. */
+  max_uses?: number | null
+  /** ISO 8601 date after which this PIN code is no longer valid. Null clears the expiration. */
+  expires_at?: string | null
   allowed_days?: number[]
   allowed_hours_start?: number
   allowed_hours_end?: number
+  /** Permissions granted to the PIN session. Defaults to ['gate:trigger_open']. */
+  permissions?: string[]
+  /** Whether this code is a digit-only PIN (shown on numpad) or an alphanumeric password. */
+  code_type?: 'pin' | 'password'
 }
 
 export const pinsApi = {
   list: (wsId: string, gateId: string) =>
     api.get(`/workspaces/${wsId}/gates/${gateId}/pins`).then((r) => normalizeList(r.data)),
 
-  create: (wsId: string, gateId: string, params: { pin: string; label?: string; metadata?: PinMetadata }) =>
+  create: (wsId: string, gateId: string, params: { pin: string; code_type?: 'pin' | 'password'; label: string; metadata?: PinMetadata }) =>
     api.post<GatePin>(`/workspaces/${wsId}/gates/${gateId}/pins`, params).then((r) => r.data),
+
+  update: (wsId: string, gateId: string, pinId: string, params: { label: string; metadata?: PinMetadata }) =>
+    api.patch<GatePin>(`/workspaces/${wsId}/gates/${gateId}/pins/${pinId}`, params).then((r) => r.data),
 
   delete: (wsId: string, gateId: string, pinId: string) =>
     api.delete(`/workspaces/${wsId}/gates/${gateId}/pins/${pinId}`),

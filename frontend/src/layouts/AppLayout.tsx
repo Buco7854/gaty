@@ -29,19 +29,29 @@ import {
   Home,
   DoorOpen,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { findLocalSession } from '@/utils/session'
 
 export default function AppLayout() {
   const { wsId } = useParams<{ wsId?: string }>()
   const { t } = useTranslation()
   const user = useAuthStore((s) => s.user)
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const logout = useAuthStore((s) => s.logout)
   const navigate = useNavigate()
   const [wsMenuOpen, setWsMenuOpen] = useState(false)
 
+  const isAdmin = isAuthenticated()
+
+  const localSession = useMemo(
+    () => (!isAdmin && wsId ? findLocalSession(wsId) : null),
+    [wsId, isAdmin]
+  )
+
   const { data: workspaces } = useQuery<WorkspaceWithRole[]>({
     queryKey: ['workspaces'],
     queryFn: workspacesApi.list,
+    enabled: isAdmin,
   })
 
   const currentWs = workspaces?.find((w) => w.id === wsId)
@@ -49,6 +59,15 @@ export default function AppLayout() {
   function handleLogout() {
     logout()
     navigate('/login')
+  }
+
+  function handleMemberLogout() {
+    if (localSession?.gateId) {
+      localStorage.removeItem(`gaty_session_${localSession.gateId}`)
+      navigate(`/unlock/${localSession.gateId}`)
+    } else {
+      navigate('/unlock')
+    }
   }
 
   const initials = user?.email?.slice(0, 2).toUpperCase() ?? 'U'
@@ -64,7 +83,7 @@ export default function AppLayout() {
             style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}
           >
             <UnstyledButton
-              onClick={() => navigate('/workspaces')}
+              onClick={() => isAdmin ? navigate('/workspaces') : localSession?.gateId && navigate(`/unlock/${localSession.gateId}`)}
               style={{ display: 'flex', alignItems: 'center', gap: 8 }}
             >
               <Avatar size={28} color="indigo" radius="md">
@@ -74,55 +93,67 @@ export default function AppLayout() {
             </UnstyledButton>
           </Group>
 
-          {/* Workspace switcher */}
+          {/* Workspace section */}
           <div style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}>
-            {currentWs ? (
-              <Menu opened={wsMenuOpen} onChange={setWsMenuOpen} width={220} shadow="md">
-                <Menu.Target>
-                  <UnstyledButton
-                    px="md"
-                    py="sm"
-                    style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
-                  >
-                    <Group gap="xs">
-                      <Avatar size={22} color="indigo" radius="sm">
-                        {currentWs.name[0].toUpperCase()}
-                      </Avatar>
-                      <Text size="sm" fw={500} style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {currentWs.name}
-                      </Text>
-                    </Group>
-                    <ChevronDown size={14} />
-                  </UnstyledButton>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  {workspaces?.map((w) => (
-                    <Menu.Item
-                      key={w.id}
-                      leftSection={<Avatar size={16} color="indigo" radius="xs">{w.name[0].toUpperCase()}</Avatar>}
-                      onClick={() => { navigate(`/workspaces/${w.id}`); setWsMenuOpen(false) }}
+            {isAdmin ? (
+              currentWs ? (
+                <Menu opened={wsMenuOpen} onChange={setWsMenuOpen} width={220} shadow="md">
+                  <Menu.Target>
+                    <UnstyledButton
+                      px="md"
+                      py="sm"
+                      style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
                     >
-                      <Text size="sm" truncate>{w.name}</Text>
+                      <Group gap="xs">
+                        <Avatar size={22} color="indigo" radius="sm">
+                          {currentWs.name[0].toUpperCase()}
+                        </Avatar>
+                        <Text size="sm" fw={500} style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {currentWs.name}
+                        </Text>
+                      </Group>
+                      <ChevronDown size={14} />
+                    </UnstyledButton>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    {workspaces?.map((w) => (
+                      <Menu.Item
+                        key={w.id}
+                        leftSection={<Avatar size={16} color="indigo" radius="xs">{w.name[0].toUpperCase()}</Avatar>}
+                        onClick={() => { navigate(`/workspaces/${w.id}`); setWsMenuOpen(false) }}
+                      >
+                        <Text size="sm" truncate>{w.name}</Text>
+                      </Menu.Item>
+                    ))}
+                    <Divider />
+                    <Menu.Item
+                      leftSection={<Home size={14} />}
+                      onClick={() => { navigate('/workspaces'); setWsMenuOpen(false) }}
+                    >
+                      <Text size="sm">{t('workspaces.title')}</Text>
                     </Menu.Item>
-                  ))}
-                  <Divider />
-                  <Menu.Item
-                    leftSection={<Home size={14} />}
-                    onClick={() => { navigate('/workspaces'); setWsMenuOpen(false) }}
-                  >
-                    <Text size="sm">{t('workspaces.title')}</Text>
-                  </Menu.Item>
-                </Menu.Dropdown>
-              </Menu>
+                  </Menu.Dropdown>
+                </Menu>
+              ) : (
+                <NavLink
+                  component={RouterNavLink as React.FC}
+                  to="/workspaces"
+                  label={t('workspaces.title')}
+                  leftSection={<Home size={16} />}
+                  px="md"
+                  py="sm"
+                />
+              )
             ) : (
-              <NavLink
-                component={RouterNavLink as React.FC}
-                to="/workspaces"
-                label={t('workspaces.title')}
-                leftSection={<Home size={16} />}
-                px="md"
-                py="sm"
-              />
+              // Local member: static workspace indicator
+              <Group px="md" py="sm" gap="xs">
+                <Avatar size={22} color="indigo" radius="sm">
+                  <DoorOpen size={12} />
+                </Avatar>
+                <Text size="sm" fw={500} c="dimmed" style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {t('portal.myGates')}
+                </Text>
+              </Group>
             )}
           </div>
 
@@ -137,41 +168,59 @@ export default function AppLayout() {
                   label={t('gates.title')}
                   leftSection={<LayoutGrid size={16} />}
                 />
-                <NavLink
-                  component={RouterNavLink as React.FC}
-                  to={`/workspaces/${wsId}/members`}
-                  label={t('members.title')}
-                  leftSection={<Users size={16} />}
-                />
-                <NavLink
-                  component={RouterNavLink as React.FC}
-                  to={`/workspaces/${wsId}/settings`}
-                  label={t('settings.title')}
-                  leftSection={<Settings size={16} />}
-                />
+                {(isAdmin || localSession?.role === 'ADMIN' || localSession?.role === 'OWNER') && (
+                  <>
+                    <NavLink
+                      component={RouterNavLink as React.FC}
+                      to={`/workspaces/${wsId}/members`}
+                      label={t('members.title')}
+                      leftSection={<Users size={16} />}
+                    />
+                    <NavLink
+                      component={RouterNavLink as React.FC}
+                      to={`/workspaces/${wsId}/settings`}
+                      label={t('settings.title')}
+                      leftSection={<Settings size={16} />}
+                    />
+                  </>
+                )}
               </Stack>
             )}
           </ScrollArea>
 
-          {/* User footer */}
+          {/* Footer */}
           <div style={{ borderTop: '1px solid var(--mantine-color-default-border)', padding: '8px 12px', flexShrink: 0 }}>
-            <Group justify="space-between" wrap="nowrap">
-              <Group gap="xs" style={{ minWidth: 0 }}>
-                <Avatar size={26} color="indigo" radius="xl">{initials}</Avatar>
-                <Text size="xs" c="dimmed" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {user?.email}
-                </Text>
+            {isAdmin ? (
+              <Group justify="space-between" wrap="nowrap">
+                <Group gap="xs" style={{ minWidth: 0 }}>
+                  <Avatar size={26} color="indigo" radius="xl">{initials}</Avatar>
+                  <Text size="xs" c="dimmed" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {user?.email}
+                  </Text>
+                </Group>
+                <Group gap={4} wrap="nowrap">
+                  <LangToggle />
+                  <ThemeToggle />
+                  <Tooltip label={t('auth.signOut')}>
+                    <ActionIcon variant="subtle" color="gray" size="sm" onClick={handleLogout}>
+                      <LogOut size={14} />
+                    </ActionIcon>
+                  </Tooltip>
+                </Group>
               </Group>
-              <Group gap={4} wrap="nowrap">
-                <LangToggle />
-                <ThemeToggle />
+            ) : (
+              <Group justify="space-between" wrap="nowrap">
+                <Group gap="xs" style={{ minWidth: 0 }}>
+                  <LangToggle />
+                  <ThemeToggle />
+                </Group>
                 <Tooltip label={t('auth.signOut')}>
-                  <ActionIcon variant="subtle" color="gray" size="sm" onClick={handleLogout}>
+                  <ActionIcon variant="subtle" color="gray" size="sm" onClick={handleMemberLogout}>
                     <LogOut size={14} />
                   </ActionIcon>
                 </Tooltip>
               </Group>
-            </Group>
+            )}
           </div>
         </Stack>
       </AppShell.Navbar>

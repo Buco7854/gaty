@@ -119,10 +119,15 @@ func (r *WorkspaceMembershipRepository) List(ctx context.Context, workspaceID uu
 	return result, rows.Err()
 }
 
-func (r *WorkspaceMembershipRepository) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName *string, role model.WorkspaceRole, authConfig map[string]any) (*model.WorkspaceMembership, error) {
+func (r *WorkspaceMembershipRepository) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName *string, role *model.WorkspaceRole, authConfig map[string]any) (*model.WorkspaceMembership, error) {
 	row := r.pool.QueryRow(ctx,
 		`UPDATE workspace_memberships
-		 SET display_name = $3, role = $4, auth_config = $5
+		 SET display_name = COALESCE($3, display_name),
+		     role = COALESCE($4, role),
+		     auth_config = CASE
+		       WHEN $5::jsonb IS NOT NULL THEN COALESCE(auth_config, '{}'::jsonb) || $5::jsonb
+		       ELSE auth_config
+		     END
 		 WHERE id = $1 AND workspace_id = $2
 		 RETURNING `+membershipColumns,
 		membershipID, workspaceID, displayName, role, authConfig,

@@ -4,9 +4,10 @@ CREATE TABLE permissions (
 );
 
 INSERT INTO permissions (code, description) VALUES
-    ('gate:read_status',  'View gate status and details'),
-    ('gate:trigger_open', 'Send open command to a gate'),
-    ('gate:manage',       'Manage gate configuration and pins');
+    ('gate:read_status',   'View gate status and details'),
+    ('gate:trigger_open',  'Send open command to a gate'),
+    ('gate:trigger_close', 'Send close command to a gate'),
+    ('gate:manage',        'Manage gate configuration and access codes');
 
 -- Gate access policies tied to membership_id (not user identity directly).
 -- This ensures permissions survive a local→global merge without any data migration.

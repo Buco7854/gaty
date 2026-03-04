@@ -13,6 +13,9 @@ export const publicApi = {
   resolve: (domain: string) =>
     api.get<DomainResolveResult>(`/public/resolve?domain=${encodeURIComponent(domain)}`).then((r) => r.data),
 
+  resolveByGateId: (gateId: string) =>
+    api.get<DomainResolveResult>(`/public/gates/${gateId}`).then((r) => r.data),
+
   /** One-shot unlock — backward-compatible, always opens without creating a session. */
   unlock: (gateId: string, pin: string) =>
     api.post('/public/unlock', { gate_id: gateId, pin }),
@@ -28,14 +31,14 @@ export const publicApi = {
     ).then((r) => r.data),
 
   /** Trigger gate with a stored pin_session JWT (bypasses global-token interceptor). */
-  triggerWithPinSession: (accessToken: string) =>
-    axios.post('/api/public/trigger', {}, { headers: { Authorization: `Bearer ${accessToken}` } }),
+  triggerWithPinSession: (accessToken: string, action: 'open' | 'close' = 'open') =>
+    axios.post('/api/public/trigger', { action }, { headers: { Authorization: `Bearer ${accessToken}` } }),
 
   /** Trigger gate as a local member (bypasses global-token interceptor). */
-  triggerAsLocal: (workspaceId: string, gateId: string, localToken: string) =>
+  triggerAsLocal: (workspaceId: string, gateId: string, localToken: string, action: 'open' | 'close' = 'open') =>
     axios.post(
       `/api/workspaces/${workspaceId}/gates/${gateId}/trigger`,
-      {},
+      { action },
       { headers: { Authorization: `Bearer ${localToken}` } },
     ),
 
@@ -44,5 +47,11 @@ export const publicApi = {
     axios.post<{ access_token: string; refresh_token: string }>(
       '/api/auth/refresh',
       { refresh_token: refreshToken },
+    ).then((r) => r.data),
+
+  /** List public SSO providers for a workspace (public, no auth required). */
+  ssoProviders: (wsId: string) =>
+    axios.get<{ id: string; name: string; type: string }[]>(
+      `/api/auth/sso/${encodeURIComponent(wsId)}/providers`,
     ).then((r) => r.data),
 }

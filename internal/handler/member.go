@@ -41,6 +41,7 @@ type membershipBody struct {
 	LocalUsername *string             `json:"local_username,omitempty"`
 	DisplayName   *string             `json:"display_name,omitempty"`
 	Role          model.WorkspaceRole `json:"role"`
+	AuthConfig    map[string]any      `json:"auth_config,omitempty"`
 }
 
 func toMembershipBody(m *model.WorkspaceMembership) *membershipBody {
@@ -51,6 +52,7 @@ func toMembershipBody(m *model.WorkspaceMembership) *membershipBody {
 		LocalUsername: m.LocalUsername,
 		DisplayName:   m.DisplayName,
 		Role:          m.Role,
+		AuthConfig:    m.AuthConfig,
 	}
 }
 
@@ -166,14 +168,14 @@ type UpdateMemberInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	MemberID    uuid.UUID `path:"member_id"`
 	Body        struct {
-		DisplayName *string             `json:"display_name,omitempty" maxLength:"100"`
-		Role        model.WorkspaceRole `json:"role"`
-		AuthConfig  map[string]any      `json:"auth_config,omitempty"`
+		DisplayName *string              `json:"display_name,omitempty" maxLength:"100"`
+		Role        *model.WorkspaceRole `json:"role,omitempty"`
+		AuthConfig  map[string]any       `json:"auth_config,omitempty"`
 	}
 }
 
 func (h *MemberHandler) Update(ctx context.Context, input *UpdateMemberInput) (*MemberOutput, error) {
-	if input.Body.Role == model.RoleOwner {
+	if input.Body.Role != nil && *input.Body.Role == model.RoleOwner {
 		return nil, huma.Error400BadRequest("cannot assign OWNER role")
 	}
 	membership, err := h.memberships.Update(ctx, input.MemberID, input.WorkspaceID, input.Body.DisplayName, input.Body.Role, input.Body.AuthConfig)

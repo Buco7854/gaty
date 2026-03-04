@@ -108,6 +108,7 @@ func main() {
 	requireMembership := middleware.RequireMembership(api)
 	wsMember := middleware.WorkspaceMember(api, wsRepo, membershipRepo)
 	wsAdmin := middleware.WorkspaceAdmin(api, wsRepo, membershipRepo)
+	wsGateManager := middleware.GateManager(api, policyRepo)
 
 	huma.Get(api, "/api/health", func(ctx context.Context, _ *struct{}) (*struct {
 		Body struct {
@@ -137,16 +138,19 @@ func main() {
 		return resp, nil
 	})
 
+	// Setup (public, no auth)
+	handler.NewSetupHandler(userRepo, authSvc).RegisterRoutes(api)
+
 	// Register route groups
 	handler.NewAuthHandler(authSvc, userRepo).RegisterRoutes(api, requireAuth)
-	handler.NewWorkspaceHandler(wsRepo).RegisterRoutes(api, requireAuth)
-	handler.NewGateHandler(gateRepo, policyRepo, auditRepo, mqttClient).RegisterRoutes(api, wsMember, wsAdmin)
-	handler.NewPolicyHandler(policyRepo).RegisterRoutes(api, wsAdmin)
+	handler.NewWorkspaceHandler(wsRepo).RegisterRoutes(api, requireAuth, wsAdmin)
+	handler.NewGateHandler(gateRepo, policyRepo, auditRepo, mqttClient).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
+	handler.NewPolicyHandler(policyRepo).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
 	handler.NewMemberHandler(membershipSvc).RegisterRoutes(api, wsAdmin)
-	handler.NewGatePinHandler(gatePinRepo, gateRepo, mqttClient, redisClient, authSvc).RegisterRoutes(api, wsAdmin)
+	handler.NewGatePinHandler(gatePinRepo, gateRepo, policyRepo, mqttClient, redisClient, authSvc).RegisterRoutes(api, wsMember, wsGateManager)
 	handler.NewSSOHandler(ssoSvc, authSvc, wsRepo, cfg.FrontendURL).RegisterRoutes(api, wsAdmin)
 	handler.NewCredentialHandler(credRepo, memberCredRepo, membershipRepo).RegisterRoutes(api, requireAuth, requireMembership, wsAdmin)
-	handler.NewCustomDomainHandler(domainRepo, gateRepo).RegisterRoutes(api, wsAdmin)
+	handler.NewCustomDomainHandler(domainRepo, gateRepo).RegisterRoutes(api, wsMember, wsGateManager)
 
 	// SSE: raw chi route (long-lived, not Huma)
 	handler.NewSSEHandler(authSvc, redisClient).RegisterRoutes(router)

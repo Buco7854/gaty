@@ -16,7 +16,6 @@ const (
 
 type Workspace struct {
 	ID               uuid.UUID      `json:"id"`
-	Slug             string         `json:"slug"`
 	Name             string         `json:"name"`
 	OwnerID          uuid.UUID      `json:"owner_id"`
 	SSOSettings      map[string]any `json:"sso_settings,omitempty"`

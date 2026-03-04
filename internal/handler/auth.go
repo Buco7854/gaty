@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/Buco7854/gaty/internal/middleware"
@@ -10,6 +11,7 @@ import (
 	"github.com/Buco7854/gaty/internal/repository"
 	"github.com/Buco7854/gaty/internal/service"
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/google/uuid"
 )
 
 type AuthHandler struct {
@@ -68,6 +70,7 @@ func (h *AuthHandler) Login(ctx context.Context, input *LoginInput) (*AuthOutput
 		return nil, huma.Error401Unauthorized("invalid credentials")
 	}
 	if err != nil {
+		slog.Error("login failed", "error", err)
 		return nil, huma.Error500InternalServerError("login failed")
 	}
 	resp := &AuthOutput{}
@@ -81,9 +84,9 @@ func (h *AuthHandler) Login(ctx context.Context, input *LoginInput) (*AuthOutput
 
 type LoginLocalInput struct {
 	Body struct {
-		WorkspaceSlug string `json:"workspace_slug" minLength:"1"`
-		LocalUsername string `json:"local_username" minLength:"1"`
-		Password      string `json:"password" minLength:"1"`
+		WorkspaceID   uuid.UUID `json:"workspace_id"`
+		LocalUsername string    `json:"local_username" minLength:"1"`
+		Password      string    `json:"password" minLength:"1"`
 	}
 }
 
@@ -96,7 +99,7 @@ type LocalAuthOutput struct {
 }
 
 func (h *AuthHandler) LoginLocal(ctx context.Context, input *LoginLocalInput) (*LocalAuthOutput, error) {
-	tokens, membership, err := h.authSvc.LoginLocal(ctx, input.Body.WorkspaceSlug, input.Body.LocalUsername, input.Body.Password)
+	tokens, membership, err := h.authSvc.LoginLocal(ctx, input.Body.WorkspaceID, input.Body.LocalUsername, input.Body.Password)
 	if errors.Is(err, service.ErrInvalidCredentials) {
 		return nil, huma.Error401Unauthorized("invalid credentials")
 	}
@@ -143,15 +146,15 @@ func (h *AuthHandler) Refresh(ctx context.Context, input *RefreshInput) (*Refres
 
 type MergeInput struct {
 	Body struct {
-		WorkspaceSlug string `json:"workspace_slug" minLength:"1"`
-		LocalUsername string `json:"local_username" minLength:"1"`
-		Password      string `json:"password" minLength:"1"`
+		WorkspaceID   uuid.UUID `json:"workspace_id"`
+		LocalUsername string    `json:"local_username" minLength:"1"`
+		Password      string    `json:"password" minLength:"1"`
 	}
 }
 
 func (h *AuthHandler) Merge(ctx context.Context, input *MergeInput) (*struct{}, error) {
 	userID, _ := middleware.UserIDFromContext(ctx)
-	err := h.authSvc.Merge(ctx, userID, input.Body.WorkspaceSlug, input.Body.LocalUsername, input.Body.Password)
+	err := h.authSvc.Merge(ctx, userID, input.Body.WorkspaceID, input.Body.LocalUsername, input.Body.Password)
 	if errors.Is(err, service.ErrInvalidCredentials) {
 		return nil, huma.Error401Unauthorized("invalid credentials")
 	}

@@ -15,4 +15,10 @@ export const policiesApi = {
 
   revoke: (wsId: string, gateId: string, membershipId: string, permissionCode: string) =>
     api.delete(`/workspaces/${wsId}/gates/${gateId}/policies/${membershipId}/${permissionCode}`),
+
+  listByMembership: (wsId: string, membershipId: string) =>
+    api.get(`/workspaces/${wsId}/members/${membershipId}/policies`).then((r) => normalizeList(r.data)),
+
+  listMine: (wsId: string) =>
+    api.get(`/workspaces/${wsId}/policies/me`).then((r) => normalizeList(r.data)),
 }

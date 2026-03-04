@@ -33,12 +33,12 @@ func scanGatePin(row pgx.Row) (*model.GatePin, error) {
 	return p, nil
 }
 
-func (r *GatePinRepository) Create(ctx context.Context, gateID uuid.UUID, hashedPin string, label *string, metadata map[string]any) (*model.GatePin, error) {
+func (r *GatePinRepository) Create(ctx context.Context, gateID uuid.UUID, hashedPin string, label string, metadata map[string]any) (*model.GatePin, error) {
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
 	p, err := scanGatePin(r.pool.QueryRow(ctx,
-		`INSERT INTO gate_pins (gate_id, hashed_pin, label, metadata)
+		`INSERT INTO gate_access_codes (gate_id, hashed_pin, label, metadata)
 		 VALUES ($1, $2, $3, $4)
 		 RETURNING `+gatePinColumns,
 		gateID, hashedPin, label, metadata,
@@ -51,19 +51,19 @@ func (r *GatePinRepository) Create(ctx context.Context, gateID uuid.UUID, hashed
 
 func (r *GatePinRepository) GetByID(ctx context.Context, pinID, gateID uuid.UUID) (*model.GatePin, error) {
 	return scanGatePin(r.pool.QueryRow(ctx,
-		`SELECT `+gatePinColumns+` FROM gate_pins WHERE id = $1 AND gate_id = $2`,
+		`SELECT `+gatePinColumns+` FROM gate_access_codes WHERE id = $1 AND gate_id = $2`,
 		pinID, gateID,
 	))
 }
 
-// List returns all pins for a gate. Used for PIN authentication (bcrypt compare loop).
+// List returns all access codes for a gate. Used for authentication (bcrypt compare loop).
 func (r *GatePinRepository) List(ctx context.Context, gateID uuid.UUID) ([]*model.GatePin, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT `+gatePinColumns+` FROM gate_pins WHERE gate_id = $1 ORDER BY created_at DESC`,
+		`SELECT `+gatePinColumns+` FROM gate_access_codes WHERE gate_id = $1 ORDER BY created_at DESC`,
 		gateID,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list gate pins: %w", err)
+		return nil, fmt.Errorf("list gate access codes: %w", err)
 	}
 	defer rows.Close()
 
@@ -71,20 +71,39 @@ func (r *GatePinRepository) List(ctx context.Context, gateID uuid.UUID) ([]*mode
 	for rows.Next() {
 		p := &model.GatePin{}
 		if err := rows.Scan(&p.ID, &p.GateID, &p.HashedPin, &p.Label, &p.Metadata, &p.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan gate pin row: %w", err)
+			return nil, fmt.Errorf("scan gate access code row: %w", err)
 		}
 		result = append(result, p)
 	}
 	return result, rows.Err()
 }
 
+// Update updates the label and metadata of an access code. The hashed value is never modified.
+// Metadata is merged using JSONB || (right side wins for duplicate keys).
+func (r *GatePinRepository) Update(ctx context.Context, pinID, gateID uuid.UUID, label string, metadata map[string]any) (*model.GatePin, error) {
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	p, err := scanGatePin(r.pool.QueryRow(ctx,
+		`UPDATE gate_access_codes
+		 SET label = $1, metadata = metadata || $2
+		 WHERE id = $3 AND gate_id = $4
+		 RETURNING `+gatePinColumns,
+		label, metadata, pinID, gateID,
+	))
+	if err != nil {
+		return nil, fmt.Errorf("update gate access code: %w", err)
+	}
+	return p, nil
+}
+
 func (r *GatePinRepository) Delete(ctx context.Context, pinID, gateID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx,
-		`DELETE FROM gate_pins WHERE id = $1 AND gate_id = $2`,
+		`DELETE FROM gate_access_codes WHERE id = $1 AND gate_id = $2`,
 		pinID, gateID,
 	)
 	if err != nil {
-		return fmt.Errorf("delete gate pin: %w", err)
+		return fmt.Errorf("delete gate access code: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound

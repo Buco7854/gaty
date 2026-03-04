@@ -19,11 +19,11 @@ func NewWorkspaceRepository(pool *pgxpool.Pool) *WorkspaceRepository {
 	return &WorkspaceRepository{pool: pool}
 }
 
-const workspaceColumns = `id, slug, name, owner_id, sso_settings, member_auth_config, created_at`
+const workspaceColumns = `id, name, owner_id, sso_settings, member_auth_config, created_at`
 
 func scanWorkspace(row pgx.Row) (*model.Workspace, error) {
 	ws := &model.Workspace{}
-	err := row.Scan(&ws.ID, &ws.Slug, &ws.Name, &ws.OwnerID, &ws.SSOSettings, &ws.MemberAuthConfig, &ws.CreatedAt)
+	err := row.Scan(&ws.ID, &ws.Name, &ws.OwnerID, &ws.SSOSettings, &ws.MemberAuthConfig, &ws.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -34,7 +34,7 @@ func scanWorkspace(row pgx.Row) (*model.Workspace, error) {
 }
 
 // Create creates a workspace and adds the owner as an OWNER membership in a single transaction.
-func (r *WorkspaceRepository) Create(ctx context.Context, slug, name string, ownerID uuid.UUID) (*model.Workspace, error) {
+func (r *WorkspaceRepository) Create(ctx context.Context, name string, ownerID uuid.UUID) (*model.Workspace, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -42,9 +42,9 @@ func (r *WorkspaceRepository) Create(ctx context.Context, slug, name string, own
 	defer tx.Rollback(ctx) //nolint:errcheck
 
 	ws, err := scanWorkspace(tx.QueryRow(ctx,
-		`INSERT INTO workspaces (slug, name, owner_id) VALUES ($1, $2, $3)
+		`INSERT INTO workspaces (name, owner_id) VALUES ($1, $2)
 		 RETURNING `+workspaceColumns,
-		slug, name, ownerID,
+		name, ownerID,
 	))
 	if err != nil {
 		return nil, fmt.Errorf("create workspace: %w", err)
@@ -71,17 +71,10 @@ func (r *WorkspaceRepository) GetByID(ctx context.Context, id uuid.UUID) (*model
 	))
 }
 
-func (r *WorkspaceRepository) GetBySlug(ctx context.Context, slug string) (*model.Workspace, error) {
-	return scanWorkspace(r.pool.QueryRow(ctx,
-		`SELECT `+workspaceColumns+` FROM workspaces WHERE slug = $1`,
-		slug,
-	))
-}
-
 // ListForUser returns workspaces where the given user_id has a membership.
 func (r *WorkspaceRepository) ListForUser(ctx context.Context, userID uuid.UUID) ([]model.WorkspaceWithRole, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT w.id, w.slug, w.name, w.owner_id, w.sso_settings, w.member_auth_config, w.created_at, wm.role
+		`SELECT w.id, w.name, w.owner_id, w.sso_settings, w.member_auth_config, w.created_at, wm.role
 		 FROM workspaces w
 		 JOIN workspace_memberships wm ON wm.workspace_id = w.id
 		 WHERE wm.user_id = $1
@@ -96,7 +89,7 @@ func (r *WorkspaceRepository) ListForUser(ctx context.Context, userID uuid.UUID)
 	var result []model.WorkspaceWithRole
 	for rows.Next() {
 		var wsr model.WorkspaceWithRole
-		if err := rows.Scan(&wsr.ID, &wsr.Slug, &wsr.Name, &wsr.OwnerID, &wsr.SSOSettings, &wsr.MemberAuthConfig, &wsr.CreatedAt, &wsr.Role); err != nil {
+		if err := rows.Scan(&wsr.ID, &wsr.Name, &wsr.OwnerID, &wsr.SSOSettings, &wsr.MemberAuthConfig, &wsr.CreatedAt, &wsr.Role); err != nil {
 			return nil, fmt.Errorf("scan workspace: %w", err)
 		}
 		result = append(result, wsr)
@@ -115,6 +108,21 @@ func (r *WorkspaceRepository) UpdateSSOSettings(ctx context.Context, id uuid.UUI
 	))
 	if err != nil {
 		return nil, fmt.Errorf("update sso settings: %w", err)
+	}
+	return ws, nil
+}
+
+// UpdateMemberAuthConfig replaces the workspace's default member auth configuration.
+func (r *WorkspaceRepository) UpdateMemberAuthConfig(ctx context.Context, id uuid.UUID, config map[string]any) (*model.Workspace, error) {
+	if config == nil {
+		config = map[string]any{}
+	}
+	ws, err := scanWorkspace(r.pool.QueryRow(ctx,
+		`UPDATE workspaces SET member_auth_config = $2 WHERE id = $1 RETURNING `+workspaceColumns,
+		id, config,
+	))
+	if err != nil {
+		return nil, fmt.Errorf("update member auth config: %w", err)
 	}
 	return ws, nil
 }

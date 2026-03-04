@@ -50,6 +50,16 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*model.U
 	return user, nil
 }
 
+// HasAny returns true if at least one user exists in the database.
+func (r *UserRepository) HasAny(ctx context.Context) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users LIMIT 1)`).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check users: %w", err)
+	}
+	return exists, nil
+}
+
 func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
 	user := &model.User{}
 	err := r.pool.QueryRow(ctx,

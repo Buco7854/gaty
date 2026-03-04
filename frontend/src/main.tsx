@@ -1,14 +1,17 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { RouterProvider } from 'react-router'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MantineProvider, createTheme, ColorSchemeScript } from '@mantine/core'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
+import { MantineProvider, createTheme, ColorSchemeScript, Center, Paper, Stack, Group, Avatar, Text, LoadingOverlay } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
+import { DoorOpen } from 'lucide-react'
 import '@mantine/core/styles.css'
 import '@mantine/notifications/styles.css'
 import './i18n'
 import './index.css'
 import { router } from './router'
+import { setupApi } from './api'
+import SetupPage from './pages/setup/SetupPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -40,13 +43,46 @@ const theme = createTheme({
   },
 })
 
+function AppRoot() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['setup-status'],
+    queryFn: setupApi.status,
+    staleTime: Infinity,
+    retry: false,
+  })
+
+  if (isLoading) {
+    return <LoadingOverlay visible />
+  }
+
+  if (data?.setup_required) {
+    return (
+      <Center mih="100vh" p="md">
+        <Stack w="100%" maw={400} gap="xl">
+          <Group justify="center" gap="xs">
+            <Avatar size={32} color="indigo" radius="md">
+              <DoorOpen size={16} />
+            </Avatar>
+            <Text fw={700} size="lg" ff="mono">GATY</Text>
+          </Group>
+          <Paper p="xl" radius="lg" withBorder>
+            <SetupPage />
+          </Paper>
+        </Stack>
+      </Center>
+    )
+  }
+
+  return <RouterProvider router={router} />
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ColorSchemeScript defaultColorScheme="auto" />
     <MantineProvider theme={theme} defaultColorScheme="auto">
       <Notifications position="top-right" />
       <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
+        <AppRoot />
       </QueryClientProvider>
     </MantineProvider>
   </StrictMode>,

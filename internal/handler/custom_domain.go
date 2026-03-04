@@ -252,7 +252,6 @@ type resolveDomainOutput struct {
 		GateID        uuid.UUID `json:"gate_id"`
 		GateName      string    `json:"gate_name"`
 		WorkspaceID   uuid.UUID `json:"workspace_id"`
-		WorkspaceSlug string    `json:"workspace_slug"`
 		WorkspaceName string    `json:"workspace_name"`
 	}
 }
@@ -270,7 +269,6 @@ func (h *CustomDomainHandler) resolveDomain(ctx context.Context, in *resolveDoma
 	out.Body.GateID = res.GateID
 	out.Body.GateName = res.GateName
 	out.Body.WorkspaceID = res.WorkspaceID
-	out.Body.WorkspaceSlug = res.WorkspaceSlug
 	out.Body.WorkspaceName = res.WorkspaceName
 	return out, nil
 }
@@ -300,9 +298,36 @@ func (h *CustomDomainHandler) publicDomainsList(ctx context.Context, _ *struct{}
 	return out, nil
 }
 
+// --- GET /api/public/gates/:gate_id ---
+// Returns gate + workspace context by gate ID (for the PIN pad on direct /unlock/:gateId URLs).
+
+type resolveGateInput struct {
+	GateID uuid.UUID `path:"gate_id"`
+}
+
+func (h *CustomDomainHandler) resolveGate(ctx context.Context, in *resolveGateInput) (*resolveDomainOutput, error) {
+	res, err := h.gates.GetPublicInfo(ctx, in.GateID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, huma.Error404NotFound("gate not found")
+		}
+		return nil, huma.Error500InternalServerError("internal error")
+	}
+	out := &resolveDomainOutput{}
+	out.Body.GateID = res.GateID
+	out.Body.GateName = res.GateName
+	out.Body.WorkspaceID = res.WorkspaceID
+	out.Body.WorkspaceName = res.WorkspaceName
+	return out, nil
+}
+
 // --- RegisterRoutes ---
 
-func (h *CustomDomainHandler) RegisterRoutes(api huma.API, wsAdmin func(ctx huma.Context, next func(huma.Context))) {
+func (h *CustomDomainHandler) RegisterRoutes(
+	api huma.API,
+	wsMember func(huma.Context, func(huma.Context)),
+	wsGateManager func(huma.Context, func(huma.Context)),
+) {
 	huma.Register(api, huma.Operation{
 		OperationID:   "add-custom-domain",
 		Method:        http.MethodPost,
@@ -310,7 +335,7 @@ func (h *CustomDomainHandler) RegisterRoutes(api huma.API, wsAdmin func(ctx huma
 		Summary:       "Add a custom domain to a gate",
 		Tags:          []string{"Custom Domains"},
 		DefaultStatus: http.StatusCreated,
-		Middlewares:   huma.Middlewares{wsAdmin},
+		Middlewares:   huma.Middlewares{wsMember, wsGateManager},
 	}, h.addDomain)
 
 	huma.Register(api, huma.Operation{
@@ -319,7 +344,7 @@ func (h *CustomDomainHandler) RegisterRoutes(api huma.API, wsAdmin func(ctx huma
 		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/domains",
 		Summary:     "List custom domains for a gate",
 		Tags:        []string{"Custom Domains"},
-		Middlewares: huma.Middlewares{wsAdmin},
+		Middlewares: huma.Middlewares{wsMember, wsGateManager},
 	}, h.listDomains)
 
 	huma.Register(api, huma.Operation{
@@ -329,7 +354,7 @@ func (h *CustomDomainHandler) RegisterRoutes(api huma.API, wsAdmin func(ctx huma
 		Summary:       "Remove a custom domain",
 		Tags:          []string{"Custom Domains"},
 		DefaultStatus: http.StatusNoContent,
-		Middlewares:   huma.Middlewares{wsAdmin},
+		Middlewares:   huma.Middlewares{wsMember, wsGateManager},
 	}, h.deleteDomain)
 
 	huma.Register(api, huma.Operation{
@@ -338,11 +363,18 @@ func (h *CustomDomainHandler) RegisterRoutes(api huma.API, wsAdmin func(ctx huma
 		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/domains/{domain_id}/verify",
 		Summary:     "Trigger DNS verification for a custom domain",
 		Tags:        []string{"Custom Domains"},
-		Middlewares: huma.Middlewares{wsAdmin},
+		Middlewares: huma.Middlewares{wsMember, wsGateManager},
 	}, h.verifyDomain)
 
 	// Public endpoints (no auth)
 	huma.Get(api, "/api/public/verify-domain", h.verifyDomainPublic)
 	huma.Get(api, "/api/public/resolve", h.resolveDomain)
 	huma.Get(api, "/api/public/domains/list", h.publicDomainsList)
+	huma.Register(api, huma.Operation{
+		OperationID: "public-resolve-gate",
+		Method:      http.MethodGet,
+		Path:        "/api/public/gates/{gate_id}",
+		Summary:     "Get gate + workspace info by gate ID (for direct /unlock/:gateId URLs)",
+		Tags:        []string{"Public"},
+	}, h.resolveGate)
 }

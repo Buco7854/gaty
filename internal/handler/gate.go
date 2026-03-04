@@ -180,25 +180,36 @@ func (h *GateHandler) Delete(ctx context.Context, input *DeleteGateInput) (*stru
 	return nil, nil
 }
 
-// --- Trigger gate (open) ---
+// --- Trigger gate (open or close) ---
 
 type TriggerInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	GateID      uuid.UUID `path:"gate_id"`
+	Body        struct {
+		// Action selects which gate action to perform. Defaults to "open".
+		Action string `json:"action,omitempty" enum:"open,close" default:"open"`
+	}
 }
 
 func (h *GateHandler) Trigger(ctx context.Context, input *TriggerInput) (*struct{}, error) {
-	role, _ := middleware.WorkspaceRoleFromContext(ctx)
+	action := input.Body.Action
+	if action == "" {
+		action = "open"
+	}
 
-	// MEMBER role: requires gate:trigger_open permission.
+	role, _ := middleware.WorkspaceRoleFromContext(ctx)
 	if role == model.RoleMember {
 		membershipID, _ := middleware.WorkspaceMembershipIDFromContext(ctx)
-		ok, err := h.policies.HasPermission(ctx, membershipID, input.GateID, "gate:trigger_open")
+		permCode := "gate:trigger_open"
+		if action == "close" {
+			permCode = "gate:trigger_close"
+		}
+		ok, err := h.policies.HasPermission(ctx, membershipID, input.GateID, permCode)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to check permissions")
 		}
 		if !ok {
-			return nil, huma.Error403Forbidden("missing gate:trigger_open permission")
+			return nil, huma.Error403Forbidden("missing " + permCode + " permission")
 		}
 	}
 
@@ -210,20 +221,38 @@ func (h *GateHandler) Trigger(ctx context.Context, input *TriggerInput) (*struct
 		return nil, huma.Error500InternalServerError("failed to get gate")
 	}
 
-	// Dispatch via the integration driver (MQTT, HTTP, or noop).
-	driver, driverErr := integration.NewOpenDriver(gate, h.mqtt)
-	if driverErr != nil {
-		slog.Warn("gate: failed to build open driver", "gate_id", gate.ID, "error", driverErr)
-	} else if execErr := driver.Execute(ctx, gate); execErr != nil {
-		slog.Warn("gate: open driver execution failed", "gate_id", gate.ID, "error", execErr)
+	var driverErr, execErr error
+	if action == "close" {
+		var driver integration.Driver
+		driver, driverErr = integration.NewCloseDriver(gate, h.mqtt)
+		if driverErr != nil {
+			slog.Warn("gate: failed to build close driver", "gate_id", gate.ID, "error", driverErr)
+		} else {
+			execErr = driver.Execute(ctx, gate)
+		}
+	} else {
+		var driver integration.Driver
+		driver, driverErr = integration.NewOpenDriver(gate, h.mqtt)
+		if driverErr != nil {
+			slog.Warn("gate: failed to build open driver", "gate_id", gate.ID, "error", driverErr)
+		} else {
+			execErr = driver.Execute(ctx, gate)
+		}
+	}
+	if execErr != nil {
+		slog.Warn("gate: driver execution failed", "gate_id", gate.ID, "action", action, "error", execErr)
 	}
 
 	if h.audit != nil {
 		gateID := gate.ID
+		auditAction := "gate:trigger_open"
+		if action == "close" {
+			auditAction = "gate:trigger_close"
+		}
 		_ = h.audit.Insert(ctx, repository.AuditEntry{
 			WorkspaceID: input.WorkspaceID,
 			GateID:      &gateID,
-			Action:      "gate:trigger_open",
+			Action:      auditAction,
 		})
 	}
 
@@ -235,6 +264,7 @@ func (h *GateHandler) RegisterRoutes(
 	api huma.API,
 	wsMember func(huma.Context, func(huma.Context)),
 	wsAdmin func(huma.Context, func(huma.Context)),
+	wsGateManager func(huma.Context, func(huma.Context)),
 ) {
 	huma.Register(api, huma.Operation{
 		OperationID: "gate-list",
@@ -270,7 +300,7 @@ func (h *GateHandler) RegisterRoutes(
 		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}",
 		Summary:     "Update a gate",
 		Tags:        []string{"Gates"},
-		Middlewares: huma.Middlewares{wsAdmin},
+		Middlewares: huma.Middlewares{wsMember, wsGateManager},
 	}, h.Update)
 
 	huma.Register(api, huma.Operation{
@@ -286,7 +316,7 @@ func (h *GateHandler) RegisterRoutes(
 		OperationID: "gate-trigger",
 		Method:      http.MethodPost,
 		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/trigger",
-		Summary:     "Send open command to a gate",
+		Summary:     "Send open or close command to a gate",
 		Tags:        []string{"Gates"},
 		Middlewares: huma.Middlewares{wsMember},
 	}, h.Trigger)
