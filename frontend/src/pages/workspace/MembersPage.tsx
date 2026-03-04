@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next'
 import {
   Container, Title, Text, Group, Button, Modal, Stack, Alert, Tabs,
   TextInput, PasswordInput, Select, Badge, Avatar, ActionIcon, Center, Skeleton,
+  Collapse, Anchor,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { UserPlus, Trash2, Users, AlertCircle } from 'lucide-react'
@@ -17,17 +18,29 @@ const ROLE_COLOR: Record<string, string> = {
   MEMBER: 'gray',
 }
 
+// session_duration in seconds; '' = use workspace default (7 days)
+const SESSION_DURATION_OPTIONS = [
+  { value: '', labelKey: 'members.session7d' },       // default = 7 days
+  { value: '0', labelKey: 'members.sessionInfinite' },
+  { value: '3600', labelKey: 'members.session1h' },
+  { value: '28800', labelKey: 'members.session8h' },
+  { value: '86400', labelKey: 'members.session24h' },
+  { value: '2592000', labelKey: 'members.session30d' },
+] as const
+
 export default function MembersPage() {
   const { wsId } = useParams<{ wsId: string }>()
   const qc = useQueryClient()
   const { t } = useTranslation()
   const [opened, { open, close }] = useDisclosure(false)
+  const [advancedOpened, setAdvancedOpened] = useState(false)
   const [activeTab, setActiveTab] = useState<string | null>('invite')
   const [email, setEmail] = useState('')
   const [username, setUsername] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
   const [role, setRole] = useState('MEMBER')
+  const [sessionDuration, setSessionDuration] = useState<string>('')
   const [error, setError] = useState<string | null>(null)
 
   const { data: members, isLoading } = useQuery<WorkspaceMembership[]>({
@@ -39,9 +52,7 @@ export default function MembersPage() {
     mutationFn: () => membersApi.invite(wsId!, email, role),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['members', wsId] })
-      close()
-      setEmail('')
-      setError(null)
+      resetAndClose()
     },
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { title?: string } } })?.response?.data?.title
@@ -50,20 +61,23 @@ export default function MembersPage() {
   })
 
   const createLocal = useMutation({
-    mutationFn: () =>
-      membersApi.createLocal(wsId!, {
+    mutationFn: () => {
+      const sessionDurationNum = sessionDuration === '' ? undefined
+        : sessionDuration === '0' ? 0
+        : parseInt(sessionDuration, 10)
+      return membersApi.createLocal(wsId!, {
         local_username: username,
         display_name: displayName || undefined,
         password,
         role,
-      }),
+        auth_config: sessionDurationNum !== undefined
+          ? { session_duration: sessionDurationNum }
+          : undefined,
+      })
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['members', wsId] })
-      close()
-      setUsername('')
-      setDisplayName('')
-      setPassword('')
-      setError(null)
+      resetAndClose()
     },
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { title?: string } } })?.response?.data?.title
@@ -75,6 +89,18 @@ export default function MembersPage() {
     mutationFn: (memberId: string) => membersApi.delete(wsId!, memberId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['members', wsId] }),
   })
+
+  function resetAndClose() {
+    close()
+    setEmail('')
+    setUsername('')
+    setDisplayName('')
+    setPassword('')
+    setRole('MEMBER')
+    setSessionDuration('')
+    setAdvancedOpened(false)
+    setError(null)
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -88,6 +114,11 @@ export default function MembersPage() {
 
   const isPending = invite.isPending || createLocal.isPending
 
+  const sessionOptions = SESSION_DURATION_OPTIONS.map(({ value, labelKey }) => ({
+    value,
+    label: t(labelKey),
+  }))
+
   return (
     <Container size="sm" py="xl">
       <Group justify="space-between" mb="xl">
@@ -100,7 +131,7 @@ export default function MembersPage() {
         </Button>
       </Group>
 
-      <Modal opened={opened} onClose={close} title={t('members.add')}>
+      <Modal opened={opened} onClose={resetAndClose} title={t('members.add')}>
         <Tabs value={activeTab} onChange={setActiveTab}>
           <Tabs.List mb="md">
             <Tabs.Tab value="invite">{t('members.inviteByEmail')}</Tabs.Tab>
@@ -141,6 +172,23 @@ export default function MembersPage() {
                   required
                   minLength={8}
                 />
+                <Anchor
+                  component="button"
+                  type="button"
+                  size="xs"
+                  c="dimmed"
+                  onClick={() => setAdvancedOpened((o) => !o)}
+                >
+                  {t('gates.advancedOptions')} {advancedOpened ? '▲' : '▼'}
+                </Anchor>
+                <Collapse in={advancedOpened}>
+                  <Select
+                    label={t('members.sessionDuration')}
+                    value={sessionDuration}
+                    onChange={(v) => setSessionDuration(v ?? '')}
+                    data={sessionOptions}
+                  />
+                </Collapse>
               </>
             )}
             <Select
@@ -158,7 +206,7 @@ export default function MembersPage() {
               </Alert>
             )}
             <Group justify="flex-end">
-              <Button variant="default" onClick={close}>{t('common.cancel')}</Button>
+              <Button variant="default" onClick={resetAndClose}>{t('common.cancel')}</Button>
               <Button type="submit" loading={isPending}>{t('common.add')}</Button>
             </Group>
           </Stack>

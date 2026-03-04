@@ -99,6 +99,13 @@ const fr: Translations = {
     adding: 'Ajout…',
     usernamePlaceholder: 'identifiant-local',
     displayNamePlaceholder: 'Nom affiché (optionnel)',
+    sessionDuration: 'Durée de session',
+    sessionInfinite: 'Infinie (pas d'expiration)',
+    session1h: '1 heure',
+    session8h: '8 heures',
+    session24h: '24 heures',
+    session7d: '7 jours',
+    session30d: '30 jours',
   },
   permissions: {
     title: 'Permissions des membres',

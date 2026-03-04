@@ -94,7 +94,7 @@ func main() {
 	}
 
 	// Services
-	authSvc := service.NewAuthService(userRepo, credRepo, membershipRepo, memberCredRepo, wsRepo, redisClient, cfg.JWTSecret)
+	authSvc := service.NewAuthService(userRepo, credRepo, membershipRepo, memberCredRepo, wsRepo, redisClient, cfg.JWTSecret, cfg.GlobalSessionDuration)
 	membershipSvc := service.NewMembershipService(membershipRepo, memberCredRepo, wsRepo)
 	ssoSvc := service.NewSSOService(wsRepo, membershipRepo, memberCredRepo, redisClient, cfg.BaseURL)
 

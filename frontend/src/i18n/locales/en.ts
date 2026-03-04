@@ -97,6 +97,13 @@ const en = {
     adding: 'Adding…',
     usernamePlaceholder: 'local-login',
     displayNamePlaceholder: 'Display name (optional)',
+    sessionDuration: 'Session duration',
+    sessionInfinite: 'Infinite (no expiry)',
+    session1h: '1 hour',
+    session8h: '8 hours',
+    session24h: '24 hours',
+    session7d: '7 days',
+    session30d: '30 days',
   },
   permissions: {
     title: 'Member permissions',
