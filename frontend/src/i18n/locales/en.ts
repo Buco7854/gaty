@@ -83,6 +83,7 @@ const en = {
     httpBody: 'Request body',
     httpHeaders: 'Extra headers (JSON)',
     configuredAs: 'Configured as',
+    advancedOptions: 'Advanced options',
   },
   members: {
     title: 'Members',
@@ -110,7 +111,8 @@ const en = {
     label: 'Label',
     pin: 'PIN',
     labelPlaceholder: 'Label (optional)',
-    expires: 'Expires',
+    expires: 'Expires on',
+    expiresPlaceholder: 'No expiry',
     unlabeled: 'Unlabeled',
   },
   domains: {
@@ -143,6 +145,13 @@ const en = {
     unreachable: 'Unable to reach the gate',
     domainNotConfigured: 'Domain not configured',
     domainNotConfiguredHint: 'This domain is not linked to any gate.',
+    useCredentials: 'Use member credentials',
+    usePinInstead: 'Use PIN instead',
+    memberAccess: 'Member access',
+    username: 'Username',
+    workspace: 'Workspace',
+    invalidCredentials: 'Invalid credentials',
+    openWithCredentials: 'Open',
   },
 } as const
 

@@ -9,7 +9,7 @@ import type { GateEvent } from '@/hooks/useGateEvents'
 import { useTranslation } from 'react-i18next'
 import {
   Container, Title, Text, Group, Button, Modal, TextInput, Stack, Badge,
-  SimpleGrid, Card, ActionIcon, Select, Center, Tooltip, Loader,
+  SimpleGrid, Card, ActionIcon, Select, Center, Tooltip, Loader, Collapse, Anchor,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { Plus, DoorOpen, Zap, ChevronRight } from 'lucide-react'
@@ -71,6 +71,7 @@ export default function WorkspacePage() {
   const qc = useQueryClient()
   const { t } = useTranslation()
   const [opened, { open, close }] = useDisclosure(false)
+  const [advancedOpened, setAdvancedOpened] = useState(false)
   const [gateName, setGateName] = useState('')
   const [openConfig, setOpenConfig] = useState<ActionConfig | null>({ type: 'MQTT' })
   const [closeConfig, setCloseConfig] = useState<ActionConfig | null>(null)
@@ -113,6 +114,7 @@ export default function WorkspacePage() {
       setOpenConfig({ type: 'MQTT' })
       setCloseConfig(null)
       setStatusConfig(null)
+      setAdvancedOpened(false)
     },
   })
 
@@ -144,21 +146,34 @@ export default function WorkspacePage() {
               required
               placeholder="Parking entrance"
             />
-            <ActionConfigForm
-              label={t('gates.openAction')}
-              value={openConfig}
-              onChange={setOpenConfig}
-            />
-            <ActionConfigForm
-              label={t('gates.closeAction')}
-              value={closeConfig}
-              onChange={setCloseConfig}
-            />
-            <ActionConfigForm
-              label={t('gates.statusAction')}
-              value={statusConfig}
-              onChange={setStatusConfig}
-            />
+            <Anchor
+              component="button"
+              type="button"
+              size="xs"
+              c="dimmed"
+              onClick={() => setAdvancedOpened((o) => !o)}
+            >
+              {t('gates.advancedOptions')} {advancedOpened ? '▲' : '▼'}
+            </Anchor>
+            <Collapse in={advancedOpened}>
+              <Stack gap="sm">
+                <ActionConfigForm
+                  label={t('gates.openAction')}
+                  value={openConfig}
+                  onChange={setOpenConfig}
+                />
+                <ActionConfigForm
+                  label={t('gates.closeAction')}
+                  value={closeConfig}
+                  onChange={setCloseConfig}
+                />
+                <ActionConfigForm
+                  label={t('gates.statusAction')}
+                  value={statusConfig}
+                  onChange={setStatusConfig}
+                />
+              </Stack>
+            </Collapse>
             <Group justify="flex-end">
               <Button variant="default" onClick={close}>{t('common.cancel')}</Button>
               <Button type="submit" loading={createGate.isPending}>{t('common.add')}</Button>

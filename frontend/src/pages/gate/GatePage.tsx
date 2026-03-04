@@ -93,6 +93,7 @@ export default function GatePage() {
   // PIN form
   const [pinLabel, setPinLabel] = useState('')
   const [pinValue, setPinValue] = useState('')
+  const [pinExpiresAt, setPinExpiresAt] = useState('')
 
   // Domain form
   const [domainValue, setDomainValue] = useState('')
@@ -147,12 +148,17 @@ export default function GatePage() {
   })
 
   const createPin = useMutation({
-    mutationFn: () => pinsApi.create(wsId!, gateId!, { label: pinLabel || undefined, pin: pinValue }),
+    mutationFn: () => pinsApi.create(wsId!, gateId!, {
+      label: pinLabel || undefined,
+      pin: pinValue,
+      expires_at: pinExpiresAt ? new Date(pinExpiresAt).toISOString() : undefined,
+    }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pins', wsId, gateId] })
       closePinModal()
       setPinLabel('')
       setPinValue('')
+      setPinExpiresAt('')
     },
   })
 
@@ -315,6 +321,13 @@ export default function GatePage() {
                 required
                 minLength={4}
                 styles={{ input: { fontFamily: 'monospace' } }}
+              />
+              <TextInput
+                label={t('pins.expires')}
+                description={t('common.optional')}
+                type="datetime-local"
+                value={pinExpiresAt}
+                onChange={(e) => setPinExpiresAt(e.target.value)}
               />
               <Group justify="flex-end">
                 <Button variant="default" onClick={closePinModal}>{t('common.cancel')}</Button>

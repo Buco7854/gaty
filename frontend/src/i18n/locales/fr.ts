@@ -85,6 +85,7 @@ const fr: Translations = {
     httpBody: 'Corps de la requête',
     httpHeaders: 'En-têtes supplémentaires (JSON)',
     configuredAs: 'Configuré en',
+    advancedOptions: 'Options avancées',
   },
   members: {
     title: 'Membres',
@@ -113,6 +114,7 @@ const fr: Translations = {
     pin: 'PIN',
     labelPlaceholder: 'Libellé (optionnel)',
     expires: 'Expire le',
+    expiresPlaceholder: 'Sans expiration',
     unlabeled: 'Sans libellé',
   },
   domains: {
@@ -145,6 +147,13 @@ const fr: Translations = {
     unreachable: 'Impossible de joindre le portail',
     domainNotConfigured: 'Domaine non configuré',
     domainNotConfiguredHint: 'Ce domaine n'est associé à aucun portail.',
+    useCredentials: 'Connexion membre',
+    usePinInstead: 'Utiliser un PIN',
+    memberAccess: 'Accès membre',
+    username: 'Nom d'utilisateur',
+    workspace: 'Espace de travail',
+    invalidCredentials: 'Identifiants invalides',
+    openWithCredentials: 'Ouvrir',
   },
 }
 
