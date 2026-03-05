@@ -217,3 +217,32 @@ Output : Body présent → 200, nil → 204.
 | `*string`, `*int`, etc. | **Aucun effet** — pointeur ≠ optionnel |
 
 > **Règle d'or** : tout champ optionnel dans un body (input **ou** output) doit avoir `omitempty` (ou `required:"false"`). Un pointeur seul ne suffit pas.
+
+### Nullable
+
+| Situation | Résultat schéma |
+|-----------|----------------|
+| `*string \`json:"x"\`` | Requis + **nullable** (peut valoir `null`) |
+| `*string \`json:"x,omitempty"\`` | Optionnel + **non nullable** (absent ou valeur) |
+| `string \`json:"x" nullable:"true"\`` | Requis + nullable |
+| `nullable:"true"` sur un objet | **Interdit** — utiliser un champ `_ struct{} \`nullable:"true"\`` |
+
+### Defaults
+
+Le tag `default` documente ET applique la valeur par défaut côté serveur (Huma remplit le champ si absent). À utiliser sur les champs optionnels qui ont une valeur par défaut, pour éviter de dupliquer la logique dans le handler.
+
+```go
+// Bien : défaut documenté et appliqué par Huma
+Role model.WorkspaceRole `json:"role,omitempty" default:"MEMBER"`
+
+// À éviter : défaut silencieux dans le handler uniquement
+if role == "" { role = model.RoleMember }
+```
+
+> Utiliser `*bool \`json:"enabled" default:"true"\`` pour les booléens où `false` est une valeur significative (sinon `false` == zéro-value == "non fourni").
+
+### readOnly / writeOnly
+
+`readOnly:"true"` → champ présent uniquement en réponse (jamais envoyé par le client).
+`writeOnly:"true"` → champ présent uniquement en requête (jamais retourné).
+Non enforced par Huma, documentation uniquement — utile si on réutilise un struct pour input et output.

@@ -74,7 +74,7 @@ type CreateGateInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	Body        struct {
 		Name              string                    `json:"name" minLength:"1"`
-		IntegrationType   model.GateIntegrationType `json:"integration_type,omitempty"`
+		IntegrationType   model.GateIntegrationType `json:"integration_type,omitempty" default:"MQTT"`
 		IntegrationConfig map[string]any            `json:"integration_config,omitempty"`
 		OpenConfig        *model.ActionConfig       `json:"open_config,omitempty"`
 		CloseConfig       *model.ActionConfig       `json:"close_config,omitempty"`
