@@ -1,7 +1,7 @@
 export { authApi } from './auth'
 export { workspacesApi } from './workspaces'
 export { gatesApi } from './gates'
-export type { ActionConfig, ActionDriverType, CreateGateParams, UpdateGateParams } from './gates'
+export type { ActionConfig, ActionDriverType, CreateGateParams, UpdateGateParams, GateTokenResponse } from './gates'
 export { membersApi } from './members'
 export { pinsApi } from './pins'
 export type { PinMetadata } from './pins'

@@ -1,5 +1,5 @@
 export type WorkspaceRole = 'OWNER' | 'ADMIN' | 'MEMBER'
-export type GateStatus = 'online' | 'offline' | 'unknown'
+export type GateStatus = 'online' | 'offline' | 'unknown' | 'open' | 'closed' | string
 export type GateIntegrationType = 'MQTT' | 'POLLING' | 'WEBHOOK'
 export type CredentialType = 'PASSWORD' | 'SSO_IDENTITY' | 'API_TOKEN'
 
@@ -27,6 +27,16 @@ export interface ActionConfig {
   config?: Record<string, unknown>
 }
 
+/** Maps a raw status-payload key to a display label. */
+export interface MetaField {
+  /** Dot-notated key in the gate's status payload meta object. */
+  key: string
+  /** Human-readable label shown in the UI. */
+  label: string
+  /** Optional unit suffix (e.g. "dB", "%"). */
+  unit?: string
+}
+
 export interface Gate {
   id: string
   workspace_id: string
@@ -39,6 +49,12 @@ export interface Gate {
   status: GateStatus
   last_seen_at?: string
   created_at: string
+  /** Last received metadata from the gate (sensor data, signal info, etc.) */
+  status_metadata?: Record<string, unknown>
+  /** Display mapping: which metadata keys to show and how to label them. */
+  meta_config?: MetaField[]
+  /** Gate authentication token — only populated on create and rotate-token responses. */
+  gate_token?: string
 }
 
 export interface WorkspaceMembership {
