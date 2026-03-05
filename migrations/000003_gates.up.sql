@@ -1,7 +1,7 @@
 CREATE TYPE integration_type AS ENUM ('MQTT', 'POLLING', 'WEBHOOK');
 
 CREATE TABLE gates (
-    id                 UUID             PRIMARY KEY DEFAULT gen_random_uuid(),
+    id                 UUID             PRIMARY KEY DEFAULT uuid_generate_v7(),
     workspace_id       UUID             NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     name               TEXT             NOT NULL,
     integration_type   integration_type NOT NULL DEFAULT 'MQTT',

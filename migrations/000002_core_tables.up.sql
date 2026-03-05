@@ -1,11 +1,11 @@
 CREATE TABLE users (
-    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id         UUID        PRIMARY KEY DEFAULT uuid_generate_v7(),
     email      TEXT        NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE workspaces (
-    id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id                 UUID        PRIMARY KEY DEFAULT uuid_generate_v7(),
     name               TEXT        NOT NULL,
     owner_id           UUID        NOT NULL REFERENCES users(id),
     sso_settings       JSONB       NOT NULL DEFAULT '{}',
@@ -17,7 +17,7 @@ CREATE INDEX idx_workspaces_owner ON workspaces(owner_id);
 
 -- Every person with workspace access: platform users (user_id set) and managed members (user_id null).
 CREATE TABLE workspace_memberships (
-    id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id           UUID        PRIMARY KEY DEFAULT uuid_generate_v7(),
     workspace_id UUID        NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     user_id      UUID        REFERENCES users(id) ON DELETE SET NULL,
     local_username TEXT,
