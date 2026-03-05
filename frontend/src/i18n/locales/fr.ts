@@ -29,6 +29,9 @@ const fr: Translations = {
     optional: 'optionnel',
     grant: 'Accorder',
     revoke: 'Révoquer',
+    saved: 'Enregistré',
+    created: 'Créé',
+    deleted: 'Supprimé',
   },
   theme: {
     light: 'Clair',
@@ -179,6 +182,8 @@ const fr: Translations = {
     domain: 'Domaine',
     domainPlaceholder: 'portail.exemple.fr',
     verifyDns: 'Vérifier DNS',
+    verified: 'Domaine vérifié',
+    notYetVerified: 'Enregistrement DNS introuvable pour l'instant',
     dnsInstructions: 'Ajoutez un enregistrement DNS TXT pour vérifier la propriété :',
   },
   settings: {

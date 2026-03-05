@@ -5,6 +5,7 @@ import { useAuthStore } from '@/store/auth'
 import { useTranslation } from 'react-i18next'
 import { TextInput, PasswordInput, Button, Stack, Text, Alert, Title, Anchor } from '@mantine/core'
 import { AlertCircle } from 'lucide-react'
+import { extractApiError } from '@/lib/notify'
 
 export default function RegisterPage() {
   const [email, setEmail] = useState('')
@@ -29,8 +30,7 @@ export default function RegisterPage() {
       setAuth(data.user, data.access_token, data.refresh_token)
       navigate('/workspaces')
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { title?: string } } })?.response?.data?.title
-      setError(msg ?? t('auth.registrationFailed'))
+      setError(extractApiError(err, t('auth.registrationFailed')))
     } finally {
       setLoading(false)
     }

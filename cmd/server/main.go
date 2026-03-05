@@ -55,7 +55,7 @@ func main() {
 	router.Use(chimw.RealIP)
 	router.Use(middleware.ClientIPInjector())
 	router.Use(chimw.Logger)
-	router.Use(chimw.Recoverer)
+	router.Use(middleware.JSONRecoverer)
 	router.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},

@@ -13,6 +13,7 @@ import {
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { Plus, DoorOpen, Zap, ChevronRight } from 'lucide-react'
+import { notifySuccess, notifyError } from '@/lib/notify'
 import { useAuthStore } from '@/store/auth'
 import { findLocalSession } from '@/utils/session'
 
@@ -150,7 +151,9 @@ export default function WorkspacePage() {
       setCloseConfig(null)
       setStatusConfig(null)
       setAdvancedOpened(false)
+      notifySuccess(t('common.created'))
     },
+    onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
   async function triggerGate(gateId: string) {

@@ -11,6 +11,7 @@ import {
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { UserPlus, Trash2, Users, AlertCircle, Settings2, X, Pencil } from 'lucide-react'
+import { notifySuccess, notifyError, extractApiError } from '@/lib/notify'
 
 const ROLE_COLOR: Record<string, string> = {
   OWNER: 'yellow',
@@ -137,7 +138,8 @@ function MemberSettingsDrawer({
   const updateAuth = useMutation({
     mutationFn: (cfg: Record<string, unknown>) =>
       membersApi.update(wsId, member.id, { auth_config: cfg }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['members', wsId] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members', wsId] }); notifySuccess(t('common.deleted')) },
+    onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
   function getAuthValue(key: string): string {
@@ -291,8 +293,7 @@ function EditMemberModal({
       onClose()
     },
     onError: (err: unknown) => {
-      const msg = (err as { response?: { data?: { title?: string } } })?.response?.data?.title
-      setError(msg ?? t('common.error'))
+      setError(extractApiError(err, t('common.error')))
     },
   })
 
@@ -360,7 +361,7 @@ export default function MembersPage() {
 
   const invite = useMutation({
     mutationFn: () => membersApi.invite(wsId!, email, role),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members', wsId] }); resetAndClose() },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members', wsId] }); resetAndClose(); notifySuccess(t('common.saved')) },
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { title?: string } } })?.response?.data?.title
       setAddError(msg ?? t('common.error'))
@@ -375,7 +376,7 @@ export default function MembersPage() {
         password,
         role,
       }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members', wsId] }); resetAndClose() },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members', wsId] }); resetAndClose(); notifySuccess(t('common.saved')) },
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { title?: string } } })?.response?.data?.title
       setAddError(msg ?? t('common.error'))
@@ -384,13 +385,15 @@ export default function MembersPage() {
 
   const deleteMember = useMutation({
     mutationFn: (memberId: string) => membersApi.delete(wsId!, memberId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['members', wsId] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members', wsId] }); notifySuccess(t('common.saved')) },
+    onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
   const updateRole = useMutation({
     mutationFn: ({ memberId, newRole }: { memberId: string; newRole: string }) =>
       membersApi.update(wsId!, memberId, { role: newRole }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['members', wsId] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members', wsId] }); notifySuccess(t('common.saved')) },
+    onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
   function resetAndClose() {

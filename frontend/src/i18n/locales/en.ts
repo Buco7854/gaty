@@ -27,6 +27,9 @@ const en = {
     optional: 'optional',
     grant: 'Grant',
     revoke: 'Revoke',
+    saved: 'Saved',
+    created: 'Created',
+    deleted: 'Deleted',
   },
   theme: {
     light: 'Light',
@@ -177,6 +180,8 @@ const en = {
     domain: 'Domain',
     domainPlaceholder: 'gate.example.com',
     verifyDns: 'Verify DNS',
+    verified: 'Domain verified',
+    notYetVerified: 'DNS record not found yet',
     dnsInstructions: 'Add a DNS TXT record to verify ownership:',
   },
   settings: {

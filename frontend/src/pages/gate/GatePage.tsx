@@ -7,7 +7,7 @@ import type { Gate, GatePin, CustomDomain, WorkspaceWithRole, AccessSchedule } f
 import { useAuthStore } from '@/store/auth'
 import { findLocalSession } from '@/utils/session'
 import { useTranslation } from 'react-i18next'
-import { notifications } from '@mantine/notifications'
+import { notifySuccess, notifyError } from '@/lib/notify'
 import {
   Container, Title, Text, Group, Button, Stack, Paper, Badge, ActionIcon,
   TextInput, PasswordInput, Select, Tooltip, Modal, Code, Alert,
@@ -175,8 +175,8 @@ export default function GatePage() {
 
   const trigger = useMutation({
     mutationFn: () => gatesApi.trigger(wsId!, gateId!),
-    onSuccess: () => notifications.show({ color: 'green', message: t('pinpad.gateOpened'), autoClose: 3000 }),
-    onError: () => notifications.show({ color: 'red', message: t('pinpad.unreachable'), autoClose: 4000 }),
+    onSuccess: () => notifySuccess(t('pinpad.gateOpened')),
+    onError: (err: unknown) => notifyError(err, t('pinpad.unreachable')),
   })
 
   const updateConfig = useMutation({
@@ -189,7 +189,9 @@ export default function GatePage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['gate', wsId, gateId] })
       closeConfigModal()
+      notifySuccess(t('common.saved'))
     },
+    onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
   const createPin = useMutation({
@@ -212,7 +214,9 @@ export default function GatePage() {
       qc.invalidateQueries({ queryKey: ['pins', wsId, gateId] })
       closePinModal()
       resetPinForm()
+      notifySuccess(t('common.created'))
     },
+    onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
   function resetPinForm() {
@@ -262,12 +266,15 @@ export default function GatePage() {
       qc.invalidateQueries({ queryKey: ['pins', wsId, gateId] })
       closePinModal()
       resetPinForm()
+      notifySuccess(t('common.saved'))
     },
+    onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
   const deletePin = useMutation({
     mutationFn: (pinId: string) => pinsApi.delete(wsId!, gateId!, pinId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pins', wsId, gateId] }),
+    onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
   const addDomain = useMutation({
@@ -276,20 +283,29 @@ export default function GatePage() {
       qc.invalidateQueries({ queryKey: ['domains', wsId, gateId] })
       closeDomainModal()
       setDomainValue('')
+      notifySuccess(t('common.created'))
     },
+    onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
   const deleteDomain = useMutation({
     mutationFn: (domainId: string) => domainsApi.delete(wsId!, gateId!, domainId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['domains', wsId, gateId] }),
+    onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
   const verifyDomain = useMutation({
     mutationFn: (domainId: string) => domainsApi.verify(wsId!, gateId!, domainId),
     onSuccess: (data, domainId) => {
       setVerifyResult((prev) => ({ ...prev, [domainId]: data }))
-      if (data.verified) qc.invalidateQueries({ queryKey: ['domains', wsId, gateId] })
+      if (data.verified) {
+        qc.invalidateQueries({ queryKey: ['domains', wsId, gateId] })
+        notifySuccess(t('domains.verified'))
+      } else {
+        notifyError(null, t('domains.notYetVerified'))
+      }
     },
+    onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
   function openConfig() {

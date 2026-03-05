@@ -35,22 +35,6 @@ api.interceptors.request.use((config) => {
     }
   }
 
-  // Gate portal fallback: on /unlock/:gateId paths, look up session by gate ID.
-  const unlockMatch = window.location.pathname.match(/\/unlock\/([^/]+)/)
-  if (unlockMatch) {
-    const gateId = unlockMatch[1]
-    try {
-      const raw = localStorage.getItem(`gaty_session_${gateId}`)
-      if (raw) {
-        const s = JSON.parse(raw) as GateSession
-        if (s?.type === 'member' && s?.access_token && s?.workspace_id) {
-          config.headers.Authorization = `Bearer ${s.access_token}`
-          config._authMeta = { type: 'local', wsId: s.workspace_id, gateId }
-        }
-      }
-    } catch { /* ignore */ }
-  }
-
   return config
 })
 
@@ -84,7 +68,7 @@ api.interceptors.response.use(
         const loginUrl = `/workspaces/${_authMeta.wsId}/login?${params.toString()}`
         if (window.location.pathname !== `/workspaces/${_authMeta.wsId}/login`) window.location.href = loginUrl
       } else {
-        if (window.location.pathname !== '/unlock') window.location.href = '/unlock'
+        if (window.location.pathname !== '/') window.location.href = '/'
       }
       return Promise.reject(error)
     }
