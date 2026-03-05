@@ -91,7 +91,7 @@ custom_domains(id, gate_id, workspace_id, domain UNIQUE, dns_challenge_token,
                verified_at, created_at)
 ```
 
-Migrations: `000001`→extensions + `uuid_generate_v7()` (PK par défaut partout), `000002`→core tables,
+Migrations: `000001`→extensions (pgcrypto pour `gen_random_bytes`), `000002`→core tables,
 `000003`→gates, `000004`→credentials, `000005`→permissions, `000006`→custom_domains,
 `000007`→gate action configs, `000008`→gate tokens, `000009`→status rules, `000010`→gate TTL index
 
