@@ -77,7 +77,11 @@ export const router = createBrowserRouter([
     ],
   },
   // Public gate portal (no auth required)
-  { path: '/unlock', element: <GatePortalPage /> },                                       // custom domain entry
+  { path: '/', element: <GatePortalPage /> },                                              // custom domain root path
+  { path: '/unlock', element: <GatePortalPage /> },                                       // legacy custom domain entry
+  { path: '/unlock/:gateId', element: <GatePortalPage /> },                              // gate portal by ID (from SSO fallback)
+  { path: '/unlock/:gateId/pin', element: <PinPadPage /> },
+  { path: '/unlock/:gateId/password', element: <PasswordAccessPage /> },
   { path: '/workspaces/:wsId/gates/:gateId/public', element: <GatePortalPage /> },       // standard portal
   { path: '/workspaces/:wsId/gates/:gateId/public/pin', element: <PinPadPage /> },
   { path: '/workspaces/:wsId/gates/:gateId/public/password', element: <PasswordAccessPage /> },

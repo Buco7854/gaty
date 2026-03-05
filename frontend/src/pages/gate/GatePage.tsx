@@ -164,6 +164,7 @@ export default function GatePage() {
   const { data: domains } = useQuery<CustomDomain[]>({
     queryKey: ['domains', wsId, gateId],
     queryFn: () => domainsApi.list(wsId!, gateId!),
+    enabled: canManageGate,
   })
 
   const { data: schedules = [] } = useQuery<AccessSchedule[]>({

@@ -8,6 +8,7 @@ import { LangToggle } from '@/components/LangToggle'
 import { useTranslation } from 'react-i18next'
 import {
   AppShell,
+  Burger,
   NavLink,
   Stack,
   Group,
@@ -40,6 +41,7 @@ export default function AppLayout() {
   const logout = useAuthStore((s) => s.logout)
   const navigate = useNavigate()
   const [wsMenuOpen, setWsMenuOpen] = useState(false)
+  const [navOpened, setNavOpened] = useState(false)
 
   const isAdmin = isAuthenticated()
 
@@ -73,13 +75,40 @@ export default function AppLayout() {
   const initials = user?.email?.slice(0, 2).toUpperCase() ?? 'U'
 
   return (
-    <AppShell navbar={{ width: 240, breakpoint: 'sm' }} padding={0}>
+    <AppShell
+      navbar={{ width: 240, breakpoint: 'sm', collapsed: { mobile: !navOpened } }}
+      header={{ height: 56, collapsed: false }}
+      padding={0}
+    >
+      {/* Mobile header — burger + logo, hidden on desktop */}
+      <AppShell.Header hiddenFrom="sm" style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
+        <Group h="100%" px="md" justify="space-between">
+          <Group gap="xs">
+            <Burger opened={navOpened} onClick={() => setNavOpened((o) => !o)} size="sm" />
+            <UnstyledButton
+              onClick={() => isAdmin ? navigate('/workspaces') : localSession?.gateId && navigate(`/unlock/${localSession.gateId}`)}
+              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+            >
+              <Avatar size={24} color="indigo" radius="md">
+                <DoorOpen size={12} />
+              </Avatar>
+              <Text fw={700} size="md" ff="mono">GATY</Text>
+            </UnstyledButton>
+          </Group>
+          <Group gap={4}>
+            <LangToggle />
+            <ThemeToggle />
+          </Group>
+        </Group>
+      </AppShell.Header>
+
       <AppShell.Navbar>
         <Stack gap={0} h="100%">
-          {/* Logo */}
+          {/* Logo — desktop only */}
           <Group
             px="md"
             h={56}
+            visibleFrom="sm"
             style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}
           >
             <UnstyledButton
@@ -120,7 +149,7 @@ export default function AppLayout() {
                       <Menu.Item
                         key={w.id}
                         leftSection={<Avatar size={16} color="indigo" radius="xs">{w.name[0].toUpperCase()}</Avatar>}
-                        onClick={() => { navigate(`/workspaces/${w.id}`); setWsMenuOpen(false) }}
+                        onClick={() => { navigate(`/workspaces/${w.id}`); setWsMenuOpen(false); setNavOpened(false) }}
                       >
                         <Text size="sm" truncate>{w.name}</Text>
                       </Menu.Item>
@@ -128,7 +157,7 @@ export default function AppLayout() {
                     <Divider />
                     <Menu.Item
                       leftSection={<Home size={14} />}
-                      onClick={() => { navigate('/workspaces'); setWsMenuOpen(false) }}
+                      onClick={() => { navigate('/workspaces'); setWsMenuOpen(false); setNavOpened(false) }}
                     >
                       <Text size="sm">{t('workspaces.title')}</Text>
                     </Menu.Item>
@@ -142,6 +171,7 @@ export default function AppLayout() {
                   leftSection={<Home size={16} />}
                   px="md"
                   py="sm"
+                  onClick={() => setNavOpened(false)}
                 />
               )
             ) : (
@@ -167,6 +197,7 @@ export default function AppLayout() {
                   end
                   label={t('gates.title')}
                   leftSection={<LayoutGrid size={16} />}
+                  onClick={() => setNavOpened(false)}
                 />
                 {(isAdmin || localSession?.role === 'ADMIN' || localSession?.role === 'OWNER') && (
                   <>
@@ -175,12 +206,14 @@ export default function AppLayout() {
                       to={`/workspaces/${wsId}/members`}
                       label={t('members.title')}
                       leftSection={<Users size={16} />}
+                      onClick={() => setNavOpened(false)}
                     />
                     <NavLink
                       component={RouterNavLink as React.FC}
                       to={`/workspaces/${wsId}/settings`}
                       label={t('settings.title')}
                       leftSection={<Settings size={16} />}
+                      onClick={() => setNavOpened(false)}
                     />
                   </>
                 )}

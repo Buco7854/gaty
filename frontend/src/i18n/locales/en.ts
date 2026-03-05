@@ -25,6 +25,8 @@ const en = {
     details: 'Details',
     none: 'None',
     optional: 'optional',
+    grant: 'Grant',
+    revoke: 'Revoke',
   },
   theme: {
     light: 'Light',
@@ -127,6 +129,12 @@ const en = {
     changeRole: 'Change role',
     schedules: 'Schedules',
     schedulesHint: 'Restrict gate access to specific time windows for this member',
+    apiTokens: 'API Tokens',
+    noTokens: 'No API tokens yet',
+    tokenLabel: 'Label',
+    tokenLabelPlaceholder: 'e.g. Home automation',
+    tokenCreated: 'Token created',
+    tokenCreatedHint: 'Copy this token now — it will not be shown again.',
   },
   permissions: {
     title: 'Member permissions',

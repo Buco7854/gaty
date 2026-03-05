@@ -27,6 +27,8 @@ const fr: Translations = {
     details: 'Détails',
     none: 'Aucun',
     optional: 'optionnel',
+    grant: 'Accorder',
+    revoke: 'Révoquer',
   },
   theme: {
     light: 'Clair',
@@ -129,6 +131,12 @@ const fr: Translations = {
     changeRole: 'Changer le rôle',
     schedules: 'Plages horaires',
     schedulesHint: 'Restreindre l\'accès aux portails à des fenêtres horaires pour ce membre',
+    apiTokens: 'Tokens API',
+    noTokens: 'Aucun token API',
+    tokenLabel: 'Libellé',
+    tokenLabelPlaceholder: 'ex. Domotique',
+    tokenCreated: 'Token créé',
+    tokenCreatedHint: 'Copiez ce token maintenant — il ne sera plus affiché.',
   },
   permissions: {
     title: 'Permissions des membres',

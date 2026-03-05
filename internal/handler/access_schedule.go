@@ -199,6 +199,10 @@ func ruleMatches(r model.ScheduleRule, now time.Time) bool {
 		return matchesWeekdaysRange(r, now)
 	case "date_range":
 		return matchesDateRange(r, now)
+	case "day_of_month_range":
+		return matchesDayOfMonthRange(r, now)
+	case "month_range":
+		return matchesMonthRange(r, now)
 	}
 	return false
 }
@@ -256,6 +260,34 @@ func matchesDateRange(r model.ScheduleRule, now time.Time) bool {
 	return today >= r.StartDate && today <= r.EndDate
 }
 
+// matchesDayOfMonthRange: current day of month is within [start_dom, end_dom] (recurring, wraps).
+func matchesDayOfMonthRange(r model.ScheduleRule, now time.Time) bool {
+	if r.StartDOM == nil || r.EndDOM == nil {
+		return false
+	}
+	dom := now.Day()
+	start, end := *r.StartDOM, *r.EndDOM
+	if start <= end {
+		return dom >= start && dom <= end
+	}
+	// Wraps around month boundary (e.g., 28–5 covers end of month + start of next).
+	return dom >= start || dom <= end
+}
+
+// matchesMonthRange: current month is within [start_month, end_month] (recurring, wraps).
+func matchesMonthRange(r model.ScheduleRule, now time.Time) bool {
+	if r.StartMonth == nil || r.EndMonth == nil {
+		return false
+	}
+	month := int(now.Month())
+	start, end := *r.StartMonth, *r.EndMonth
+	if start <= end {
+		return month >= start && month <= end
+	}
+	// Wraps around year boundary (e.g., 11–2 covers Nov, Dec, Jan, Feb).
+	return month >= start || month <= end
+}
+
 func parseHHMM(s string) (int, int, bool) {
 	parts := strings.SplitN(s, ":", 2)
 	if len(parts) != 2 {
@@ -302,6 +334,20 @@ func validateScheduleRules(rules []model.ScheduleRule) error {
 			}
 			if r.StartDate > r.EndDate {
 				return fmt.Errorf("rule[%d]: start_date must be <= end_date", i)
+			}
+		case "day_of_month_range":
+			if r.StartDOM == nil || r.EndDOM == nil {
+				return fmt.Errorf("rule[%d]: day_of_month_range requires start_dom and end_dom", i)
+			}
+			if *r.StartDOM < 1 || *r.StartDOM > 31 || *r.EndDOM < 1 || *r.EndDOM > 31 {
+				return fmt.Errorf("rule[%d]: start_dom and end_dom must be 1–31", i)
+			}
+		case "month_range":
+			if r.StartMonth == nil || r.EndMonth == nil {
+				return fmt.Errorf("rule[%d]: month_range requires start_month and end_month", i)
+			}
+			if *r.StartMonth < 1 || *r.StartMonth > 12 || *r.EndMonth < 1 || *r.EndMonth > 12 {
+				return fmt.Errorf("rule[%d]: start_month and end_month must be 1–12", i)
 			}
 		default:
 			return fmt.Errorf("rule[%d]: unknown rule type %q", i, r.Type)

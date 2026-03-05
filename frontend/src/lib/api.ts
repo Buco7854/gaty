@@ -2,6 +2,7 @@ import axios from 'axios'
 import type { RefreshResponse } from '@/types'
 import type { GateSession } from '@/api/public'
 import { findLocalSession } from '@/utils/session'
+import { useAuthStore } from '@/store/auth'
 
 declare module 'axios' {
   interface InternalAxiosRequestConfig {
@@ -118,6 +119,8 @@ api.interceptors.response.use(
       localStorage.setItem('access_token', tokens.access_token)
       localStorage.setItem('refresh_token', tokens.refresh_token)
       api.defaults.headers.common.Authorization = `Bearer ${tokens.access_token}`
+      // Sync Zustand store so hooks using accessToken (e.g. SSE) reconnect with the fresh token.
+      useAuthStore.getState().updateTokens(tokens.access_token, tokens.refresh_token)
       drainQueue(null, tokens.access_token)
       original.headers.Authorization = `Bearer ${tokens.access_token}`
       return api(original)

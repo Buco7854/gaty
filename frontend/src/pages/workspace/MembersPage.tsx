@@ -1,16 +1,17 @@
 import { useState } from 'react'
 import { useParams } from 'react-router'
 import { useQuery, useMutation, useQueryClient, useQueries } from '@tanstack/react-query'
-import { membersApi, gatesApi, policiesApi, schedulesApi } from '@/api'
+import { membersApi, gatesApi, policiesApi, schedulesApi, credentialsApi } from '@/api'
+import type { MemberCredential, CreatedToken } from '@/api'
 import type { WorkspaceMembership, Gate, MembershipPolicy, AccessSchedule } from '@/types'
 import { useTranslation } from 'react-i18next'
 import {
   Container, Title, Text, Group, Button, Modal, Stack, Alert, Tabs,
   TextInput, PasswordInput, Select, Badge, Avatar, ActionIcon, Center, Skeleton,
-  Table, Checkbox, Paper, SegmentedControl, Drawer,
+  Table, Checkbox, Paper, SegmentedControl, Drawer, Code, CopyButton, Tooltip,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
-import { UserPlus, Trash2, Users, AlertCircle, Settings2, X, Pencil } from 'lucide-react'
+import { UserPlus, Trash2, Users, AlertCircle, Settings2, X, Pencil, Copy, Check, KeyRound } from 'lucide-react'
 
 const ROLE_COLOR: Record<string, string> = {
   OWNER: 'yellow',
@@ -26,13 +27,6 @@ const PERMISSIONS = [
 ] as const
 
 type PermCode = typeof PERMISSIONS[number]['code']
-
-const PRESETS: Record<string, PermCode[]> = {
-  none: [],
-  read: ['gate:read_status'],
-  operator: ['gate:read_status', 'gate:trigger_open', 'gate:trigger_close'],
-  full: ['gate:read_status', 'gate:trigger_open', 'gate:trigger_close', 'gate:manage'],
-}
 
 const AUTH_METHODS = [
   { key: 'password', labelKey: 'settings.passwordAuth' },
@@ -115,6 +109,118 @@ function MemberSchedulesTab({
   )
 }
 
+// ---------- Member tokens tab ----------
+
+function MemberTokensTab({ wsId, memberId, opened }: { wsId: string; memberId: string; opened: boolean }) {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
+  const [label, setLabel] = useState('')
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [newToken, setNewToken] = useState<CreatedToken | null>(null)
+
+  const { data: credentials = [], isLoading } = useQuery<MemberCredential[]>({
+    queryKey: ['member-credentials', wsId, memberId],
+    queryFn: () => credentialsApi.adminList(wsId, memberId),
+    enabled: opened,
+    select: (data) => data.filter((c) => c.type === 'API_TOKEN'),
+  })
+
+  const create = useMutation({
+    mutationFn: () => credentialsApi.adminCreateToken(wsId, memberId, { label }),
+    onSuccess: (created) => {
+      setNewToken(created)
+      setLabel('')
+      setCreateError(null)
+      qc.invalidateQueries({ queryKey: ['member-credentials', wsId, memberId] })
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { title?: string } } })?.response?.data?.title
+      setCreateError(msg ?? t('common.error'))
+    },
+  })
+
+  const del = useMutation({
+    mutationFn: (credId: string) => credentialsApi.adminDelete(wsId, memberId, credId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['member-credentials', wsId, memberId] }),
+  })
+
+  return (
+    <Stack gap="md">
+      {newToken && (
+        <Alert
+          icon={<KeyRound size={16} />}
+          color="green"
+          variant="light"
+          withCloseButton
+          onClose={() => setNewToken(null)}
+          title={t('members.tokenCreated')}
+        >
+          <Text size="xs" mb={4}>{t('members.tokenCreatedHint')}</Text>
+          <Group gap={4} align="center">
+            <Code style={{ flex: 1, wordBreak: 'break-all', fontSize: 11 }}>{newToken.token}</Code>
+            <CopyButton value={newToken.token}>
+              {({ copied, copy }) => (
+                <Tooltip label={copied ? t('common.copied') : t('common.copy')}>
+                  <ActionIcon size="sm" variant="subtle" onClick={copy}>
+                    {copied ? <Check size={12} /> : <Copy size={12} />}
+                  </ActionIcon>
+                </Tooltip>
+              )}
+            </CopyButton>
+          </Group>
+        </Alert>
+      )}
+
+      <form onSubmit={(e) => { e.preventDefault(); create.mutate() }}>
+        <Group gap="xs" align="flex-end">
+          <TextInput
+            label={t('members.tokenLabel')}
+            placeholder={t('members.tokenLabelPlaceholder')}
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            size="xs"
+            style={{ flex: 1 }}
+          />
+          <Button type="submit" size="xs" loading={create.isPending} disabled={!label.trim()}>
+            {t('common.add')}
+          </Button>
+        </Group>
+        {createError && <Text size="xs" c="red" mt={4}>{createError}</Text>}
+      </form>
+
+      {isLoading ? (
+        <Skeleton h={40} />
+      ) : credentials.length === 0 ? (
+        <Text size="sm" c="dimmed">{t('members.noTokens')}</Text>
+      ) : (
+        <Stack gap={4}>
+          {credentials.map((cred) => (
+            <Group key={cred.id} justify="space-between" wrap="nowrap" p={4}
+              style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 6 }}>
+              <Stack gap={0} style={{ minWidth: 0 }}>
+                <Text size="xs" fw={500} truncate>{cred.label ?? t('pins.unlabeled')}</Text>
+                <Text size="xs" c="dimmed">
+                  {new Date(cred.created_at).toLocaleDateString()}
+                  {cred.expires_at && ` · ${t('pins.expires')} ${new Date(cred.expires_at).toLocaleDateString()}`}
+                </Text>
+              </Stack>
+              <ActionIcon
+                size="sm"
+                color="red"
+                variant="subtle"
+                loading={del.isPending}
+                onClick={() => del.mutate(cred.id)}
+              >
+                <Trash2 size={13} />
+              </ActionIcon>
+            </Group>
+          ))}
+        </Stack>
+      )}
+    </Stack>
+  )
+}
+
 // ---------- Member settings Drawer ----------
 
 function MemberSettingsDrawer({
@@ -178,17 +284,6 @@ function MemberSettingsDrawer({
     invalidatePolicies()
   }
 
-  async function applyPreset(presetKey: keyof typeof PRESETS) {
-    const target = PRESETS[presetKey]
-    await Promise.all(
-      gates.map(async (gate) => {
-        await Promise.all(PERMISSIONS.filter(({ code }) => hasPermission(gate.id, code)).map(({ code }) => policiesApi.revoke(wsId, gate.id, member.id, code)))
-        await Promise.all(target.map((code) => policiesApi.grant(wsId, gate.id, member.id, code)))
-      })
-    )
-    invalidatePolicies()
-  }
-
   const memberName = member.display_name ?? member.local_username ?? member.id.slice(0, 8)
 
   return (
@@ -210,6 +305,7 @@ function MemberSettingsDrawer({
           <Tabs.Tab value="permissions">{t('members.gatePermissions')}</Tabs.Tab>
           <Tabs.Tab value="schedules">{t('members.schedules')}</Tabs.Tab>
           <Tabs.Tab value="auth">{t('members.authOverrides')}</Tabs.Tab>
+          <Tabs.Tab value="tokens">{t('members.apiTokens')}</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="permissions" p="md">
@@ -217,13 +313,6 @@ function MemberSettingsDrawer({
             <Text size="sm" c="dimmed">{t('gates.noGates')}</Text>
           ) : (
             <Stack gap="md">
-              <Group gap="xs">
-                <Text size="xs" c="dimmed" fw={500} mr={2}>Preset:</Text>
-                <Button size="compact-xs" variant="light" color="gray" onClick={() => applyPreset('none')}>{t('members.bulkNone')}</Button>
-                <Button size="compact-xs" variant="light" onClick={() => applyPreset('read')}>{t('members.bulkRead')}</Button>
-                <Button size="compact-xs" variant="light" color="teal" onClick={() => applyPreset('operator')}>{t('members.bulkOperator')}</Button>
-                <Button size="compact-xs" variant="light" color="indigo" onClick={() => applyPreset('full')}>{t('members.bulkFull')}</Button>
-              </Group>
               <Table withColumnBorders withRowBorders={false} horizontalSpacing="xs" verticalSpacing={4} fz="xs">
                 <Table.Thead>
                   <Table.Tr>
@@ -279,6 +368,10 @@ function MemberSettingsDrawer({
               </Stack>
             ))}
           </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="tokens" p="md">
+          <MemberTokensTab wsId={wsId} memberId={member.id} opened={opened} />
         </Tabs.Panel>
       </Tabs>
     </Drawer>
@@ -439,21 +532,21 @@ export default function MembersPage() {
     })
   }
 
-  async function bulkApplyPreset(presetKey: keyof typeof PRESETS) {
+  async function bulkTogglePermission(permCode: PermCode, grant: boolean) {
     if (selectedMembers.size === 0 || !wsId) return
     setBulkLoading(true)
-    const target = PRESETS[presetKey]
     try {
       await Promise.all(
-        Array.from(selectedMembers).map(async (memberId) => {
-          await Promise.all(
-            gates.map(async (gate) => {
-              await Promise.all(PERMISSIONS.map(({ code }) => policiesApi.revoke(wsId, gate.id, memberId, code).catch(() => {})))
-              await Promise.all(target.map((code) => policiesApi.grant(wsId, gate.id, memberId, code).catch(() => {})))
-            })
+        Array.from(selectedMembers).flatMap((memberId) =>
+          gates.map((gate) =>
+            grant
+              ? policiesApi.grant(wsId, gate.id, memberId, permCode).catch(() => {})
+              : policiesApi.revoke(wsId, gate.id, memberId, permCode).catch(() => {})
           )
-          qc.invalidateQueries({ queryKey: ['member-policies', wsId, memberId] })
-        })
+        )
+      )
+      Array.from(selectedMembers).forEach((memberId) =>
+        qc.invalidateQueries({ queryKey: ['member-policies', wsId, memberId] })
       )
     } finally {
       setBulkLoading(false)
@@ -681,12 +774,17 @@ export default function MembersPage() {
             </Group>
 
             {bulkMode === 'permissions' ? (
-              <Group gap="xs" wrap="wrap">
-                <Button size="compact-xs" variant="light" color="gray" loading={bulkLoading} onClick={() => bulkApplyPreset('none')}>{t('members.bulkNone')}</Button>
-                <Button size="compact-xs" variant="light" loading={bulkLoading} onClick={() => bulkApplyPreset('read')}>{t('members.bulkRead')}</Button>
-                <Button size="compact-xs" variant="light" color="teal" loading={bulkLoading} onClick={() => bulkApplyPreset('operator')}>{t('members.bulkOperator')}</Button>
-                <Button size="compact-xs" variant="light" color="indigo" loading={bulkLoading} onClick={() => bulkApplyPreset('full')}>{t('members.bulkFull')}</Button>
-              </Group>
+              <Stack gap={4}>
+                {PERMISSIONS.map(({ code, labelKey }) => (
+                  <Group key={code} justify="space-between" align="center" wrap="nowrap">
+                    <Text size="xs" fw={500}>{t(labelKey as Parameters<typeof t>[0])}</Text>
+                    <Group gap={4} wrap="nowrap">
+                      <Button size="compact-xs" variant="light" color="green" loading={bulkLoading} onClick={() => bulkTogglePermission(code, true)}>{t('common.grant')}</Button>
+                      <Button size="compact-xs" variant="light" color="red" loading={bulkLoading} onClick={() => bulkTogglePermission(code, false)}>{t('common.revoke')}</Button>
+                    </Group>
+                  </Group>
+                ))}
+              </Stack>
             ) : (
               <Stack gap={6}>
                 {AUTH_METHODS.map(({ key, labelKey }) => (

@@ -11,6 +11,7 @@ import { Center, Stack, Group, Text, Title, Loader, Button, Anchor } from '@mant
 import { XCircle, Hash, KeyRound, LayoutGrid, Users } from 'lucide-react'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
+import { useAuthStore } from '@/store/auth'
 import { useState } from 'react'
 
 function sessionKey(gateId: string) {
@@ -22,6 +23,7 @@ export default function GatePortalPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const { t } = useTranslation()
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
 
   const [resolving, setResolving] = useState(true)
   const [resolved, setResolved] = useState<DomainResolveResult | null>(null)
@@ -41,7 +43,15 @@ export default function GatePortalPage() {
     const domain = window.location.hostname
     publicApi.resolve(domain)
       .then((data) => setResolved(data))
-      .catch(() => setResolveError(true))
+      .catch(() => {
+        // Not a custom domain — redirect based on auth state.
+        if (isAuthenticated()) {
+          navigate('/workspaces', { replace: true })
+        } else {
+          navigate('/login', { replace: true })
+        }
+        setResolveError(true)
+      })
       .finally(() => setResolving(false))
   }, [gateIdParam])
 
