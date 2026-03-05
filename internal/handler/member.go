@@ -72,7 +72,7 @@ type CreateMemberInput struct {
 		LocalUsername string              `json:"local_username" minLength:"1" maxLength:"50"`
 		DisplayName   *string             `json:"display_name,omitempty" maxLength:"100"`
 		Password      string              `json:"password" minLength:"8"`
-		Role          model.WorkspaceRole `json:"role"`
+		Role          model.WorkspaceRole `json:"role,omitempty"`
 	}
 }
 
@@ -106,7 +106,7 @@ type InviteUserInput struct {
 	Body        struct {
 		UserID      uuid.UUID           `json:"user_id"`
 		DisplayName *string             `json:"display_name,omitempty" maxLength:"100"`
-		Role        model.WorkspaceRole `json:"role"`
+		Role        model.WorkspaceRole `json:"role,omitempty"`
 	}
 }
 

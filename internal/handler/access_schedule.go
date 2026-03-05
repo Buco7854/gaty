@@ -40,7 +40,7 @@ type CreateScheduleInput struct {
 	Body        struct {
 		Name        string                `json:"name" minLength:"1" maxLength:"100"`
 		Description *string               `json:"description,omitempty" maxLength:"255"`
-		Rules       []model.ScheduleRule  `json:"rules"`
+		Rules       []model.ScheduleRule  `json:"rules,omitempty"`
 	}
 }
 
