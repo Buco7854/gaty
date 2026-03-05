@@ -1,5 +1,5 @@
 import { api } from '@/lib/api'
-import type { MembershipPolicy } from '@/types'
+import type { AccessSchedule, MembershipPolicy } from '@/types'
 
 function normalizeList(data: unknown): MembershipPolicy[] {
   if (Array.isArray(data)) return data as MembershipPolicy[]
@@ -21,4 +21,13 @@ export const policiesApi = {
 
   listMine: (wsId: string) =>
     api.get(`/workspaces/${wsId}/policies/me`).then((r) => normalizeList(r.data)),
+
+  getMemberGateSchedule: (wsId: string, gateId: string, membershipId: string) =>
+    api.get<AccessSchedule>(`/workspaces/${wsId}/gates/${gateId}/policies/${membershipId}/schedule`).then((r) => r.data),
+
+  setMemberGateSchedule: (wsId: string, gateId: string, membershipId: string, scheduleId: string) =>
+    api.put(`/workspaces/${wsId}/gates/${gateId}/policies/${membershipId}/schedule`, { schedule_id: scheduleId }),
+
+  removeMemberGateSchedule: (wsId: string, gateId: string, membershipId: string) =>
+    api.delete(`/workspaces/${wsId}/gates/${gateId}/policies/${membershipId}/schedule`),
 }

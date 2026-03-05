@@ -1,9 +1,9 @@
 import { useState, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { gatesApi, pinsApi, domainsApi, policiesApi } from '@/api'
+import { gatesApi, pinsApi, domainsApi, policiesApi, schedulesApi } from '@/api'
 import type { ActionConfig, PinMetadata } from '@/api'
-import type { Gate, GatePin, CustomDomain, WorkspaceWithRole } from '@/types'
+import type { Gate, GatePin, CustomDomain, WorkspaceWithRole, AccessSchedule } from '@/types'
 import { useAuthStore } from '@/store/auth'
 import { findLocalSession } from '@/utils/session'
 import { useTranslation } from 'react-i18next'
@@ -11,12 +11,12 @@ import { notifications } from '@mantine/notifications'
 import {
   Container, Title, Text, Group, Button, Stack, Paper, Badge, ActionIcon,
   TextInput, PasswordInput, Select, Tooltip, Modal, Code, Alert,
-  NumberInput, Anchor, Checkbox,
+  NumberInput, Checkbox,
 } from '@mantine/core'
 import { useDisclosure, useClipboard } from '@mantine/hooks'
 import {
   ArrowLeft, Zap, Hash, Globe, Plus, Trash2, CheckCircle2, XCircle,
-  Clock, Copy, Check, Settings2, Pencil, Info,
+  Clock, Copy, Check, Settings2, Pencil, Info, CalendarClock,
 } from 'lucide-react'
 
 function ActionConfigForm({
@@ -117,6 +117,7 @@ export default function GatePage() {
   const [pinCodeType, setPinCodeType] = useState<'pin' | 'password'>('pin')
   const [pinModalMode, setPinModalMode] = useState<'create' | 'edit'>('create')
   const [editingPinId, setEditingPinId] = useState<string | null>(null)
+  const [pinScheduleId, setPinScheduleId] = useState<string>('')
 
   // Domain form
   const [domainValue, setDomainValue] = useState('')
@@ -165,6 +166,12 @@ export default function GatePage() {
     queryFn: () => domainsApi.list(wsId!, gateId!),
   })
 
+  const { data: schedules = [] } = useQuery<AccessSchedule[]>({
+    queryKey: ['schedules', wsId],
+    queryFn: () => schedulesApi.list(wsId!),
+    enabled: canManageGate,
+  })
+
   const trigger = useMutation({
     mutationFn: () => gatesApi.trigger(wsId!, gateId!),
     onSuccess: () => notifications.show({ color: 'green', message: t('pinpad.gateOpened'), autoClose: 3000 }),
@@ -185,7 +192,7 @@ export default function GatePage() {
   })
 
   const createPin = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const metadata: PinMetadata = { permissions: pinPermissions }
       if (pinExpiresAt) metadata.expires_at = new Date(pinExpiresAt).toISOString()
       const dur = resolvePinSessionDurationSeconds()
@@ -196,6 +203,7 @@ export default function GatePage() {
         label: pinLabel,
         pin: pinValue,
         code_type: pinCodeType,
+        schedule_id: pinScheduleId || undefined,
         metadata,
       })
     },
@@ -209,7 +217,7 @@ export default function GatePage() {
   function resetPinForm() {
     setPinLabel(''); setPinValue(''); setPinExpiresAt(''); setPinSessionDuration('')
     setPinCustomValue(1); setPinCustomUnit('days'); setPinMaxUses(''); setPinPermissions(['gate:trigger_open'])
-    setPinCodeType('pin'); setPinModalMode('create'); setEditingPinId(null)
+    setPinCodeType('pin'); setPinModalMode('create'); setEditingPinId(null); setPinScheduleId('')
   }
 
   function openEditModal(pin: GatePin) {
@@ -226,21 +234,28 @@ export default function GatePage() {
     const sd = meta.session_duration
     setPinSessionDuration(sd === undefined ? '' : sd === 0 ? '0' : String(sd))
     setPinMaxUses(meta.max_uses ?? '')
+    setPinScheduleId(pin.schedule_id ?? '')
     openPinModal()
   }
 
   const updatePin = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const metadata: PinMetadata = { permissions: pinPermissions, code_type: pinCodeType }
       metadata.expires_at = pinExpiresAt ? new Date(pinExpiresAt).toISOString() : null
       const dur = resolvePinSessionDurationSeconds()
       metadata.session_duration = dur !== undefined ? dur : null
       const maxUses = typeof pinMaxUses === 'number' ? pinMaxUses : parseInt(String(pinMaxUses), 10)
       metadata.max_uses = maxUses > 0 ? maxUses : null
-      return pinsApi.update(wsId!, gateId!, editingPinId!, {
+      await pinsApi.update(wsId!, gateId!, editingPinId!, {
         label: pinLabel,
         metadata,
       })
+      // Schedule is managed separately via dedicated endpoints
+      if (pinScheduleId) {
+        await pinsApi.setSchedule(wsId!, gateId!, editingPinId!, pinScheduleId)
+      } else {
+        await pinsApi.clearSchedule(wsId!, gateId!, editingPinId!).catch(() => {})
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pins', wsId, gateId] })
@@ -284,6 +299,17 @@ export default function GatePage() {
   }
 
   const statusColor = gate?.status === 'online' ? 'green' : gate?.status === 'offline' ? 'red' : 'gray'
+
+  const scheduleSelectData = [
+    { value: '', label: t('common.none') },
+    ...schedules.map((s) => ({ value: s.id, label: s.name })),
+  ]
+
+  const scheduleById = useMemo(() => {
+    const map: Record<string, AccessSchedule> = {}
+    for (const s of schedules) map[s.id] = s
+    return map
+  }, [schedules])
 
   return (
     <Container size="sm" py="xl">
@@ -375,6 +401,7 @@ export default function GatePage() {
           <Stack gap={2}>
             {pins?.map((pin) => {
               const codeType = (pin.metadata.code_type as 'pin' | 'password') ?? 'pin'
+              const schedule = pin.schedule_id ? scheduleById[pin.schedule_id] : null
               return (
                 <Group key={pin.id} justify="space-between" py={4}>
                   <Group gap="sm">
@@ -390,6 +417,13 @@ export default function GatePage() {
                           {new Date((pin.metadata as { expires_at: string }).expires_at).toLocaleDateString()}
                         </Text>
                       </Group>
+                    )}
+                    {schedule && (
+                      <Tooltip label={schedule.name}>
+                        <Badge size="xs" variant="light" color="orange" leftSection={<CalendarClock size={10} />}>
+                          {schedule.name}
+                        </Badge>
+                      </Tooltip>
                     )}
                   </Group>
                   {canManageGate && (
@@ -507,6 +541,16 @@ export default function GatePage() {
                 value={pinExpiresAt}
                 onChange={(e) => setPinExpiresAt(e.target.value)}
               />
+              {schedules.length > 0 && (
+                <Select
+                  label={t('pins.schedule')}
+                  description={t('pins.scheduleDesc')}
+                  value={pinScheduleId}
+                  onChange={(v) => setPinScheduleId(v ?? '')}
+                  data={scheduleSelectData}
+                  clearable
+                />
+              )}
               <Group justify="flex-end">
                 <Button variant="default" onClick={() => { closePinModal(); resetPinForm() }}>{t('common.cancel')}</Button>
                 <Button type="submit" loading={createPin.isPending || updatePin.isPending}>

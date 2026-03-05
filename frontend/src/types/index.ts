@@ -53,10 +53,31 @@ export interface WorkspaceMembership {
   created_at: string
 }
 
+export interface ScheduleRule {
+  type: 'time_range' | 'weekdays_range' | 'date_range'
+  days?: number[]
+  start_time?: string
+  end_time?: string
+  start_day?: number
+  end_day?: number
+  start_date?: string
+  end_date?: string
+}
+
+export interface AccessSchedule {
+  id: string
+  workspace_id: string
+  name: string
+  description?: string
+  rules: ScheduleRule[]
+  created_at: string
+}
+
 export interface GatePin {
   id: string
   gate_id: string
   label: string
+  schedule_id?: string
   metadata: Record<string, unknown>
   created_at: string
 }
