@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Buco7854/gaty/internal/repository"
+	repopg "github.com/Buco7854/gaty/internal/repository/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -26,7 +27,7 @@ const (
 // If the host matches a verified custom domain in the database, it injects the gate's ID
 // and type GATE into the request context. Otherwise it falls through unchanged.
 func TenantResolver(pool *pgxpool.Pool) func(http.Handler) http.Handler {
-	domainRepo := repository.NewCustomDomainRepository(pool)
+	domainRepo := repopg.NewCustomDomainRepository(pool)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

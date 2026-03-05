@@ -16,7 +16,7 @@ import (
 	"github.com/Buco7854/gaty/internal/handler"
 	"github.com/Buco7854/gaty/internal/middleware"
 	internalmqtt "github.com/Buco7854/gaty/internal/mqtt"
-	"github.com/Buco7854/gaty/internal/repository"
+	repopg "github.com/Buco7854/gaty/internal/repository/postgres"
 	"github.com/Buco7854/gaty/internal/service"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
@@ -75,17 +75,17 @@ func main() {
 	}
 
 	// Repositories
-	userRepo := repository.NewUserRepository(pool)
-	credRepo := repository.NewCredentialRepository(pool)
-	wsRepo := repository.NewWorkspaceRepository(pool)
-	membershipRepo := repository.NewWorkspaceMembershipRepository(pool)
-	memberCredRepo := repository.NewMembershipCredentialRepository(pool)
-	gateRepo := repository.NewGateRepository(pool)
-	gatePinRepo := repository.NewGatePinRepository(pool)
-	policyRepo := repository.NewPolicyRepository(pool)
-	scheduleRepo := repository.NewAccessScheduleRepository(pool)
-	auditRepo := repository.NewAuditRepository(pool)
-	domainRepo := repository.NewCustomDomainRepository(pool)
+	userRepo := repopg.NewUserRepository(pool)
+	credRepo := repopg.NewCredentialRepository(pool)
+	wsRepo := repopg.NewWorkspaceRepository(pool)
+	membershipRepo := repopg.NewWorkspaceMembershipRepository(pool)
+	memberCredRepo := repopg.NewMembershipCredentialRepository(pool)
+	gateRepo := repopg.NewGateRepository(pool)
+	gatePinRepo := repopg.NewGatePinRepository(pool)
+	policyRepo := repopg.NewPolicyRepository(pool)
+	scheduleRepo := repopg.NewAccessScheduleRepository(pool)
+	auditRepo := repopg.NewAuditRepository(pool)
+	domainRepo := repopg.NewCustomDomainRepository(pool)
 
 	// Subscribe to gate status updates from MQTT (bridge to Redis Pub/Sub for SSE)
 	if mqttClient != nil {

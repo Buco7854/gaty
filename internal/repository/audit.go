@@ -4,17 +4,9 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type pgAuditRepository struct {
-	pool *pgxpool.Pool
-}
-
-func NewAuditRepository(pool *pgxpool.Pool) AuditRepository {
-	return &pgAuditRepository{pool: pool}
-}
-
+// AuditEntry holds the data for a single audit log entry.
 type AuditEntry struct {
 	WorkspaceID uuid.UUID
 	GateID      *uuid.UUID
@@ -23,7 +15,7 @@ type AuditEntry struct {
 	IP          string
 }
 
-// Insert is a no-op until the audit_logs table is re-added in a future migration.
-func (r *pgAuditRepository) Insert(_ context.Context, _ AuditEntry) error {
-	return nil
+// AuditRepository is the data-access contract for audit log entries.
+type AuditRepository interface {
+	Insert(ctx context.Context, entry AuditEntry) error
 }
