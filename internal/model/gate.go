@@ -8,7 +8,14 @@ import (
 	"github.com/google/uuid"
 )
 
-const offlineThreshold = 5 * time.Minute
+// OfflineThreshold is the duration after which a gate that has stopped
+// reporting is shown as "offline" in API responses (computed by EffectiveStatus).
+//
+// The TTL worker (service.DefaultGateTTL = 30s) first marks the gate
+// "unresponsive" in the database. Once past OfflineThreshold, the displayed
+// status transitions to "offline" regardless of the stored value — indicating
+// a longer-term connectivity loss rather than a momentary hiccup.
+const OfflineThreshold = 5 * time.Minute
 
 // GateIntegrationType is kept for backward compatibility with existing records.
 type GateIntegrationType string
@@ -181,13 +188,13 @@ type Gate struct {
 
 // EffectiveStatus computes the live status based on last_seen_at:
 //   - never seen → unknown
-//   - not seen in > 5 min → offline
+//   - not seen in > OfflineThreshold (5 min) → offline
 //   - otherwise the stored status (from last MQTT message or poll)
 func (g *Gate) EffectiveStatus() GateStatus {
 	if g.LastSeenAt == nil {
 		return GateStatusUnknown
 	}
-	if time.Since(*g.LastSeenAt) > offlineThreshold {
+	if time.Since(*g.LastSeenAt) > OfflineThreshold {
 		return GateStatusOffline
 	}
 	return g.Status

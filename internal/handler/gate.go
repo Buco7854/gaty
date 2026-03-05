@@ -252,40 +252,29 @@ func (h *GateHandler) Trigger(ctx context.Context, input *TriggerInput) (*struct
 		return nil, huma.Error500InternalServerError("failed to get gate")
 	}
 
-	var driverErr, execErr error
+	var driver integration.Driver
+	var driverErr error
 	if action == "close" {
-		var driver integration.Driver
 		driver, driverErr = integration.NewCloseDriver(gate, h.mqtt)
-		if driverErr != nil {
-			slog.Warn("gate: failed to build close driver", "gate_id", gate.ID, "error", driverErr)
-		} else {
-			execErr = driver.Execute(ctx, gate)
-		}
 	} else {
-		var driver integration.Driver
 		driver, driverErr = integration.NewOpenDriver(gate, h.mqtt)
-		if driverErr != nil {
-			slog.Warn("gate: failed to build open driver", "gate_id", gate.ID, "error", driverErr)
-		} else {
-			execErr = driver.Execute(ctx, gate)
-		}
 	}
-	if execErr != nil {
+	if driverErr != nil {
+		slog.Warn("gate: failed to build driver", "gate_id", gate.ID, "action", action, "error", driverErr)
+	} else if execErr := driver.Execute(ctx, gate); execErr != nil {
 		slog.Warn("gate: driver execution failed", "gate_id", gate.ID, "action", action, "error", execErr)
 	}
 
-	if h.audit != nil {
-		gateID := gate.ID
-		auditAction := "gate:trigger_open"
-		if action == "close" {
-			auditAction = "gate:trigger_close"
-		}
-		_ = h.audit.Insert(ctx, repository.AuditEntry{
-			WorkspaceID: input.WorkspaceID,
-			GateID:      &gateID,
-			Action:      auditAction,
-		})
+	auditAction := "gate:trigger_open"
+	if action == "close" {
+		auditAction = "gate:trigger_close"
 	}
+	gateID := gate.ID
+	_ = h.audit.Insert(ctx, repository.AuditEntry{
+		WorkspaceID: input.WorkspaceID,
+		GateID:      &gateID,
+		Action:      auditAction,
+	})
 
 	return nil, nil
 }

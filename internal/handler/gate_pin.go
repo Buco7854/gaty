@@ -217,10 +217,13 @@ type pinMetadata struct {
 	// Defaults to ["gate:trigger_open"] if empty. "gate:manage" is always excluded.
 	Permissions []string `json:"permissions"`
 
-	ExpiresAt         *time.Time `json:"expires_at"`
-	AllowedDays       []int      `json:"allowed_days"`        // 0=Sun … 6=Sat
-	AllowedHoursStart *int       `json:"allowed_hours_start"` // 0–23 inclusive
-	AllowedHoursEnd   *int       `json:"allowed_hours_end"`   // 0–23 exclusive
+	ExpiresAt *time.Time `json:"expires_at"`
+
+	// Deprecated: use a named AccessSchedule attached via ScheduleID instead.
+	// These fields predate the schedule system and will be removed in a future release.
+	AllowedDays       []int `json:"allowed_days"`        // 0=Sun … 6=Sat
+	AllowedHoursStart *int  `json:"allowed_hours_start"` // 0–23 inclusive
+	AllowedHoursEnd   *int  `json:"allowed_hours_end"`   // 0–23 exclusive
 }
 
 func parsePinMetadata(raw map[string]any) pinMetadata {
@@ -477,13 +480,19 @@ func (h *GatePinHandler) PublicTrigger(ctx context.Context, input *PublicTrigger
 	}
 
 	gate, err := h.gates.GetByIDPublic(ctx, gateID)
-	if err != nil {
-		return nil, nil
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("gate not found")
 	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get gate")
+	}
+
 	if action == "close" {
 		driver, driverErr := integration.NewCloseDriver(gate, h.mqtt)
-		if driverErr == nil {
-			_ = driver.Execute(ctx, gate)
+		if driverErr != nil {
+			slog.Warn("gate trigger: failed to build close driver", "gate_id", gateID, "error", driverErr)
+		} else if execErr := driver.Execute(ctx, gate); execErr != nil {
+			slog.Warn("gate trigger: close driver failed", "gate_id", gateID, "error", execErr)
 		}
 	} else {
 		h.triggerGate(ctx, gateID)

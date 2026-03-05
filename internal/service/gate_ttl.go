@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -13,9 +11,9 @@ import (
 )
 
 const (
-	// DefaultGateTTL is the default inactivity threshold after which a gate is
-	// marked "unresponsive". Both MQTT and HTTP-mode gates reset this timer on
-	// every status message they send.
+	// DefaultGateTTL is the inactivity threshold after which the TTL worker marks a gate
+	// "unresponsive" in the database. Must be less than model.OfflineThreshold (5 min),
+	// which is when the API layer begins returning "offline" based on last_seen_at.
 	DefaultGateTTL = 30 * time.Second
 
 	// ttlCheckInterval is how often the worker scans for expired gates.
@@ -35,14 +33,6 @@ type GateTTLWorker struct {
 	gates repository.GateRepository
 	redis *redis.Client
 	ttl   time.Duration
-}
-
-// gateUnresponsiveEvent is the Redis Pub/Sub payload pushed when a gate's TTL
-// expires. It mirrors internalmqtt.GateEvent to avoid a circular import.
-type gateUnresponsiveEvent struct {
-	GateID      string `json:"gate_id"`
-	WorkspaceID string `json:"workspace_id"`
-	Status      string `json:"status"`
 }
 
 // NewGateTTLWorker creates a worker with the given inactivity threshold.
@@ -84,15 +74,10 @@ func (w *GateTTLWorker) markExpired(ctx context.Context) {
 	slog.Info("gate TTL: gates marked unresponsive", "count", len(affected))
 
 	for _, g := range affected {
-		payload, _ := json.Marshal(gateUnresponsiveEvent{
+		publishGateStatusEvent(tCtx, w.redis, GateStatusEvent{
 			GateID:      g.GateID.String(),
 			WorkspaceID: g.WorkspaceID.String(),
 			Status:      string(model.GateStatusUnresponsive),
 		})
-		channel := fmt.Sprintf("gate:events:%s", g.WorkspaceID)
-		if err := w.redis.Publish(tCtx, channel, string(payload)).Err(); err != nil {
-			slog.Warn("gate TTL: failed to publish SSE event",
-				"gate_id", g.GateID, "error", err)
-		}
 	}
 }

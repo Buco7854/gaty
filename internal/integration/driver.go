@@ -21,9 +21,9 @@ type Driver interface {
 // Falls back to MQTT if open_config is nil and integration_type == MQTT.
 func NewOpenDriver(gate *model.Gate, mqtt *internalmqtt.Client) (Driver, error) {
 	if gate.OpenConfig != nil {
-		return newDriver(gate.OpenConfig, mqtt)
+		return newDriver(gate.OpenConfig, "open", mqtt)
 	}
-	// Backward-compat: legacy MQTT integration type
+	// Backward-compat: legacy MQTT integration type with no explicit open_config.
 	if gate.IntegrationType == model.IntegrationTypeMQTT && mqtt != nil {
 		return &MQTTDriver{client: mqtt, action: "open"}, nil
 	}
@@ -31,21 +31,27 @@ func NewOpenDriver(gate *model.Gate, mqtt *internalmqtt.Client) (Driver, error) 
 }
 
 // NewCloseDriver builds the driver for closing a gate.
+// Falls back to MQTT if close_config is nil and integration_type == MQTT,
+// mirroring the open fallback for symmetry.
 func NewCloseDriver(gate *model.Gate, mqtt *internalmqtt.Client) (Driver, error) {
 	if gate.CloseConfig != nil {
-		return newDriver(gate.CloseConfig, mqtt)
+		return newDriver(gate.CloseConfig, "close", mqtt)
+	}
+	// Backward-compat: legacy MQTT integration type with no explicit close_config.
+	if gate.IntegrationType == model.IntegrationTypeMQTT && mqtt != nil {
+		return &MQTTDriver{client: mqtt, action: "close"}, nil
 	}
 	return &NoopDriver{}, nil
 }
 
-func newDriver(cfg *model.ActionConfig, mqtt *internalmqtt.Client) (Driver, error) {
+func newDriver(cfg *model.ActionConfig, defaultAction string, mqtt *internalmqtt.Client) (Driver, error) {
 	switch cfg.Type {
 	case model.DriverTypeMQTT:
 		if mqtt == nil {
 			return nil, fmt.Errorf("MQTT driver requested but broker is unavailable")
 		}
-		action := "open"
-		if v, ok := cfg.Config["action"].(string); ok {
+		action := defaultAction
+		if v, ok := cfg.Config["action"].(string); ok && v != "" {
 			action = v
 		}
 		return &MQTTDriver{client: mqtt, action: action}, nil

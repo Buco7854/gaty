@@ -2,20 +2,16 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
-	"time"
 
-	internalmqtt "github.com/Buco7854/gaty/internal/mqtt"
-	"github.com/Buco7854/gaty/internal/model"
 	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gaty/internal/service"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"strings"
 )
 
 // GateInboundHandler handles status reports pushed by gates over HTTP.
@@ -61,33 +57,11 @@ func (h *GateInboundHandler) PushStatus(ctx context.Context, input *GateStatusPu
 		return nil, huma.Error500InternalServerError("failed to authenticate gate")
 	}
 
-	// Business logic: evaluate status rules against the incoming metadata.
-	finalStatus := input.Body.Status
-	if override, ok := model.EvaluateStatusRules(gate.StatusRules, input.Body.Meta); ok {
-		finalStatus = override
-	}
-
-	if err := h.gates.UpdateStatus(ctx, input.GateID, finalStatus, input.Body.Meta); err != nil {
+	if err := service.ProcessGateStatus(ctx, h.gates, h.redis, gate, input.Body.Status, input.Body.Meta); err != nil {
 		return nil, huma.Error500InternalServerError("failed to update status")
 	}
 
-	if h.redis != nil {
-		event := internalmqtt.GateEvent{
-			GateID:         input.GateID.String(),
-			WorkspaceID:    gate.WorkspaceID.String(),
-			Status:         finalStatus,
-			StatusMetadata: input.Body.Meta,
-		}
-		payload, _ := json.Marshal(event)
-		channel := fmt.Sprintf("gate:events:%s", gate.WorkspaceID)
-		tCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
-		if err := h.redis.Publish(tCtx, channel, string(payload)).Err(); err != nil {
-			slog.Warn("inbound: failed to publish gate event", "channel", channel, "error", err)
-		}
-	}
-
-	slog.Info("inbound: gate status updated", "gate_id", input.GateID, "status", finalStatus)
+	slog.Info("inbound: gate status updated", "gate_id", input.GateID, "status", input.Body.Status)
 	return nil, nil
 }
 

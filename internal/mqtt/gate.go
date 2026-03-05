@@ -3,13 +3,14 @@ package mqtt
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
-	"github.com/Buco7854/gaty/internal/model"
 	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gaty/internal/service"
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -41,20 +42,13 @@ type statusPayload struct {
 	Meta   map[string]any `json:"meta,omitempty"`
 }
 
-// GateEvent is published to Redis Pub/Sub when a gate status changes.
-type GateEvent struct {
-	GateID         string         `json:"gate_id"`
-	WorkspaceID    string         `json:"workspace_id"`
-	Status         string         `json:"status"`
-	StatusMetadata map[string]any `json:"status_metadata,omitempty"`
-}
-
 // SubscribeGateStatuses subscribes to all gate status topics, authenticates the gate,
-// applies status rules (business logic), persists the result, and publishes SSE events.
+// and delegates status processing to service.ProcessGateStatus (rule evaluation,
+// DB persistence, SSE pub/sub).
 // Topic wildcard: +/gates/+/status
 func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redisClient *redis.Client) error {
 	return c.Subscribe("+/gates/+/status", func(_ pahomqtt.Client, msg pahomqtt.Message) {
-		wsID, gateID, err := parseTopicIDs(msg.Topic())
+		_, gateID, err := parseTopicIDs(msg.Topic())
 		if err != nil {
 			slog.Warn("mqtt: cannot parse ids from topic", "topic", msg.Topic())
 			return
@@ -76,7 +70,7 @@ func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redis
 		// Validate token and retrieve the gate (with status_rules).
 		gate, err := gateRepo.GetByToken(ctx, gateID, p.Token)
 		if err != nil {
-			if err == repository.ErrUnauthorized {
+			if errors.Is(err, repository.ErrUnauthorized) {
 				slog.Warn("mqtt: invalid gate token, status update rejected", "gate_id", gateID)
 			} else {
 				slog.Error("mqtt: failed to authenticate gate", "gate_id", gateID, "error", err)
@@ -84,29 +78,8 @@ func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redis
 			return
 		}
 
-		// Business logic: evaluate status rules against the incoming metadata.
-		finalStatus := p.Status
-		if override, ok := model.EvaluateStatusRules(gate.StatusRules, p.Meta); ok {
-			finalStatus = override
-		}
-
-		if err := gateRepo.UpdateStatus(ctx, gateID, finalStatus, p.Meta); err != nil {
-			slog.Error("mqtt: failed to update gate status", "gate_id", gateID, "error", err)
-			return
-		}
-
-		if redisClient != nil {
-			event := GateEvent{
-				GateID:         gateID.String(),
-				WorkspaceID:    wsID.String(),
-				Status:         finalStatus,
-				StatusMetadata: p.Meta,
-			}
-			payload, _ := json.Marshal(event)
-			channel := fmt.Sprintf("gate:events:%s", wsID)
-			if err := redisClient.Publish(ctx, channel, string(payload)).Err(); err != nil {
-				slog.Warn("mqtt: failed to publish gate event", "channel", channel, "error", err)
-			}
+		if err := service.ProcessGateStatus(ctx, gateRepo, redisClient, gate, p.Status, p.Meta); err != nil {
+			slog.Error("mqtt: failed to process gate status", "gate_id", gateID, "error", err)
 		}
 	})
 }
