@@ -156,23 +156,24 @@ type UpdateGateInput struct {
 	GateID      uuid.UUID `path:"gate_id"`
 	Body        struct {
 		// All fields are optional: omit a field to leave it unchanged.
+		// Action configs: null = clear to NULL in DB, omit = unchanged.
 		// For meta_config and status_rules, send an empty array [] to clear.
-		Name         *string             `json:"name,omitempty" minLength:"1"`
-		OpenConfig   *model.ActionConfig `json:"open_config,omitempty"`
-		CloseConfig  *model.ActionConfig `json:"close_config,omitempty"`
-		StatusConfig *model.ActionConfig `json:"status_config,omitempty"`
-		MetaConfig   []model.MetaField   `json:"meta_config,omitempty"`
-		StatusRules  []model.StatusRule  `json:"status_rules,omitempty"`
+		Name         *string                                  `json:"name,omitempty" minLength:"1"`
+		OpenConfig   repository.Optional[model.ActionConfig] `json:"open_config,omitempty"`
+		CloseConfig  repository.Optional[model.ActionConfig] `json:"close_config,omitempty"`
+		StatusConfig repository.Optional[model.ActionConfig] `json:"status_config,omitempty"`
+		MetaConfig   []model.MetaField                      `json:"meta_config,omitempty"`
+		StatusRules  []model.StatusRule                     `json:"status_rules,omitempty"`
 	}
 }
 
 func (h *GateHandler) Update(ctx context.Context, input *UpdateGateInput) (*GateOutput, error) {
 	gate, err := h.gates.Update(ctx, input.GateID, input.WorkspaceID, repository.UpdateGateParams{
-		Name:         input.Body.Name, // nil when omitted
+		Name:         input.Body.Name,
 		OpenConfig:   input.Body.OpenConfig,
 		CloseConfig:  input.Body.CloseConfig,
 		StatusConfig: input.Body.StatusConfig,
-		MetaConfig:   input.Body.MetaConfig, // nil=unchanged, []=clear
+		MetaConfig:   input.Body.MetaConfig,
 		StatusRules:  input.Body.StatusRules,
 	})
 	if errors.Is(err, repository.ErrNotFound) {

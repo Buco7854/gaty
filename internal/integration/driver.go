@@ -18,30 +18,21 @@ type Driver interface {
 }
 
 // NewOpenDriver builds the driver to use for opening a gate.
-// Falls back to MQTT if open_config is nil and integration_type == MQTT.
+// Returns a NoopDriver if open_config is nil (no action configured).
 func NewOpenDriver(gate *model.Gate, mqtt *internalmqtt.Client) (Driver, error) {
-	if gate.OpenConfig != nil {
-		return newDriver(gate.OpenConfig, "open", mqtt)
+	if gate.OpenConfig == nil {
+		return &NoopDriver{}, nil
 	}
-	// Backward-compat: legacy MQTT integration type with no explicit open_config.
-	if gate.IntegrationType == model.IntegrationTypeMQTT && mqtt != nil {
-		return &MQTTDriver{client: mqtt, action: "open"}, nil
-	}
-	return &NoopDriver{}, nil
+	return newDriver(gate.OpenConfig, "open", mqtt)
 }
 
 // NewCloseDriver builds the driver for closing a gate.
-// Falls back to MQTT if close_config is nil and integration_type == MQTT,
-// mirroring the open fallback for symmetry.
+// Returns a NoopDriver if close_config is nil (no action configured).
 func NewCloseDriver(gate *model.Gate, mqtt *internalmqtt.Client) (Driver, error) {
-	if gate.CloseConfig != nil {
-		return newDriver(gate.CloseConfig, "close", mqtt)
+	if gate.CloseConfig == nil {
+		return &NoopDriver{}, nil
 	}
-	// Backward-compat: legacy MQTT integration type with no explicit close_config.
-	if gate.IntegrationType == model.IntegrationTypeMQTT && mqtt != nil {
-		return &MQTTDriver{client: mqtt, action: "close"}, nil
-	}
-	return &NoopDriver{}, nil
+	return newDriver(gate.CloseConfig, "close", mqtt)
 }
 
 func newDriver(cfg *model.ActionConfig, defaultAction string, mqtt *internalmqtt.Client) (Driver, error) {

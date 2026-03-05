@@ -400,7 +400,7 @@ func (s *AuthService) ValidatePinSessionToken(tokenStr string) (pinID, gateID uu
 // Called by SSOService after a successful SSO callback.
 // Session duration is resolved from the member's auth_config and workspace defaults.
 func (s *AuthService) IssueLocalTokenPair(ctx context.Context, membershipID, workspaceID uuid.UUID, role model.WorkspaceRole) (*TokenPair, error) {
-	membership, err := s.memberships.GetByID(ctx, membershipID, workspaceID)
+	_, err := s.memberships.GetByID(ctx, membershipID, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("get membership: %w", err)
 	}

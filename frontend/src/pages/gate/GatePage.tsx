@@ -55,7 +55,7 @@ function ActionConfigForm({
         onChange={(v) => {
           const type = (v ?? 'NONE') as ActionConfig['type']
           if (type === 'NONE') {
-            onChange({ type: 'NONE' })
+            onChange(null)
           } else {
             onChange({ type, config: value?.config })
           }
@@ -392,19 +392,14 @@ export default function GatePage() {
   })
 
   const updateConfig = useMutation({
-    mutationFn: () => {
-      const params: Parameters<typeof gatesApi.update>[2] = {
+    mutationFn: () =>
+      gatesApi.update(wsId!, gateId!, {
+        open_config: editOpenConfig,
+        close_config: editCloseConfig,
+        status_config: editStatusConfig,
         meta_config: editMetaConfig,
         status_rules: editStatusRules,
-      }
-      if (JSON.stringify(editOpenConfig) !== JSON.stringify(gate?.open_config ?? null))
-        params.open_config = editOpenConfig
-      if (JSON.stringify(editCloseConfig) !== JSON.stringify(gate?.close_config ?? null))
-        params.close_config = editCloseConfig
-      if (JSON.stringify(editStatusConfig) !== JSON.stringify(gate?.status_config ?? null))
-        params.status_config = editStatusConfig
-      return gatesApi.update(wsId!, gateId!, params)
-    },
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['gate', wsId, gateId] })
       closeConfigModal()

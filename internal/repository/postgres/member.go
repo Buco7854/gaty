@@ -2,8 +2,10 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Buco7854/gaty/internal/model"
 	"github.com/Buco7854/gaty/internal/repository"
@@ -118,19 +120,44 @@ func (r *workspaceMembershipRepository) List(ctx context.Context, workspaceID uu
 	return result, rows.Err()
 }
 
-func (r *workspaceMembershipRepository) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName *string, localUsername *string, role *model.WorkspaceRole, authConfig map[string]any) (*model.WorkspaceMembership, error) {
+func (r *workspaceMembershipRepository) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName *string, localUsername *string, role *model.WorkspaceRole, authConfig repository.Optional[map[string]any]) (*model.WorkspaceMembership, error) {
+	sets := []string{}
+	args := []any{membershipID, workspaceID}
+	n := 3
+
+	if displayName != nil {
+		sets = append(sets, fmt.Sprintf("display_name = $%d", n))
+		args = append(args, *displayName)
+		n++
+	}
+	if localUsername != nil {
+		sets = append(sets, fmt.Sprintf("local_username = $%d", n))
+		args = append(args, *localUsername)
+		n++
+	}
+	if role != nil {
+		sets = append(sets, fmt.Sprintf("role = $%d", n))
+		args = append(args, *role)
+		n++
+	}
+	if authConfig.Set {
+		sets = append(sets, fmt.Sprintf("auth_config = $%d::jsonb", n))
+		if authConfig.V == nil {
+			args = append(args, nil)
+		} else {
+			b, _ := json.Marshal(*authConfig.V)
+			args = append(args, json.RawMessage(b))
+		}
+		n++
+	}
+
+	if len(sets) == 0 {
+		return r.GetByID(ctx, membershipID, workspaceID)
+	}
+
 	row := r.pool.QueryRow(ctx,
-		`UPDATE workspace_memberships
-		 SET display_name    = COALESCE($3, display_name),
-		     local_username  = COALESCE($4, local_username),
-		     role            = COALESCE($5, role),
-		     auth_config     = CASE
-		       WHEN $6::jsonb IS NOT NULL THEN COALESCE(auth_config, '{}'::jsonb) || $6::jsonb
-		       ELSE auth_config
-		     END
-		 WHERE id = $1 AND workspace_id = $2
-		 RETURNING `+membershipColumns,
-		membershipID, workspaceID, displayName, localUsername, role, authConfig,
+		"UPDATE workspace_memberships SET "+strings.Join(sets, ", ")+" WHERE id = $1 AND workspace_id = $2 RETURNING "+membershipColumns,
+		args...,
 	)
 	m, err := scanMembership(row)
 	if err != nil {

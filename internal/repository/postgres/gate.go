@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Buco7854/gaty/internal/model"
@@ -105,20 +106,6 @@ func marshalJSONSlice[T any](v []T, fallback string) json.RawMessage {
 	return json.RawMessage(b)
 }
 
-// marshalJSONSliceOrNull is the PATCH-safe variant:
-//   - nil slice  -> nil (SQL NULL -> COALESCE keeps the existing column value)
-//   - empty slice -> "[]" (explicit clear)
-//   - non-empty  -> marshaled JSON
-func marshalJSONSliceOrNull[T any](v []T) json.RawMessage {
-	if v == nil {
-		return nil
-	}
-	if len(v) == 0 {
-		return json.RawMessage("[]")
-	}
-	b, _ := json.Marshal(v)
-	return json.RawMessage(b)
-}
 
 func (r *gateRepository) Create(ctx context.Context, wsID uuid.UUID, p repository.CreateGateParams) (*model.Gate, error) {
 	if p.IntegrationConfig == nil {
@@ -180,24 +167,50 @@ func (r *gateRepository) GetByID(ctx context.Context, gateID, wsID uuid.UUID) (*
 }
 
 func (r *gateRepository) Update(ctx context.Context, gateID, wsID uuid.UUID, p repository.UpdateGateParams) (*model.Gate, error) {
+	sets := []string{}
+	args := []any{gateID, wsID}
+	n := 3
+
+	if p.Name != nil {
+		sets = append(sets, fmt.Sprintf("name = $%d", n))
+		args = append(args, *p.Name)
+		n++
+	}
+	if p.OpenConfig.Set {
+		sets = append(sets, fmt.Sprintf("open_config = $%d::jsonb", n))
+		args = append(args, marshalActionConfig(p.OpenConfig.V))
+		n++
+	}
+	if p.CloseConfig.Set {
+		sets = append(sets, fmt.Sprintf("close_config = $%d::jsonb", n))
+		args = append(args, marshalActionConfig(p.CloseConfig.V))
+		n++
+	}
+	if p.StatusConfig.Set {
+		sets = append(sets, fmt.Sprintf("status_config = $%d::jsonb", n))
+		args = append(args, marshalActionConfig(p.StatusConfig.V))
+		n++
+	}
+	if p.MetaConfig != nil {
+		sets = append(sets, fmt.Sprintf("meta_config = $%d::jsonb", n))
+		args = append(args, marshalJSONSlice(p.MetaConfig, "[]"))
+		n++
+	}
+	if p.StatusRules != nil {
+		sets = append(sets, fmt.Sprintf("status_rules = $%d::jsonb", n))
+		args = append(args, marshalJSONSlice(p.StatusRules, "[]"))
+		n++
+	}
+
+	if len(sets) == 0 {
+		return r.GetByID(ctx, gateID, wsID)
+	}
+
 	var g model.Gate
 	err := scanGate(
 		r.pool.QueryRow(ctx,
-			`UPDATE gates
-			 SET name        = COALESCE($3,       name),
-			     open_config = COALESCE($4::jsonb, open_config),
-			     close_config = COALESCE($5::jsonb, close_config),
-			     status_config = COALESCE($6::jsonb, status_config),
-			     meta_config = COALESCE($7::jsonb, meta_config),
-			     status_rules = COALESCE($8::jsonb, status_rules)
-			 WHERE id = $1 AND workspace_id = $2
-			 RETURNING `+colsFull,
-			gateID, wsID, p.Name,
-			marshalActionConfig(p.OpenConfig),
-			marshalActionConfig(p.CloseConfig),
-			marshalActionConfig(p.StatusConfig),
-			marshalJSONSliceOrNull(p.MetaConfig),
-			marshalJSONSliceOrNull(p.StatusRules),
+			`UPDATE gates SET `+strings.Join(sets, ", ")+` WHERE id = $1 AND workspace_id = $2 RETURNING `+colsFull,
+			args...,
 		),
 		&g,
 	)

@@ -21,13 +21,13 @@ type CreateGateParams struct {
 }
 
 // UpdateGateParams holds the fields that can be updated on a gate.
-// All fields are optional: nil means "leave unchanged".
+// For action configs, Set=false = unchanged; Set=true && V=nil = clear to NULL.
 // For slices, nil = unchanged, empty slice = clear.
 type UpdateGateParams struct {
-	Name         *string             // nil = unchanged
-	OpenConfig   *model.ActionConfig // nil = unchanged; use {type:NONE} to clear
-	CloseConfig  *model.ActionConfig
-	StatusConfig *model.ActionConfig
+	Name         *string
+	OpenConfig   Optional[model.ActionConfig]
+	CloseConfig  Optional[model.ActionConfig]
+	StatusConfig Optional[model.ActionConfig]
 	MetaConfig   []model.MetaField // nil = unchanged, [] = clear
 	StatusRules  []model.StatusRule
 }

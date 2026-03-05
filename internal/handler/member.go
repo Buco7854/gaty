@@ -168,10 +168,12 @@ type UpdateMemberInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	MemberID    uuid.UUID `path:"member_id"`
 	Body        struct {
-		DisplayName   *string              `json:"display_name,omitempty" maxLength:"100"`
-		LocalUsername *string              `json:"local_username,omitempty" minLength:"1" maxLength:"50"`
-		Role          *model.WorkspaceRole `json:"role,omitempty"`
-		AuthConfig    map[string]any       `json:"auth_config,omitempty"`
+		// Omit a field to leave it unchanged.
+		// auth_config: null = reset to NULL (inherit from workspace), omit = unchanged.
+		DisplayName   *string                              `json:"display_name,omitempty" maxLength:"100"`
+		LocalUsername *string                              `json:"local_username,omitempty" minLength:"1" maxLength:"50"`
+		Role          *model.WorkspaceRole                 `json:"role,omitempty"`
+		AuthConfig    repository.Optional[map[string]any]  `json:"auth_config,omitempty"`
 	}
 }
 
