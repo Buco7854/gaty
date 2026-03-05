@@ -5,7 +5,7 @@ import type { GateSession } from '@/api/public'
 import { useTranslation } from 'react-i18next'
 import { Center, Stack, Group, Text, Title, Button, Anchor, PasswordInput } from '@mantine/core'
 import { Delete } from 'lucide-react'
-import { notifications } from '@mantine/notifications'
+import { notifyError } from '@/lib/notify'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
 
@@ -61,7 +61,7 @@ export default function PinPadPage() {
       const msg = status === 429 ? t('pinpad.tooManyAttempts')
         : (status === 401 || status === 403) ? t('pinpad.invalidPin')
         : t('pinpad.unreachable')
-      notifications.show({ color: 'red', message: msg, autoClose: 4000 })
+      notifyError(null, msg)
       setCode('')
     } finally {
       setSubmitting(false)

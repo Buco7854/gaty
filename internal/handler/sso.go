@@ -17,14 +17,14 @@ import (
 type SSOHandler struct {
 	ssoSvc      *service.SSOService
 	authSvc     *service.AuthService
-	wsRepo      *repository.WorkspaceRepository
+	wsRepo      repository.WorkspaceRepository
 	frontendURL string
 }
 
 func NewSSOHandler(
 	ssoSvc *service.SSOService,
 	authSvc *service.AuthService,
-	wsRepo *repository.WorkspaceRepository,
+	wsRepo repository.WorkspaceRepository,
 	frontendURL string,
 ) *SSOHandler {
 	return &SSOHandler{ssoSvc: ssoSvc, authSvc: authSvc, wsRepo: wsRepo, frontendURL: frontendURL}

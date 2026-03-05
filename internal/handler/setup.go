@@ -11,11 +11,11 @@ import (
 
 // SetupHandler handles the initial setup flow when no users exist yet.
 type SetupHandler struct {
-	users   *repository.UserRepository
+	users   repository.UserRepository
 	authSvc *service.AuthService
 }
 
-func NewSetupHandler(users *repository.UserRepository, authSvc *service.AuthService) *SetupHandler {
+func NewSetupHandler(users repository.UserRepository, authSvc *service.AuthService) *SetupHandler {
 	return &SetupHandler{users: users, authSvc: authSvc}
 }
 

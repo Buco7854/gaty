@@ -13,10 +13,10 @@ import (
 )
 
 type WorkspaceHandler struct {
-	workspaces *repository.WorkspaceRepository
+	workspaces repository.WorkspaceRepository
 }
 
-func NewWorkspaceHandler(workspaces *repository.WorkspaceRepository) *WorkspaceHandler {
+func NewWorkspaceHandler(workspaces repository.WorkspaceRepository) *WorkspaceHandler {
 	return &WorkspaceHandler{workspaces: workspaces}
 }
 
@@ -186,11 +186,11 @@ func (h *WorkspaceHandler) RegisterRoutes(
 
 	huma.Register(api, huma.Operation{
 		OperationID: "workspace-update-member-auth-config",
-		Method:      http.MethodPatch,
+		Method:      http.MethodPut,
 		Path:        "/api/workspaces/{ws_id}/member-auth-config",
-		Summary:     "Update workspace default member auth configuration",
+		Summary:     "Replace workspace default member auth configuration",
+		Description: "Full replacement: send the complete desired config. Use GET first to read the current value.",
 		Tags:        []string{"Workspaces"},
 		Middlewares: huma.Middlewares{wsAdmin},
 	}, h.UpdateMemberAuthConfig)
 }
-

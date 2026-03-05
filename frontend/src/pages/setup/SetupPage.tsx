@@ -5,6 +5,7 @@ import { TextInput, PasswordInput, Button, Stack, Text, Alert, Title } from '@ma
 import { AlertCircle } from 'lucide-react'
 import { setupApi, authApi } from '@/api'
 import { useAuthStore } from '@/store/auth'
+import { extractApiError } from '@/lib/notify'
 
 export default function SetupPage() {
   const [email, setEmail] = useState('')
@@ -32,8 +33,7 @@ export default function SetupPage() {
       setAuth(user, tokens.access_token, tokens.refresh_token)
       qc.setQueryData(['setup-status'], { setup_required: false })
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { title?: string } } })?.response?.data?.title
-      setError(msg ?? t('setup.failed'))
+      setError(extractApiError(err, t('setup.failed')))
       setLoading(false)
     }
   }

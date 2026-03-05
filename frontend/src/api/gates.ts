@@ -1,5 +1,5 @@
 import { api } from '@/lib/api'
-import type { Gate } from '@/types'
+import type { Gate, MetaField, StatusRule } from '@/types'
 
 function normalizeList(data: unknown): Gate[] {
   if (Array.isArray(data)) return data as Gate[]
@@ -19,6 +19,8 @@ export interface CreateGateParams {
   open_config?: ActionConfig | null
   close_config?: ActionConfig | null
   status_config?: ActionConfig | null
+  meta_config?: MetaField[]
+  status_rules?: StatusRule[]
 }
 
 export interface UpdateGateParams {
@@ -26,6 +28,13 @@ export interface UpdateGateParams {
   open_config?: ActionConfig | null
   close_config?: ActionConfig | null
   status_config?: ActionConfig | null
+  meta_config?: MetaField[]
+  status_rules?: StatusRule[]
+}
+
+export interface GateTokenResponse {
+  gate_id: string
+  gate_token: string
 }
 
 export const gatesApi = {
@@ -44,6 +53,14 @@ export const gatesApi = {
   delete: (wsId: string, gateId: string) =>
     api.delete(`/workspaces/${wsId}/gates/${gateId}`),
 
-  trigger: (wsId: string, gateId: string) =>
-    api.post(`/workspaces/${wsId}/gates/${gateId}/trigger`, {}),
+  trigger: (wsId: string, gateId: string, action: 'open' | 'close' = 'open') =>
+    api.post(`/workspaces/${wsId}/gates/${gateId}/trigger`, { action }),
+
+  getToken: (wsId: string, gateId: string) =>
+    api.get<GateTokenResponse>(`/workspaces/${wsId}/gates/${gateId}/token`).then((r) => r.data),
+
+  rotateToken: (wsId: string, gateId: string) =>
+    api
+      .post<GateTokenResponse>(`/workspaces/${wsId}/gates/${gateId}/token/rotate`, {})
+      .then((r) => r.data),
 }

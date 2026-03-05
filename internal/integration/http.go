@@ -5,12 +5,30 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/Buco7854/gaty/internal/model"
 )
+
+// httpClient is a dedicated client for gate HTTP drivers.
+// Using a private client (rather than http.DefaultClient) isolates gate traffic
+// and ensures TCP/TLS-level timeouts independent of the request context.
+var httpClient = &http.Client{
+	Transport: &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		MaxIdleConns:          32,
+		MaxIdleConnsPerHost:   4,
+		IdleConnTimeout:       90 * time.Second,
+	},
+}
 
 // HTTPDriver sends an HTTP request to a configured URL when triggered.
 type HTTPDriver struct {
@@ -63,7 +81,7 @@ func (d *HTTPDriver) Execute(ctx context.Context, _ *model.Gate) error {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("http driver: request: %w", err)
 	}

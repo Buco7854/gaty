@@ -1,0 +1,1 @@
+ALTER TABLE gates DROP COLUMN IF EXISTS status_rules;

@@ -17,15 +17,15 @@ var (
 )
 
 type MembershipService struct {
-	memberships *repository.WorkspaceMembershipRepository
-	memberCreds *repository.MembershipCredentialRepository
-	workspaces  *repository.WorkspaceRepository
+	memberships repository.WorkspaceMembershipRepository
+	memberCreds repository.MembershipCredentialRepository
+	workspaces  repository.WorkspaceRepository
 }
 
 func NewMembershipService(
-	memberships *repository.WorkspaceMembershipRepository,
-	memberCreds *repository.MembershipCredentialRepository,
-	workspaces *repository.WorkspaceRepository,
+	memberships repository.WorkspaceMembershipRepository,
+	memberCreds repository.MembershipCredentialRepository,
+	workspaces repository.WorkspaceRepository,
 ) *MembershipService {
 	return &MembershipService{
 		memberships: memberships,
@@ -65,8 +65,8 @@ func (s *MembershipService) List(ctx context.Context, workspaceID uuid.UUID) ([]
 	return s.memberships.List(ctx, workspaceID)
 }
 
-func (s *MembershipService) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName *string, role *model.WorkspaceRole, authConfig map[string]any) (*model.WorkspaceMembership, error) {
-	return s.memberships.Update(ctx, membershipID, workspaceID, displayName, role, authConfig)
+func (s *MembershipService) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName, localUsername *string, role *model.WorkspaceRole, authConfig repository.Optional[map[string]any]) (*model.WorkspaceMembership, error) {
+	return s.memberships.Update(ctx, membershipID, workspaceID, displayName, localUsername, role, authConfig)
 }
 
 func (s *MembershipService) Delete(ctx context.Context, membershipID, workspaceID uuid.UUID) error {

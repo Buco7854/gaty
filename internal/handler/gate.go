@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/Buco7854/gaty/internal/integration"
 	"github.com/Buco7854/gaty/internal/middleware"
@@ -16,19 +17,21 @@ import (
 )
 
 type GateHandler struct {
-	gates    *repository.GateRepository
-	policies *repository.PolicyRepository
-	audit    *repository.AuditRepository
-	mqtt     *internalmqtt.Client // nil if broker unavailable
+	gates     repository.GateRepository
+	policies  repository.PolicyRepository
+	schedules repository.AccessScheduleRepository
+	audit     repository.AuditRepository
+	mqtt      *internalmqtt.Client // nil if broker unavailable
 }
 
 func NewGateHandler(
-	gates *repository.GateRepository,
-	policies *repository.PolicyRepository,
-	audit *repository.AuditRepository,
+	gates repository.GateRepository,
+	policies repository.PolicyRepository,
+	schedules repository.AccessScheduleRepository,
+	audit repository.AuditRepository,
 	mqtt *internalmqtt.Client,
 ) *GateHandler {
-	return &GateHandler{gates: gates, policies: policies, audit: audit, mqtt: mqtt}
+	return &GateHandler{gates: gates, policies: policies, schedules: schedules, audit: audit, mqtt: mqtt}
 }
 
 // --- Shared path params (used by policy.go too) ---
@@ -71,11 +74,17 @@ type CreateGateInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	Body        struct {
 		Name              string                    `json:"name" minLength:"1"`
-		IntegrationType   model.GateIntegrationType `json:"integration_type,omitempty"`
+		IntegrationType   model.GateIntegrationType `json:"integration_type,omitempty" default:"MQTT"`
 		IntegrationConfig map[string]any            `json:"integration_config,omitempty"`
 		OpenConfig        *model.ActionConfig       `json:"open_config,omitempty"`
 		CloseConfig       *model.ActionConfig       `json:"close_config,omitempty"`
 		StatusConfig      *model.ActionConfig       `json:"status_config,omitempty"`
+		// MetaConfig defines how status metadata fields are displayed.
+		// Example: [{"key":"lora.snr","label":"SNR","unit":"dB"}]
+		MetaConfig []model.MetaField `json:"meta_config,omitempty"`
+		// StatusRules define conditions evaluated against metadata to override the gate status.
+		// Example: [{"key":"battery","op":"lt","value":"20","set_status":"low_battery"}]
+		StatusRules []model.StatusRule `json:"status_rules,omitempty"`
 	}
 }
 
@@ -95,11 +104,14 @@ func (h *GateHandler) Create(ctx context.Context, input *CreateGateInput) (*Gate
 		OpenConfig:        input.Body.OpenConfig,
 		CloseConfig:       input.Body.CloseConfig,
 		StatusConfig:      input.Body.StatusConfig,
+		MetaConfig:        input.Body.MetaConfig,
+		StatusRules:       input.Body.StatusRules,
 	})
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create gate")
 	}
 	applyEffectiveStatus(gate)
+	// GateToken is already populated by Create (returned once, on creation).
 	return &GateOutput{Body: gate}, nil
 }
 
@@ -126,6 +138,11 @@ func (h *GateHandler) Get(ctx context.Context, input *GatePathParam) (*GateOutpu
 		if !ok {
 			return nil, huma.Error403Forbidden("access denied")
 		}
+		// MEMBERs without gate:read_status don't see metadata.
+		hasStatus, _ := h.policies.HasPermission(ctx, membershipID, gate.ID, "gate:read_status")
+		if !hasStatus {
+			gate.StatusMetadata = nil
+		}
 	}
 
 	applyEffectiveStatus(gate)
@@ -138,10 +155,15 @@ type UpdateGateInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	GateID      uuid.UUID `path:"gate_id"`
 	Body        struct {
-		Name         string              `json:"name" minLength:"1"`
-		OpenConfig   *model.ActionConfig `json:"open_config,omitempty"`
-		CloseConfig  *model.ActionConfig `json:"close_config,omitempty"`
-		StatusConfig *model.ActionConfig `json:"status_config,omitempty"`
+		// All fields are optional: omit a field to leave it unchanged.
+		// Action configs: null = clear to NULL in DB, omit = unchanged.
+		// For meta_config and status_rules, send an empty array [] to clear.
+		Name         *string                                  `json:"name,omitempty" minLength:"1"`
+		OpenConfig   repository.Optional[model.ActionConfig] `json:"open_config,omitempty"`
+		CloseConfig  repository.Optional[model.ActionConfig] `json:"close_config,omitempty"`
+		StatusConfig repository.Optional[model.ActionConfig] `json:"status_config,omitempty"`
+		MetaConfig   []model.MetaField                      `json:"meta_config,omitempty"`
+		StatusRules  []model.StatusRule                     `json:"status_rules,omitempty"`
 	}
 }
 
@@ -151,6 +173,8 @@ func (h *GateHandler) Update(ctx context.Context, input *UpdateGateInput) (*Gate
 		OpenConfig:   input.Body.OpenConfig,
 		CloseConfig:  input.Body.CloseConfig,
 		StatusConfig: input.Body.StatusConfig,
+		MetaConfig:   input.Body.MetaConfig,
+		StatusRules:  input.Body.StatusRules,
 	})
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")
@@ -211,6 +235,16 @@ func (h *GateHandler) Trigger(ctx context.Context, input *TriggerInput) (*struct
 		if !ok {
 			return nil, huma.Error403Forbidden("missing " + permCode + " permission")
 		}
+		// Check time-restriction schedule attached to this member-gate pair (if any).
+		if scheduleID, schErr := h.policies.GetMemberGateScheduleID(ctx, membershipID, input.GateID); schErr == nil {
+			schedule, schErr := h.schedules.GetByIDPublic(ctx, scheduleID)
+			if schErr == nil {
+				if schErr = CheckSchedule(schedule, time.Now()); schErr != nil {
+					slog.Info("gate trigger: schedule rejected", "membership_id", membershipID, "gate_id", input.GateID, "schedule_id", scheduleID)
+					return nil, huma.Error403Forbidden("access not allowed at this time")
+				}
+			}
+		}
 	}
 
 	gate, err := h.gates.GetByID(ctx, input.GateID, input.WorkspaceID)
@@ -221,42 +255,70 @@ func (h *GateHandler) Trigger(ctx context.Context, input *TriggerInput) (*struct
 		return nil, huma.Error500InternalServerError("failed to get gate")
 	}
 
-	var driverErr, execErr error
+	var driver integration.Driver
+	var driverErr error
 	if action == "close" {
-		var driver integration.Driver
 		driver, driverErr = integration.NewCloseDriver(gate, h.mqtt)
-		if driverErr != nil {
-			slog.Warn("gate: failed to build close driver", "gate_id", gate.ID, "error", driverErr)
-		} else {
-			execErr = driver.Execute(ctx, gate)
-		}
 	} else {
-		var driver integration.Driver
 		driver, driverErr = integration.NewOpenDriver(gate, h.mqtt)
-		if driverErr != nil {
-			slog.Warn("gate: failed to build open driver", "gate_id", gate.ID, "error", driverErr)
-		} else {
-			execErr = driver.Execute(ctx, gate)
-		}
 	}
-	if execErr != nil {
+	if driverErr != nil {
+		slog.Warn("gate: failed to build driver", "gate_id", gate.ID, "action", action, "error", driverErr)
+	} else if execErr := driver.Execute(ctx, gate); execErr != nil {
 		slog.Warn("gate: driver execution failed", "gate_id", gate.ID, "action", action, "error", execErr)
 	}
 
-	if h.audit != nil {
-		gateID := gate.ID
-		auditAction := "gate:trigger_open"
-		if action == "close" {
-			auditAction = "gate:trigger_close"
-		}
-		_ = h.audit.Insert(ctx, repository.AuditEntry{
-			WorkspaceID: input.WorkspaceID,
-			GateID:      &gateID,
-			Action:      auditAction,
-		})
+	auditAction := "gate:trigger_open"
+	if action == "close" {
+		auditAction = "gate:trigger_close"
 	}
+	gateID := gate.ID
+	_ = h.audit.Insert(ctx, repository.AuditEntry{
+		WorkspaceID: input.WorkspaceID,
+		GateID:      &gateID,
+		Action:      auditAction,
+	})
 
 	return nil, nil
+}
+
+// --- Gate token management (admin only) ---
+
+type GateTokenOutput struct {
+	Body struct {
+		GateID    uuid.UUID `json:"gate_id"`
+		GateToken string    `json:"gate_token"`
+	}
+}
+
+// GetToken returns the current gate authentication token.
+func (h *GateHandler) GetToken(ctx context.Context, input *GatePathParam) (*GateTokenOutput, error) {
+	token, err := h.gates.GetToken(ctx, input.GateID, input.WorkspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("gate not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get gate token")
+	}
+	out := &GateTokenOutput{}
+	out.Body.GateID = input.GateID
+	out.Body.GateToken = token
+	return out, nil
+}
+
+// RotateToken generates a new gate authentication token, invalidating the old one.
+func (h *GateHandler) RotateToken(ctx context.Context, input *GatePathParam) (*GateTokenOutput, error) {
+	token, err := h.gates.RotateToken(ctx, input.GateID, input.WorkspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("gate not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to rotate gate token")
+	}
+	out := &GateTokenOutput{}
+	out.Body.GateID = input.GateID
+	out.Body.GateToken = token
+	return out, nil
 }
 
 // RegisterRoutes wires all gate endpoints onto the Huma API.
@@ -280,6 +342,7 @@ func (h *GateHandler) RegisterRoutes(
 		Method:        http.MethodPost,
 		Path:          "/api/workspaces/{ws_id}/gates",
 		Summary:       "Create a gate",
+		Description:   "The response includes gate_token (the gate's auth secret). Store it — it won't be returned again (use rotate-token to get a new one).",
 		Tags:          []string{"Gates"},
 		DefaultStatus: http.StatusCreated,
 		Middlewares:   huma.Middlewares{wsAdmin},
@@ -320,4 +383,24 @@ func (h *GateHandler) RegisterRoutes(
 		Tags:        []string{"Gates"},
 		Middlewares: huma.Middlewares{wsMember},
 	}, h.Trigger)
+
+	// Token management: admin only.
+	huma.Register(api, huma.Operation{
+		OperationID: "gate-token-get",
+		Method:      http.MethodGet,
+		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/token",
+		Summary:     "Get the gate authentication token",
+		Tags:        []string{"Gates"},
+		Middlewares: huma.Middlewares{wsAdmin},
+	}, h.GetToken)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "gate-token-rotate",
+		Method:      http.MethodPost,
+		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/token/rotate",
+		Summary:     "Rotate (regenerate) the gate authentication token",
+		Description: "Generates a new token and immediately invalidates the old one. Update the gate firmware.",
+		Tags:        []string{"Gates"},
+		Middlewares: huma.Middlewares{wsAdmin},
+	}, h.RotateToken)
 }

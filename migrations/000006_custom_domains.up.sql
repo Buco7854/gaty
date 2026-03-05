@@ -1,5 +1,5 @@
 CREATE TABLE custom_domains (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id                  UUID        PRIMARY KEY DEFAULT uuidv7(),
     gate_id             UUID        NOT NULL REFERENCES gates(id)      ON DELETE CASCADE,
     workspace_id        UUID        NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     domain              TEXT        NOT NULL UNIQUE,

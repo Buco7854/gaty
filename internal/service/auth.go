@@ -36,22 +36,22 @@ type TokenPair struct {
 }
 
 type AuthService struct {
-	users                 *repository.UserRepository
-	credentials           *repository.CredentialRepository
-	memberships           *repository.WorkspaceMembershipRepository
-	memberCreds           *repository.MembershipCredentialRepository
-	workspaces            *repository.WorkspaceRepository
+	users                 repository.UserRepository
+	credentials           repository.CredentialRepository
+	memberships           repository.WorkspaceMembershipRepository
+	memberCreds           repository.MembershipCredentialRepository
+	workspaces            repository.WorkspaceRepository
 	redis                 *redis.Client
 	jwtSecret             []byte
 	globalSessionDuration time.Duration // 0 = infinite
 }
 
 func NewAuthService(
-	users *repository.UserRepository,
-	credentials *repository.CredentialRepository,
-	memberships *repository.WorkspaceMembershipRepository,
-	memberCreds *repository.MembershipCredentialRepository,
-	workspaces *repository.WorkspaceRepository,
+	users repository.UserRepository,
+	credentials repository.CredentialRepository,
+	memberships repository.WorkspaceMembershipRepository,
+	memberCreds repository.MembershipCredentialRepository,
+	workspaces repository.WorkspaceRepository,
 	redisClient *redis.Client,
 	jwtSecret string,
 	globalSessionDuration time.Duration,
@@ -161,7 +161,7 @@ func (s *AuthService) LoginLocal(ctx context.Context, workspaceID uuid.UUID, loc
 		return nil, nil, ErrInvalidCredentials
 	}
 
-	sessionDuration := resolveSessionDuration(membership.AuthConfig, ws.MemberAuthConfig)
+	sessionDuration := resolveSessionDuration(ws.MemberAuthConfig)
 	tokens, err := s.issueLocalTokenPair(ctx, membership.ID, ws.ID, membership.Role, sessionDuration)
 	if err != nil {
 		return nil, nil, err
@@ -184,30 +184,54 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenP
 
 		switch typ {
 		case "local":
-			membershipID, err := uuid.Parse(payload["sub"].(string))
+			sub, ok := payload["sub"].(string)
+			if !ok {
+				return nil, ErrInvalidToken
+			}
+			membershipID, err := uuid.Parse(sub)
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
-			workspaceID, err := uuid.Parse(payload["wid"].(string))
+			wid, ok := payload["wid"].(string)
+			if !ok {
+				return nil, ErrInvalidToken
+			}
+			workspaceID, err := uuid.Parse(wid)
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
-			role := model.WorkspaceRole(payload["role"].(string))
+			roleStr, ok := payload["role"].(string)
+			if !ok {
+				return nil, ErrInvalidToken
+			}
+			role := model.WorkspaceRole(roleStr)
 			return s.issueLocalTokenPair(ctx, membershipID, workspaceID, role, sessionDuration)
 
 		case "global":
-			userID, err := uuid.Parse(payload["sub"].(string))
+			sub, ok := payload["sub"].(string)
+			if !ok {
+				return nil, ErrInvalidToken
+			}
+			userID, err := uuid.Parse(sub)
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
 			return s.issueGlobalTokenPair(ctx, userID, sessionDuration)
 
 		case "pin_session":
-			pinID, err := uuid.Parse(payload["sub"].(string))
+			sub, ok := payload["sub"].(string)
+			if !ok {
+				return nil, ErrInvalidToken
+			}
+			pinID, err := uuid.Parse(sub)
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
-			gateID, err := uuid.Parse(payload["gate_id"].(string))
+			gateIDStr, ok := payload["gate_id"].(string)
+			if !ok {
+				return nil, ErrInvalidToken
+			}
+			gateID, err := uuid.Parse(gateIDStr)
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
@@ -323,7 +347,11 @@ func (s *AuthService) ValidateMemberToken(tokenStr string) (membershipID, worksp
 		return uuid.Nil, uuid.Nil, "", ErrInvalidToken
 	}
 
-	role = model.WorkspaceRole(claims["role"].(string))
+	roleStr, ok := claims["role"].(string)
+	if !ok || roleStr == "" {
+		return uuid.Nil, uuid.Nil, "", ErrInvalidToken
+	}
+	role = model.WorkspaceRole(roleStr)
 	return membershipID, workspaceID, role, nil
 }
 
@@ -400,7 +428,7 @@ func (s *AuthService) ValidatePinSessionToken(tokenStr string) (pinID, gateID uu
 // Called by SSOService after a successful SSO callback.
 // Session duration is resolved from the member's auth_config and workspace defaults.
 func (s *AuthService) IssueLocalTokenPair(ctx context.Context, membershipID, workspaceID uuid.UUID, role model.WorkspaceRole) (*TokenPair, error) {
-	membership, err := s.memberships.GetByID(ctx, membershipID, workspaceID)
+	_, err := s.memberships.GetByID(ctx, membershipID, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("get membership: %w", err)
 	}
@@ -408,7 +436,7 @@ func (s *AuthService) IssueLocalTokenPair(ctx context.Context, membershipID, wor
 	if err != nil {
 		return nil, fmt.Errorf("get workspace: %w", err)
 	}
-	sessionDuration := resolveSessionDuration(membership.AuthConfig, ws.MemberAuthConfig)
+	sessionDuration := resolveSessionDuration(ws.MemberAuthConfig)
 	return s.issueLocalTokenPair(ctx, membershipID, workspaceID, role, sessionDuration)
 }
 
@@ -479,27 +507,22 @@ func (s *AuthService) issueLocalTokenPair(ctx context.Context, membershipID, wor
 	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken}, nil
 }
 
-// resolveSessionDuration reads session_duration (in seconds) from member-level auth_config,
-// falling back to the workspace member_auth_config default, then to defaultSessionTTL.
+// resolveSessionDuration reads session_duration (in seconds) from the workspace-level
+// member_auth_config. This is intentionally workspace-global — per-member overrides are
+// not supported so that admins have a single place to control session lifetime.
 // A value of 0 means infinite (no expiry).
-func resolveSessionDuration(memberAuthConfig, workspaceAuthConfig map[string]any) time.Duration {
-	for _, cfg := range []map[string]any{memberAuthConfig, workspaceAuthConfig} {
-		if cfg == nil {
-			continue
-		}
-		v, ok := cfg["session_duration"]
-		if !ok {
-			continue
-		}
-		secs, ok := v.(float64) // JSON numbers unmarshal as float64
-		if !ok {
-			continue
-		}
-		if secs == 0 {
-			return 0 // infinite
-		}
-		if secs > 0 {
-			return time.Duration(secs) * time.Second
+func resolveSessionDuration(workspaceAuthConfig map[string]any) time.Duration {
+	if workspaceAuthConfig != nil {
+		v, ok := workspaceAuthConfig["session_duration"]
+		if ok {
+			if secs, ok := v.(float64); ok {
+				if secs == 0 {
+					return 0 // infinite
+				}
+				if secs > 0 {
+					return time.Duration(secs) * time.Second
+				}
+			}
 		}
 	}
 	return defaultSessionTTL

@@ -99,9 +99,9 @@ func parseWorkspaceSSOSettings(raw map[string]any) ([]SSOProviderConfig, error) 
 // SSOService orchestrates workspace SSO flows.
 // It is provider-agnostic: concrete backends are instantiated by newProvider.
 type SSOService struct {
-	workspaces  *repository.WorkspaceRepository
-	memberships *repository.WorkspaceMembershipRepository
-	memberCreds *repository.MembershipCredentialRepository
+	workspaces  repository.WorkspaceRepository
+	memberships repository.WorkspaceMembershipRepository
+	memberCreds repository.MembershipCredentialRepository
 	redis       *redis.Client
 	baseURL     string
 
@@ -110,9 +110,9 @@ type SSOService struct {
 }
 
 func NewSSOService(
-	workspaces *repository.WorkspaceRepository,
-	memberships *repository.WorkspaceMembershipRepository,
-	memberCreds *repository.MembershipCredentialRepository,
+	workspaces repository.WorkspaceRepository,
+	memberships repository.WorkspaceMembershipRepository,
+	memberCreds repository.MembershipCredentialRepository,
 	redisClient *redis.Client,
 	baseURL string,
 ) *SSOService {

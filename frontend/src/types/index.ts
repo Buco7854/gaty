@@ -1,5 +1,5 @@
 export type WorkspaceRole = 'OWNER' | 'ADMIN' | 'MEMBER'
-export type GateStatus = 'online' | 'offline' | 'unknown'
+export type GateStatus = 'online' | 'offline' | 'unknown' | 'open' | 'closed' | string
 export type GateIntegrationType = 'MQTT' | 'POLLING' | 'WEBHOOK'
 export type CredentialType = 'PASSWORD' | 'SSO_IDENTITY' | 'API_TOKEN'
 
@@ -27,6 +27,28 @@ export interface ActionConfig {
   config?: Record<string, unknown>
 }
 
+/** Maps a raw status-payload key to a display label. */
+export interface MetaField {
+  /** Dot-notated key in the gate's status payload meta object. */
+  key: string
+  /** Human-readable label shown in the UI. */
+  label: string
+  /** Optional unit suffix (e.g. "dB", "%"). */
+  unit?: string
+}
+
+/** Condition evaluated against incoming metadata to override the gate status. */
+export interface StatusRule {
+  /** Dot-notated key in the status payload's meta object. */
+  key: string
+  /** Comparison operator: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" */
+  op: string
+  /** Threshold value as a string (numeric comparisons convert to float64). */
+  value: string
+  /** Gate status to set when this rule matches. */
+  set_status: string
+}
+
 export interface Gate {
   id: string
   workspace_id: string
@@ -39,6 +61,14 @@ export interface Gate {
   status: GateStatus
   last_seen_at?: string
   created_at: string
+  /** Last received metadata from the gate (sensor data, signal info, etc.) */
+  status_metadata?: Record<string, unknown>
+  /** Display mapping: which metadata keys to show and how to label them. */
+  meta_config?: MetaField[]
+  /** Rules evaluated against metadata to auto-override the reported status. */
+  status_rules?: StatusRule[]
+  /** Gate authentication token — only populated on create and rotate-token responses. */
+  gate_token?: string
 }
 
 export interface WorkspaceMembership {
@@ -53,10 +83,31 @@ export interface WorkspaceMembership {
   created_at: string
 }
 
+export interface ScheduleRule {
+  type: 'time_range' | 'weekdays_range' | 'date_range'
+  days?: number[]
+  start_time?: string
+  end_time?: string
+  start_day?: number
+  end_day?: number
+  start_date?: string
+  end_date?: string
+}
+
+export interface AccessSchedule {
+  id: string
+  workspace_id: string
+  name: string
+  description?: string
+  rules: ScheduleRule[]
+  created_at: string
+}
+
 export interface GatePin {
   id: string
   gate_id: string
   label: string
+  schedule_id?: string
   metadata: Record<string, unknown>
   created_at: string
 }

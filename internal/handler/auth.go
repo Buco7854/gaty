@@ -16,10 +16,10 @@ import (
 
 type AuthHandler struct {
 	authSvc *service.AuthService
-	users   *repository.UserRepository
+	users   repository.UserRepository
 }
 
-func NewAuthHandler(authSvc *service.AuthService, users *repository.UserRepository) *AuthHandler {
+func NewAuthHandler(authSvc *service.AuthService, users repository.UserRepository) *AuthHandler {
 	return &AuthHandler{authSvc: authSvc, users: users}
 }
 

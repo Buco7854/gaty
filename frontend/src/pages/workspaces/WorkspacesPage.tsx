@@ -10,6 +10,7 @@ import {
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { Plus, Building2, ChevronRight, AlertCircle } from 'lucide-react'
+import { extractApiError, notifySuccess } from '@/lib/notify'
 
 export default function WorkspacesPage() {
   const navigate = useNavigate()
@@ -31,10 +32,10 @@ export default function WorkspacesPage() {
       close()
       setName('')
       setError(null)
+      notifySuccess(t('common.created'))
     },
     onError: (err: unknown) => {
-      const msg = (err as { response?: { data?: { title?: string } } })?.response?.data?.title
-      setError(msg ?? t('common.error'))
+      setError(extractApiError(err, t('common.error')))
     },
   })
 

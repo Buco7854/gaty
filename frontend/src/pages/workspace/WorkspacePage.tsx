@@ -13,6 +13,7 @@ import {
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { Plus, DoorOpen, Zap, ChevronRight } from 'lucide-react'
+import { notifySuccess, notifyError } from '@/lib/notify'
 import { useAuthStore } from '@/store/auth'
 import { findLocalSession } from '@/utils/session'
 
@@ -21,12 +22,24 @@ function normalizeGates(data: unknown): Gate[] {
   return ((data as Record<string, unknown>).gates ?? []) as Gate[]
 }
 
-// ---------- StatusBadge + ActionConfigForm ----------
+function getStatusColor(status: GateStatus | undefined): string {
+  switch (status) {
+    case 'online':
+    case 'open': return 'green'
+    case 'offline':
+    case 'closed': return 'red'
+    case 'unresponsive': return 'orange'
+    default: return 'gray'
+  }
+}
 
 function StatusBadge({ status }: { status: Gate['status'] }) {
   const { t } = useTranslation()
-  const color = status === 'online' ? 'green' : status === 'offline' ? 'red' : 'gray'
-  return <Badge color={color} variant="dot" size="sm">{t(`common.${status}`)}</Badge>
+  return (
+    <Badge color={getStatusColor(status)} variant="dot" size="sm">
+      {t(`common.${status}`, { defaultValue: status })}
+    </Badge>
+  )
 }
 
 function ActionConfigForm({
@@ -74,8 +87,6 @@ function ActionConfigForm({
   )
 }
 
-// ---------- Workspace page ----------
-
 export default function WorkspacePage() {
   const { wsId } = useParams<{ wsId: string }>()
   const navigate = useNavigate()
@@ -90,12 +101,10 @@ export default function WorkspacePage() {
   )
   const localToken = localSession?.access_token
 
-  // Effective role: from global workspace list or from local JWT
   const ws = qc.getQueryData<WorkspaceWithRole[]>(['workspaces'])?.find((w) => w.id === wsId)
   const effectiveRole = globalAuth ? ws?.role : localSession?.role
   const canManage = effectiveRole === 'ADMIN' || effectiveRole === 'OWNER'
 
-  // Modal state (admin only)
   const [opened, { open, close }] = useDisclosure(false)
   const [advancedOpened, setAdvancedOpened] = useState(false)
   const [gateName, setGateName] = useState('')
@@ -107,11 +116,10 @@ export default function WorkspacePage() {
   const { data: gates, isLoading } = useQuery<Gate[]>({
     queryKey: ['gates', wsId],
     queryFn: () => gatesApi.list(wsId!),
-    refetchInterval: globalAuth ? 10_000 : false,
+    refetchInterval: globalAuth ? 15_000 : false,
     enabled: globalAuth || !!localToken,
   })
 
-  // For non-admin members: fetch their policies to determine per-gate manage access.
   const { data: myPolicies } = useQuery({
     queryKey: ['policies-me', wsId],
     queryFn: () => policiesApi.listMine(wsId!),
@@ -121,17 +129,19 @@ export default function WorkspacePage() {
   const canManageGate = (gateId: string) =>
     canManage || myPolicies?.some((p) => p.gate_id === gateId && p.permission_code === 'gate:manage')
 
+  // SSE: update gate status + metadata in real-time
   const handleGateEvent = useCallback(
     (event: GateEvent) => {
       qc.setQueryData<Gate[]>(['gates', wsId], (prev) =>
         prev?.map((g) =>
-          g.id === event.gate_id ? { ...g, status: event.status as GateStatus } : g
+          g.id === event.gate_id
+            ? { ...g, status: event.status as GateStatus, status_metadata: event.status_metadata ?? g.status_metadata }
+            : g
         )
       )
     },
     [qc, wsId]
   )
-
   useGateEvents(globalAuth ? wsId : undefined, handleGateEvent)
 
   const createGate = useMutation({
@@ -142,7 +152,7 @@ export default function WorkspacePage() {
         close_config: closeConfig,
         status_config: statusConfig,
       }),
-    onSuccess: () => {
+    onSuccess: (gate) => {
       qc.invalidateQueries({ queryKey: ['gates', wsId] })
       close()
       setGateName('')
@@ -150,14 +160,21 @@ export default function WorkspacePage() {
       setCloseConfig(null)
       setStatusConfig(null)
       setAdvancedOpened(false)
+      // Show the gate token notification (it's only returned on creation)
+      if (gate.gate_token) {
+        notifySuccess(`${t('common.created')} — token: ${gate.gate_token.slice(0, 8)}…`)
+      } else {
+        notifySuccess(t('common.created'))
+      }
     },
+    onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
   async function triggerGate(gateId: string) {
     if (triggeringId) return
     setTriggeringId(gateId)
     try {
-      await gatesApi.trigger(wsId!, gateId)
+      await gatesApi.trigger(wsId!, gateId, 'open')
     } catch { /* fire-and-forget */ }
     setTriggeringId(null)
   }

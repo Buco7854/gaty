@@ -13,11 +13,12 @@ import (
 )
 
 type PolicyHandler struct {
-	policies *repository.PolicyRepository
+	policies  repository.PolicyRepository
+	schedules repository.AccessScheduleRepository
 }
 
-func NewPolicyHandler(policies *repository.PolicyRepository) *PolicyHandler {
-	return &PolicyHandler{policies: policies}
+func NewPolicyHandler(policies repository.PolicyRepository, schedules repository.AccessScheduleRepository) *PolicyHandler {
+	return &PolicyHandler{policies: policies, schedules: schedules}
 }
 
 // --- Path param types ---
@@ -127,6 +128,57 @@ func (h *PolicyHandler) ListMine(ctx context.Context, input *WorkspacePathParam)
 	return &ListPoliciesOutput{Body: policies}, nil
 }
 
+// --- Set schedule for a member-gate pair ---
+
+type SetMemberGateScheduleInput struct {
+	WorkspaceID  uuid.UUID `path:"ws_id"`
+	GateID       uuid.UUID `path:"gate_id"`
+	MembershipID uuid.UUID `path:"membership_id"`
+	Body         struct {
+		ScheduleID uuid.UUID `json:"schedule_id"`
+	}
+}
+
+func (h *PolicyHandler) SetMemberGateSchedule(ctx context.Context, input *SetMemberGateScheduleInput) (*struct{}, error) {
+	if err := h.policies.SetMemberGateSchedule(ctx, input.MembershipID, input.GateID, input.Body.ScheduleID); err != nil {
+		return nil, huma.Error500InternalServerError("failed to set schedule")
+	}
+	return nil, nil
+}
+
+// --- Remove schedule from a member-gate pair ---
+
+func (h *PolicyHandler) RemoveMemberGateSchedule(ctx context.Context, input *PolicyMembershipPathParam) (*struct{}, error) {
+	if err := h.policies.RemoveMemberGateSchedule(ctx, input.MembershipID, input.GateID); err != nil {
+		return nil, huma.Error500InternalServerError("failed to remove schedule")
+	}
+	return nil, nil
+}
+
+// --- Get schedule for a member-gate pair ---
+
+type MemberGateScheduleOutput struct {
+	Body *model.AccessSchedule
+}
+
+func (h *PolicyHandler) GetMemberGateSchedule(ctx context.Context, input *PolicyMembershipPathParam) (*MemberGateScheduleOutput, error) {
+	scheduleID, err := h.policies.GetMemberGateScheduleID(ctx, input.MembershipID, input.GateID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("no schedule attached to this member-gate pair")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get schedule")
+	}
+	schedule, err := h.schedules.GetByIDPublic(ctx, scheduleID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("schedule not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get schedule details")
+	}
+	return &MemberGateScheduleOutput{Body: schedule}, nil
+}
+
 // RegisterRoutes wires policy endpoints onto the Huma API.
 func (h *PolicyHandler) RegisterRoutes(
 	api huma.API,
@@ -187,4 +239,31 @@ func (h *PolicyHandler) RegisterRoutes(
 		Tags:        []string{"Policies"},
 		Middlewares: huma.Middlewares{wsMember, wsGateManager},
 	}, h.RevokePermission)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "policy-get-schedule",
+		Method:      http.MethodGet,
+		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/policies/{membership_id}/schedule",
+		Summary:     "Get the time-restriction schedule for a member-gate pair",
+		Tags:        []string{"Policies"},
+		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+	}, h.GetMemberGateSchedule)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "policy-set-schedule",
+		Method:      http.MethodPut,
+		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/policies/{membership_id}/schedule",
+		Summary:     "Attach (or replace) a time-restriction schedule on a member-gate pair",
+		Tags:        []string{"Policies"},
+		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+	}, h.SetMemberGateSchedule)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "policy-remove-schedule",
+		Method:      http.MethodDelete,
+		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/policies/{membership_id}/schedule",
+		Summary:     "Remove the time-restriction schedule from a member-gate pair",
+		Tags:        []string{"Policies"},
+		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+	}, h.RemoveMemberGateSchedule)
 }

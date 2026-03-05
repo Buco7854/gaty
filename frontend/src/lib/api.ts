@@ -2,6 +2,7 @@ import axios from 'axios'
 import type { RefreshResponse } from '@/types'
 import type { GateSession } from '@/api/public'
 import { findLocalSession } from '@/utils/session'
+import { useAuthStore } from '@/store/auth'
 
 declare module 'axios' {
   interface InternalAxiosRequestConfig {
@@ -32,22 +33,6 @@ api.interceptors.request.use((config) => {
       config._authMeta = { type: 'local', wsId: wsMatch[1], gateId: session.gateId }
       return config
     }
-  }
-
-  // Gate portal fallback: on /unlock/:gateId paths, look up session by gate ID.
-  const unlockMatch = window.location.pathname.match(/\/unlock\/([^/]+)/)
-  if (unlockMatch) {
-    const gateId = unlockMatch[1]
-    try {
-      const raw = localStorage.getItem(`gaty_session_${gateId}`)
-      if (raw) {
-        const s = JSON.parse(raw) as GateSession
-        if (s?.type === 'member' && s?.access_token && s?.workspace_id) {
-          config.headers.Authorization = `Bearer ${s.access_token}`
-          config._authMeta = { type: 'local', wsId: s.workspace_id, gateId }
-        }
-      }
-    } catch { /* ignore */ }
   }
 
   return config
@@ -83,7 +68,7 @@ api.interceptors.response.use(
         const loginUrl = `/workspaces/${_authMeta.wsId}/login?${params.toString()}`
         if (window.location.pathname !== `/workspaces/${_authMeta.wsId}/login`) window.location.href = loginUrl
       } else {
-        if (window.location.pathname !== '/unlock') window.location.href = '/unlock'
+        if (window.location.pathname !== '/') window.location.href = '/'
       }
       return Promise.reject(error)
     }
@@ -118,6 +103,8 @@ api.interceptors.response.use(
       localStorage.setItem('access_token', tokens.access_token)
       localStorage.setItem('refresh_token', tokens.refresh_token)
       api.defaults.headers.common.Authorization = `Bearer ${tokens.access_token}`
+      // Sync Zustand store so hooks using accessToken (e.g. SSE) reconnect with the fresh token.
+      useAuthStore.getState().updateTokens(tokens.access_token, tokens.refresh_token)
       drainQueue(null, tokens.access_token)
       original.headers.Authorization = `Bearer ${tokens.access_token}`
       return api(original)

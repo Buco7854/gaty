@@ -72,7 +72,7 @@ type CreateMemberInput struct {
 		LocalUsername string              `json:"local_username" minLength:"1" maxLength:"50"`
 		DisplayName   *string             `json:"display_name,omitempty" maxLength:"100"`
 		Password      string              `json:"password" minLength:"8"`
-		Role          model.WorkspaceRole `json:"role"`
+		Role          model.WorkspaceRole `json:"role,omitempty" default:"MEMBER"`
 	}
 }
 
@@ -106,7 +106,7 @@ type InviteUserInput struct {
 	Body        struct {
 		UserID      uuid.UUID           `json:"user_id"`
 		DisplayName *string             `json:"display_name,omitempty" maxLength:"100"`
-		Role        model.WorkspaceRole `json:"role"`
+		Role        model.WorkspaceRole `json:"role,omitempty" default:"MEMBER"`
 	}
 }
 
@@ -168,9 +168,12 @@ type UpdateMemberInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	MemberID    uuid.UUID `path:"member_id"`
 	Body        struct {
-		DisplayName *string              `json:"display_name,omitempty" maxLength:"100"`
-		Role        *model.WorkspaceRole `json:"role,omitempty"`
-		AuthConfig  map[string]any       `json:"auth_config,omitempty"`
+		// Omit a field to leave it unchanged.
+		// auth_config: null = reset to NULL (inherit from workspace), omit = unchanged.
+		DisplayName   *string                              `json:"display_name,omitempty" maxLength:"100"`
+		LocalUsername *string                              `json:"local_username,omitempty" minLength:"1" maxLength:"50"`
+		Role          *model.WorkspaceRole                 `json:"role,omitempty"`
+		AuthConfig    repository.Optional[map[string]any]  `json:"auth_config,omitempty"`
 	}
 }
 
@@ -178,9 +181,12 @@ func (h *MemberHandler) Update(ctx context.Context, input *UpdateMemberInput) (*
 	if input.Body.Role != nil && *input.Body.Role == model.RoleOwner {
 		return nil, huma.Error400BadRequest("cannot assign OWNER role")
 	}
-	membership, err := h.memberships.Update(ctx, input.MemberID, input.WorkspaceID, input.Body.DisplayName, input.Body.Role, input.Body.AuthConfig)
+	membership, err := h.memberships.Update(ctx, input.MemberID, input.WorkspaceID, input.Body.DisplayName, input.Body.LocalUsername, input.Body.Role, input.Body.AuthConfig)
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, huma.Error404NotFound("member not found")
+	}
+	if errors.Is(err, repository.ErrAlreadyExists) {
+		return nil, huma.Error409Conflict("local_username already taken in this workspace")
 	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to update member")

@@ -5,6 +5,7 @@ export interface GateEvent {
   gate_id: string
   workspace_id: string
   status: string
+  status_metadata?: Record<string, unknown>
 }
 
 /**

@@ -21,13 +21,13 @@ export const membersApi = {
     display_name?: string
     password: string
     role: string
-    auth_config?: { session_duration?: number }
   }) =>
     api.post<WorkspaceMembership>(`/workspaces/${wsId}/members`, params).then((r) => r.data),
 
   update: (wsId: string, memberId: string, params: {
     role?: string
     display_name?: string
+    local_username?: string
     auth_config?: Record<string, unknown>
   }) =>
     api.patch<WorkspaceMembership>(`/workspaces/${wsId}/members/${memberId}`, params).then((r) => r.data),

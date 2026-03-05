@@ -286,6 +286,7 @@ export default function SettingsPage() {
   const [ssoAuth, setSsoAuth] = useState<boolean>(false)
   const [apiTokenAuth, setApiTokenAuth] = useState<boolean>(false)
   const [apiTokenMax, setApiTokenMax] = useState<number>(5)
+  const [sessionDuration, setSessionDuration] = useState<number | string>('')
 
   // Sync MAC state once data is loaded (only on first load)
   const [macInitialized, setMacInitialized] = useState(false)
@@ -294,6 +295,7 @@ export default function SettingsPage() {
     setSsoAuth((macData.sso as boolean) ?? false)
     setApiTokenAuth((macData.api_token as boolean) ?? false)
     setApiTokenMax((macData.api_token_max as number) ?? 5)
+    if (macData.session_duration != null) setSessionDuration(macData.session_duration as number)
     setMacInitialized(true)
   }
 
@@ -339,11 +341,13 @@ export default function SettingsPage() {
   }
 
   function handleSaveMemberAuth() {
+    const dur = typeof sessionDuration === 'number' ? sessionDuration : (sessionDuration === '' ? null : parseInt(String(sessionDuration), 10))
     updateMAC.mutate({
       password: passwordAuth,
       sso: ssoAuth,
       api_token: apiTokenAuth,
       api_token_max: apiTokenMax,
+      session_duration: dur,
     })
   }
 
@@ -442,6 +446,16 @@ export default function SettingsPage() {
               w={120}
             />
           )}
+          <NumberInput
+            label={t('settings.memberSessionDuration')}
+            description={t('settings.memberSessionDurationHint')}
+            value={sessionDuration}
+            onChange={setSessionDuration}
+            min={0}
+            step={3600}
+            placeholder={t('settings.memberSessionDurationPlaceholder')}
+            w={200}
+          />
         </Stack>
 
         {macSaved && (

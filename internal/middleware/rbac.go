@@ -15,7 +15,7 @@ import (
 // GateManager is a Huma per-operation middleware that allows ADMIN/OWNER unconditionally,
 // and MEMBER only if they have gate:manage permission on the gate in the {gate_id} path param.
 // Must be chained after WorkspaceMember (requires ws_role and ws_membership_id in context).
-func GateManager(api huma.API, policyRepo *repository.PolicyRepository) func(huma.Context, func(huma.Context)) {
+func GateManager(api huma.API, policyRepo repository.PolicyRepository) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
 		role, _ := WorkspaceRoleFromContext(ctx.Context())
 		if role == model.RoleAdmin || role == model.RoleOwner {
@@ -50,7 +50,7 @@ var roleOrder = map[model.WorkspaceRole]int{
 	model.RoleOwner:  3,
 }
 
-func workspaceAccess(api huma.API, _ *repository.WorkspaceRepository, memberRepo *repository.WorkspaceMembershipRepository, minRole model.WorkspaceRole) func(huma.Context, func(huma.Context)) {
+func workspaceAccess(api huma.API, _ repository.WorkspaceRepository, memberRepo repository.WorkspaceMembershipRepository, minRole model.WorkspaceRole) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
 		wsID, err := uuid.Parse(chi.URLParamFromCtx(ctx.Context(), "ws_id"))
 		if err != nil {
@@ -109,12 +109,12 @@ func workspaceAccess(api huma.API, _ *repository.WorkspaceRepository, memberRepo
 
 // WorkspaceMember is a Huma per-operation middleware that requires any role in the workspace.
 // Supports both platform users (workspace_memberships.user_id) and managed members (local JWT).
-func WorkspaceMember(api huma.API, wsRepo *repository.WorkspaceRepository, memberRepo *repository.WorkspaceMembershipRepository) func(huma.Context, func(huma.Context)) {
+func WorkspaceMember(api huma.API, wsRepo repository.WorkspaceRepository, memberRepo repository.WorkspaceMembershipRepository) func(huma.Context, func(huma.Context)) {
 	return workspaceAccess(api, wsRepo, memberRepo, model.RoleMember)
 }
 
 // WorkspaceAdmin is a Huma per-operation middleware that requires OWNER or ADMIN.
-func WorkspaceAdmin(api huma.API, wsRepo *repository.WorkspaceRepository, memberRepo *repository.WorkspaceMembershipRepository) func(huma.Context, func(huma.Context)) {
+func WorkspaceAdmin(api huma.API, wsRepo repository.WorkspaceRepository, memberRepo repository.WorkspaceMembershipRepository) func(huma.Context, func(huma.Context)) {
 	return workspaceAccess(api, wsRepo, memberRepo, model.RoleAdmin)
 }
 

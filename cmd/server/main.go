@@ -16,7 +16,7 @@ import (
 	"github.com/Buco7854/gaty/internal/handler"
 	"github.com/Buco7854/gaty/internal/middleware"
 	internalmqtt "github.com/Buco7854/gaty/internal/mqtt"
-	"github.com/Buco7854/gaty/internal/repository"
+	repopg "github.com/Buco7854/gaty/internal/repository/postgres"
 	"github.com/Buco7854/gaty/internal/service"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
@@ -55,7 +55,7 @@ func main() {
 	router.Use(chimw.RealIP)
 	router.Use(middleware.ClientIPInjector())
 	router.Use(chimw.Logger)
-	router.Use(chimw.Recoverer)
+	router.Use(middleware.JSONRecoverer)
 	router.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -64,7 +64,7 @@ func main() {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
-	router.Use(middleware.TenantResolver(pool))
+	router.Use(middleware.TenantResolver(pool, redisClient))
 
 	// MQTT client (non-fatal: API works without broker)
 	mqttClient, err := internalmqtt.New(cfg.MQTTBroker, cfg.MQTTUsername, cfg.MQTTPassword)
@@ -75,16 +75,17 @@ func main() {
 	}
 
 	// Repositories
-	userRepo := repository.NewUserRepository(pool)
-	credRepo := repository.NewCredentialRepository(pool)
-	wsRepo := repository.NewWorkspaceRepository(pool)
-	membershipRepo := repository.NewWorkspaceMembershipRepository(pool)
-	memberCredRepo := repository.NewMembershipCredentialRepository(pool)
-	gateRepo := repository.NewGateRepository(pool)
-	gatePinRepo := repository.NewGatePinRepository(pool)
-	policyRepo := repository.NewPolicyRepository(pool)
-	auditRepo := repository.NewAuditRepository(pool)
-	domainRepo := repository.NewCustomDomainRepository(pool)
+	userRepo := repopg.NewUserRepository(pool)
+	credRepo := repopg.NewCredentialRepository(pool)
+	wsRepo := repopg.NewWorkspaceRepository(pool)
+	membershipRepo := repopg.NewWorkspaceMembershipRepository(pool)
+	memberCredRepo := repopg.NewMembershipCredentialRepository(pool)
+	gateRepo := repopg.NewGateRepository(pool)
+	gatePinRepo := repopg.NewGatePinRepository(pool)
+	policyRepo := repopg.NewPolicyRepository(pool)
+	scheduleRepo := repopg.NewAccessScheduleRepository(pool)
+	auditRepo := repopg.NewAuditRepository(pool)
+	domainRepo := repopg.NewCustomDomainRepository(pool)
 
 	// Subscribe to gate status updates from MQTT (bridge to Redis Pub/Sub for SSE)
 	if mqttClient != nil {
@@ -97,6 +98,11 @@ func main() {
 	authSvc := service.NewAuthService(userRepo, credRepo, membershipRepo, memberCredRepo, wsRepo, redisClient, cfg.JWTSecret, cfg.GlobalSessionDuration)
 	membershipSvc := service.NewMembershipService(membershipRepo, memberCredRepo, wsRepo)
 	ssoSvc := service.NewSSOService(wsRepo, membershipRepo, memberCredRepo, redisClient, cfg.BaseURL)
+
+	// Gate TTL worker: marks gates unresponsive when last_seen_at > DefaultGateTTL ago.
+	ttlCtx, ttlCancel := context.WithCancel(ctx)
+	defer ttlCancel()
+	go service.NewGateTTLWorker(gateRepo, redisClient, service.DefaultGateTTL).Run(ttlCtx)
 
 	api := humachi.New(router, huma.DefaultConfig("GATY API", "0.1.0"))
 
@@ -125,12 +131,14 @@ func main() {
 			}
 		}{}
 		resp.Body.Status = "ok"
-		if err := pool.Ping(ctx); err != nil {
+		hctx, hcancel := context.WithTimeout(ctx, 3*time.Second)
+		defer hcancel()
+		if err := pool.Ping(hctx); err != nil {
 			resp.Body.Database = "unreachable"
 		} else {
 			resp.Body.Database = "ok"
 		}
-		if err := redisClient.Ping(ctx).Err(); err != nil {
+		if err := redisClient.Ping(hctx).Err(); err != nil {
 			resp.Body.Redis = "unreachable"
 		} else {
 			resp.Body.Redis = "ok"
@@ -144,13 +152,17 @@ func main() {
 	// Register route groups
 	handler.NewAuthHandler(authSvc, userRepo).RegisterRoutes(api, requireAuth)
 	handler.NewWorkspaceHandler(wsRepo).RegisterRoutes(api, requireAuth, wsAdmin)
-	handler.NewGateHandler(gateRepo, policyRepo, auditRepo, mqttClient).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
-	handler.NewPolicyHandler(policyRepo).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
+	handler.NewGateHandler(gateRepo, policyRepo, scheduleRepo, auditRepo, mqttClient).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
+	handler.NewPolicyHandler(policyRepo, scheduleRepo).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
 	handler.NewMemberHandler(membershipSvc).RegisterRoutes(api, wsAdmin)
-	handler.NewGatePinHandler(gatePinRepo, gateRepo, policyRepo, mqttClient, redisClient, authSvc).RegisterRoutes(api, wsMember, wsGateManager)
+	handler.NewGatePinHandler(gatePinRepo, gateRepo, policyRepo, scheduleRepo, mqttClient, redisClient, authSvc).RegisterRoutes(api, wsMember, wsGateManager)
+	handler.NewAccessScheduleHandler(scheduleRepo).RegisterRoutes(api, wsAdmin)
 	handler.NewSSOHandler(ssoSvc, authSvc, wsRepo, cfg.FrontendURL).RegisterRoutes(api, wsAdmin)
 	handler.NewCredentialHandler(credRepo, memberCredRepo, membershipRepo).RegisterRoutes(api, requireAuth, requireMembership, wsAdmin)
 	handler.NewCustomDomainHandler(domainRepo, gateRepo).RegisterRoutes(api, wsMember, wsGateManager)
+
+	// Inbound: gate-to-server status push (gate token auth, no workspace middleware).
+	handler.NewGateInboundHandler(gateRepo, redisClient).RegisterRoutes(api)
 
 	// SSE: raw chi route (long-lived, not Huma)
 	handler.NewSSEHandler(authSvc, redisClient).RegisterRoutes(router)

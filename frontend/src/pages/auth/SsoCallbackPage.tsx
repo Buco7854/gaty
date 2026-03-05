@@ -26,7 +26,8 @@ export default function SsoCallbackPage() {
     const workspaceId = params.get('workspace_id')
 
     if (!error && accessToken && refreshToken && gateId) {
-      const wsId = workspaceId ?? getWorkspaceIdFromJWT(accessToken) ?? ''
+      const wsId = workspaceId ?? getWorkspaceIdFromJWT(accessToken) ?? null
+      if (!wsId) { navigate('/', { replace: true }); return }
       const session: GateSession = {
         type: 'member',
         access_token: accessToken,
@@ -34,7 +35,8 @@ export default function SsoCallbackPage() {
         workspace_id: wsId,
       }
       localStorage.setItem(`gaty_session_${gateId}`, JSON.stringify(session))
-      navigate(`/unlock/${gateId}`, { replace: true })
+      // Navigate to the proper gate portal route, not the legacy /unlock path.
+      navigate(`/workspaces/${wsId}/gates/${gateId}/public`, { replace: true, state: { justAuthenticated: true } })
       return
     }
 
@@ -44,15 +46,13 @@ export default function SsoCallbackPage() {
           `/workspaces/${workspaceId}/login?gate_id=${encodeURIComponent(gateId)}&error=${encodeURIComponent(error)}`,
           { replace: true }
         )
-      } else if (gateId) {
-        navigate(`/unlock/${gateId}`, { replace: true })
       } else {
-        navigate('/unlock', { replace: true })
+        navigate('/', { replace: true })
       }
       return
     }
 
-    navigate('/unlock', { replace: true })
+    navigate('/', { replace: true })
   }, [navigate])
 
   return (
