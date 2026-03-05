@@ -6,7 +6,7 @@ import type { GateSession } from '@/api/public'
 import type { DomainResolveResult } from '@/types'
 import { getPermissionsFromJWT, getRoleFromJWT } from '@/utils/session'
 import { useTranslation } from 'react-i18next'
-import { notifications } from '@mantine/notifications'
+import { notifySuccess, notifyError } from '@/lib/notify'
 import { Center, Stack, Group, Text, Title, Loader, Button, Anchor } from '@mantine/core'
 import { XCircle, Hash, KeyRound, LayoutGrid, Users } from 'lucide-react'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -129,15 +129,15 @@ export default function GatePortalPage() {
   const triggerMutation = useMutation({
     mutationFn: (action: 'open' | 'close') => triggerWithSession(session!, action),
     onSuccess: () => {
-      notifications.show({ color: 'green', message: t('pinpad.gateOpened'), autoClose: 3000 })
+      notifySuccess(t('pinpad.gateOpened'))
     },
     onError: (err: unknown) => {
       const status = (err as { response?: { status?: number } })?.response?.status
       if (status === 401) {
         clearSession()
-        notifications.show({ color: 'red', message: t('pinpad.sessionExpired'), autoClose: 4000 })
+        notifyError(null, t('pinpad.sessionExpired'))
       } else {
-        notifications.show({ color: 'red', message: t('pinpad.unreachable'), autoClose: 4000 })
+        notifyError(null, t('pinpad.unreachable'))
       }
     },
   })
