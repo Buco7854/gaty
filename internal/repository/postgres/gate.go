@@ -62,33 +62,16 @@ func unmarshalStatusRules(data []byte) []model.StatusRule {
 	return rules
 }
 
-func scanGateRow(row pgx.Row, g *model.Gate) error {
-	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules []byte
-	err := row.Scan(
-		&g.ID, &g.WorkspaceID, &g.Name,
-		&g.IntegrationType, &g.IntegrationConfig,
-		&rawOpen, &rawClose, &rawStatus,
-		&g.Status, &g.LastSeenAt,
-		&rawMeta, &rawMetaCfg, &rawStatusRules,
-		&g.CreatedAt,
-	)
-	if err != nil {
-		return err
-	}
-	g.OpenConfig = unmarshalActionConfig(rawOpen)
-	g.CloseConfig = unmarshalActionConfig(rawClose)
-	g.StatusConfig = unmarshalActionConfig(rawStatus)
-	if len(rawMeta) > 0 {
-		_ = json.Unmarshal(rawMeta, &g.StatusMetadata)
-	}
-	g.MetaConfig = unmarshalMetaConfig(rawMetaCfg)
-	g.StatusRules = unmarshalStatusRules(rawStatusRules)
-	return nil
+// rowScanner is satisfied by both pgx.Row (single-row query) and pgx.Rows (multi-row iteration).
+type rowScanner interface {
+	Scan(dest ...any) error
 }
 
-func scanGateRows(rows pgx.Rows, g *model.Gate) error {
+// scanGate fills g from a row that yields colsFull columns.
+// Callers handle ErrNoRows themselves (pgx.Row.Scan returns it directly).
+func scanGate(s rowScanner, g *model.Gate) error {
 	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules []byte
-	err := rows.Scan(
+	err := s.Scan(
 		&g.ID, &g.WorkspaceID, &g.Name,
 		&g.IntegrationType, &g.IntegrationConfig,
 		&rawOpen, &rawClose, &rawStatus,
@@ -127,39 +110,49 @@ func (r *gateRepository) Create(ctx context.Context, wsID uuid.UUID, p repositor
 		p.IntegrationConfig = map[string]any{}
 	}
 
-	var gateID uuid.UUID
+	// Single round-trip: INSERT + RETURNING gate_token + all gate columns.
+	var g model.Gate
 	var token string
+	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules []byte
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO gates (workspace_id, name, integration_type, integration_config,
 		                    open_config, close_config, status_config, meta_config, status_rules)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		 RETURNING id, gate_token`,
+		 RETURNING gate_token, `+colsFull,
 		wsID, p.Name, p.IntegrationType, p.IntegrationConfig,
 		marshalActionConfig(p.OpenConfig),
 		marshalActionConfig(p.CloseConfig),
 		marshalActionConfig(p.StatusConfig),
 		marshalJSONSlice(p.MetaConfig, "[]"),
 		marshalJSONSlice(p.StatusRules, "[]"),
-	).Scan(&gateID, &token)
+	).Scan(
+		&token,
+		&g.ID, &g.WorkspaceID, &g.Name,
+		&g.IntegrationType, &g.IntegrationConfig,
+		&rawOpen, &rawClose, &rawStatus,
+		&g.Status, &g.LastSeenAt,
+		&rawMeta, &rawMetaCfg, &rawStatusRules,
+		&g.CreatedAt,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("create gate: %w", err)
 	}
-
-	gate, err := r.GetByID(ctx, gateID, wsID)
-	if err != nil {
-		return nil, err
+	g.OpenConfig = unmarshalActionConfig(rawOpen)
+	g.CloseConfig = unmarshalActionConfig(rawClose)
+	g.StatusConfig = unmarshalActionConfig(rawStatus)
+	if len(rawMeta) > 0 {
+		_ = json.Unmarshal(rawMeta, &g.StatusMetadata)
 	}
-	gate.GateToken = &token
-	return gate, nil
+	g.MetaConfig = unmarshalMetaConfig(rawMetaCfg)
+	g.StatusRules = unmarshalStatusRules(rawStatusRules)
+	g.GateToken = &token
+	return &g, nil
 }
 
 func (r *gateRepository) GetByID(ctx context.Context, gateID, wsID uuid.UUID) (*model.Gate, error) {
 	var g model.Gate
-	err := scanGateRow(
-		r.pool.QueryRow(ctx,
-			`SELECT `+colsFull+` FROM gates WHERE id = $1 AND workspace_id = $2`,
-			gateID, wsID,
-		),
+	err := scanGate(
+		r.pool.QueryRow(ctx, `SELECT `+colsFull+` FROM gates WHERE id = $1 AND workspace_id = $2`, gateID, wsID),
 		&g,
 	)
 	if err == pgx.ErrNoRows {
@@ -173,7 +166,7 @@ func (r *gateRepository) GetByID(ctx context.Context, gateID, wsID uuid.UUID) (*
 
 func (r *gateRepository) Update(ctx context.Context, gateID, wsID uuid.UUID, p repository.UpdateGateParams) (*model.Gate, error) {
 	var g model.Gate
-	err := scanGateRow(
+	err := scanGate(
 		r.pool.QueryRow(ctx,
 			`UPDATE gates
 			 SET name = $3, open_config = $4, close_config = $5, status_config = $6,
@@ -199,10 +192,7 @@ func (r *gateRepository) Update(ctx context.Context, gateID, wsID uuid.UUID, p r
 }
 
 func (r *gateRepository) Delete(ctx context.Context, gateID, wsID uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx,
-		`DELETE FROM gates WHERE id = $1 AND workspace_id = $2`,
-		gateID, wsID,
-	)
+	tag, err := r.pool.Exec(ctx, `DELETE FROM gates WHERE id = $1 AND workspace_id = $2`, gateID, wsID)
 	if err != nil {
 		return fmt.Errorf("delete gate: %w", err)
 	}
@@ -214,11 +204,8 @@ func (r *gateRepository) Delete(ctx context.Context, gateID, wsID uuid.UUID) err
 
 func (r *gateRepository) GetByIDPublic(ctx context.Context, gateID uuid.UUID) (*model.Gate, error) {
 	var g model.Gate
-	err := scanGateRow(
-		r.pool.QueryRow(ctx,
-			`SELECT `+colsFull+` FROM gates WHERE id = $1`,
-			gateID,
-		),
+	err := scanGate(
+		r.pool.QueryRow(ctx, `SELECT `+colsFull+` FROM gates WHERE id = $1`, gateID),
 		&g,
 	)
 	if err == pgx.ErrNoRows {
@@ -250,11 +237,8 @@ func (r *gateRepository) GetPublicInfo(ctx context.Context, gateID uuid.UUID) (*
 
 func (r *gateRepository) GetByToken(ctx context.Context, gateID uuid.UUID, token string) (*model.Gate, error) {
 	var g model.Gate
-	err := scanGateRow(
-		r.pool.QueryRow(ctx,
-			`SELECT `+colsFull+` FROM gates WHERE id = $1 AND gate_token = $2`,
-			gateID, token,
-		),
+	err := scanGate(
+		r.pool.QueryRow(ctx, `SELECT `+colsFull+` FROM gates WHERE id = $1 AND gate_token = $2`, gateID, token),
 		&g,
 	)
 	if err == pgx.ErrNoRows {
@@ -283,16 +267,23 @@ func (r *gateRepository) UpdateStatus(ctx context.Context, gateID uuid.UUID, sta
 }
 
 func (r *gateRepository) MarkUnresponsiveWithIDs(ctx context.Context, ttl time.Duration) ([]repository.UnresponsiveGate, error) {
+	// Compute the cutoff timestamp on the application side so it uses the app's clock
+	// (consistent with time.Since checks in the model) and avoids fragile string interval formatting.
+	cutoff := time.Now().Add(-ttl)
+
 	rows, err := r.pool.Query(ctx,
 		`UPDATE gates
 		 SET status = $1
 		 WHERE last_seen_at IS NOT NULL
-		   AND last_seen_at < NOW() - $2::interval
-		   AND status NOT IN ($1, $3)
+		   AND last_seen_at < $2
+		   AND status NOT IN ($1, $3, $4)
 		 RETURNING id, workspace_id`,
 		string(model.GateStatusUnresponsive),
-		fmt.Sprintf("%d seconds", int(ttl.Seconds())),
+		cutoff,
 		string(model.GateStatusUnknown),
+		// Don't override "offline": a gate may self-report offline before going quiet,
+		// and marking it "unresponsive" would lose that intentional state.
+		string(model.GateStatusOffline),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("mark unresponsive: %w", err)
@@ -313,8 +304,7 @@ func (r *gateRepository) MarkUnresponsiveWithIDs(ctx context.Context, ttl time.D
 func (r *gateRepository) GetToken(ctx context.Context, gateID, wsID uuid.UUID) (string, error) {
 	var token string
 	err := r.pool.QueryRow(ctx,
-		`SELECT gate_token FROM gates WHERE id = $1 AND workspace_id = $2`,
-		gateID, wsID,
+		`SELECT gate_token FROM gates WHERE id = $1 AND workspace_id = $2`, gateID, wsID,
 	).Scan(&token)
 	if err == pgx.ErrNoRows {
 		return "", repository.ErrNotFound
@@ -374,7 +364,7 @@ func (r *gateRepository) ListForWorkspace(ctx context.Context, wsID uuid.UUID, r
 	var result []model.Gate
 	for rows.Next() {
 		var g model.Gate
-		if err := scanGateRows(rows, &g); err != nil {
+		if err := scanGate(rows, &g); err != nil {
 			return nil, fmt.Errorf("scan gate: %w", err)
 		}
 		result = append(result, g)

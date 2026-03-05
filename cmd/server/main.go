@@ -64,7 +64,7 @@ func main() {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
-	router.Use(middleware.TenantResolver(pool))
+	router.Use(middleware.TenantResolver(pool, redisClient))
 
 	// MQTT client (non-fatal: API works without broker)
 	mqttClient, err := internalmqtt.New(cfg.MQTTBroker, cfg.MQTTUsername, cfg.MQTTPassword)
@@ -131,12 +131,14 @@ func main() {
 			}
 		}{}
 		resp.Body.Status = "ok"
-		if err := pool.Ping(ctx); err != nil {
+		hctx, hcancel := context.WithTimeout(ctx, 3*time.Second)
+		defer hcancel()
+		if err := pool.Ping(hctx); err != nil {
 			resp.Body.Database = "unreachable"
 		} else {
 			resp.Body.Database = "ok"
 		}
-		if err := redisClient.Ping(ctx).Err(); err != nil {
+		if err := redisClient.Ping(hctx).Err(); err != nil {
 			resp.Body.Redis = "unreachable"
 		} else {
 			resp.Body.Redis = "ok"

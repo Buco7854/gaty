@@ -23,9 +23,14 @@ import (
 )
 
 const (
-	maxPINAttempts    = 5
-	pinRateLimitTTL   = 15 * time.Minute
-	minUnlockDuration = 400 * time.Millisecond
+	// maxPINAttempts is the per-IP, per-gate failed-attempt ceiling within pinRateLimitTTL.
+	maxPINAttempts = 5
+	// maxGatePINAttempts is the total attempt ceiling across all IPs for a single gate.
+	// Higher than the per-IP limit to accommodate legitimate multi-user traffic,
+	// while still bounding distributed brute-force attacks.
+	maxGatePINAttempts = 50
+	pinRateLimitTTL    = 15 * time.Minute
+	minUnlockDuration  = 400 * time.Millisecond
 )
 
 // dummyPINHash is a pre-computed bcrypt hash used when a gate has no PINs,
@@ -237,13 +242,19 @@ func checkPINRules(meta pinMetadata, now time.Time) error {
 // validatePIN checks the rate limit, finds the matching PIN and validates its rules.
 // Returns the matched pin and parsed metadata, or a Huma error.
 func (h *GatePinHandler) validatePIN(ctx context.Context, gateID uuid.UUID, pin, ip string) (*model.GatePin, pinMetadata, error) {
-	rateLimitKey := fmt.Sprintf("rl:unlock:%s:%s", gateID, ip)
+	// Dual rate limit in a single pipeline:
+	//   1. Per-IP, per-gate: blocks a single attacker (threshold: maxPINAttempts).
+	//   2. Per-gate total: blocks distributed brute-force across many IPs (threshold: maxGatePINAttempts).
+	ipKey := fmt.Sprintf("rl:unlock:%s:%s", gateID, ip)
+	gateKey := fmt.Sprintf("rl:unlock:gate:%s", gateID)
 	pipe := h.redis.TxPipeline()
-	incrCmd := pipe.Incr(ctx, rateLimitKey)
-	pipe.ExpireNX(ctx, rateLimitKey, pinRateLimitTTL)
+	incrIPCmd := pipe.Incr(ctx, ipKey)
+	pipe.ExpireNX(ctx, ipKey, pinRateLimitTTL)
+	incrGateCmd := pipe.Incr(ctx, gateKey)
+	pipe.ExpireNX(ctx, gateKey, pinRateLimitTTL)
 	if _, err := pipe.Exec(ctx); err != nil {
 		slog.Warn("pin validate: redis rate limit error, continuing without limiting", "error", err)
-	} else if incrCmd.Val() > maxPINAttempts {
+	} else if incrIPCmd.Val() > maxPINAttempts || incrGateCmd.Val() > maxGatePINAttempts {
 		return nil, pinMetadata{}, huma.Error429TooManyRequests("too many attempts, try again later")
 	}
 
@@ -285,8 +296,10 @@ func (h *GatePinHandler) validatePIN(ctx context.Context, gateID uuid.UUID, pin,
 		}
 	}
 
-	// Reset rate limit on success.
-	h.redis.Del(ctx, rateLimitKey)
+	// Reset the per-IP counter on success (legitimate user gets a fresh slate).
+	// The per-gate counter is intentionally NOT reset: a correct guess from one IP
+	// should not grant remaining distributed attempts to other IPs.
+	h.redis.Del(ctx, ipKey)
 	return matched, meta, nil
 }
 
