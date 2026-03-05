@@ -129,13 +129,14 @@ type UpdatePINInput struct {
 	GateID      uuid.UUID `path:"gate_id"`
 	PinID       uuid.UUID `path:"pin_id"`
 	Body        struct {
-		Label    string         `json:"label" minLength:"1" maxLength:"100"`
+		// Omit a field to leave it unchanged.
+		Label    *string        `json:"label,omitempty" minLength:"1" maxLength:"100"`
 		Metadata map[string]any `json:"metadata,omitempty"`
 	}
 }
 
 func (h *GatePinHandler) UpdatePIN(ctx context.Context, input *UpdatePINInput) (*GatePinOutput, error) {
-	pin, err := h.pins.Update(ctx, input.PinID, input.GateID, input.Body.Label, input.Body.Metadata)
+	pin, err := h.pins.Update(ctx, input.PinID, input.GateID, input.Body.Label, input.Body.Metadata) // Label nil=unchanged
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, huma.Error404NotFound("pin not found")
 	}

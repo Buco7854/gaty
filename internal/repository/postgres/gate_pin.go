@@ -78,13 +78,14 @@ func (r *gatePinRepository) List(ctx context.Context, gateID uuid.UUID) ([]*mode
 	return result, rows.Err()
 }
 
-func (r *gatePinRepository) Update(ctx context.Context, pinID, gateID uuid.UUID, label string, metadata map[string]any) (*model.GatePin, error) {
+func (r *gatePinRepository) Update(ctx context.Context, pinID, gateID uuid.UUID, label *string, metadata map[string]any) (*model.GatePin, error) {
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
 	p, err := scanGatePin(r.pool.QueryRow(ctx,
 		`UPDATE gate_access_codes
-		 SET label = $1, metadata = metadata || $2
+		 SET label = COALESCE($1, label),
+		     metadata = metadata || $2
 		 WHERE id = $3 AND gate_id = $4
 		 RETURNING `+gatePinColumns,
 		label, metadata, pinID, gateID,

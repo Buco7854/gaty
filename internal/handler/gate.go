@@ -155,7 +155,9 @@ type UpdateGateInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	GateID      uuid.UUID `path:"gate_id"`
 	Body        struct {
-		Name         string              `json:"name" minLength:"1"`
+		// All fields are optional: omit a field to leave it unchanged.
+		// For meta_config and status_rules, send an empty array [] to clear.
+		Name         *string             `json:"name,omitempty" minLength:"1"`
 		OpenConfig   *model.ActionConfig `json:"open_config,omitempty"`
 		CloseConfig  *model.ActionConfig `json:"close_config,omitempty"`
 		StatusConfig *model.ActionConfig `json:"status_config,omitempty"`
@@ -166,11 +168,11 @@ type UpdateGateInput struct {
 
 func (h *GateHandler) Update(ctx context.Context, input *UpdateGateInput) (*GateOutput, error) {
 	gate, err := h.gates.Update(ctx, input.GateID, input.WorkspaceID, repository.UpdateGateParams{
-		Name:         input.Body.Name,
+		Name:         input.Body.Name, // nil when omitted
 		OpenConfig:   input.Body.OpenConfig,
 		CloseConfig:  input.Body.CloseConfig,
 		StatusConfig: input.Body.StatusConfig,
-		MetaConfig:   input.Body.MetaConfig,
+		MetaConfig:   input.Body.MetaConfig, // nil=unchanged, []=clear
 		StatusRules:  input.Body.StatusRules,
 	})
 	if errors.Is(err, repository.ErrNotFound) {

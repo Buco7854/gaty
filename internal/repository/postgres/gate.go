@@ -105,6 +105,21 @@ func marshalJSONSlice[T any](v []T, fallback string) json.RawMessage {
 	return json.RawMessage(b)
 }
 
+// marshalJSONSliceOrNull is the PATCH-safe variant:
+//   - nil slice  -> nil (SQL NULL -> COALESCE keeps the existing column value)
+//   - empty slice -> "[]" (explicit clear)
+//   - non-empty  -> marshaled JSON
+func marshalJSONSliceOrNull[T any](v []T) json.RawMessage {
+	if v == nil {
+		return nil
+	}
+	if len(v) == 0 {
+		return json.RawMessage("[]")
+	}
+	b, _ := json.Marshal(v)
+	return json.RawMessage(b)
+}
+
 func (r *gateRepository) Create(ctx context.Context, wsID uuid.UUID, p repository.CreateGateParams) (*model.Gate, error) {
 	if p.IntegrationConfig == nil {
 		p.IntegrationConfig = map[string]any{}
@@ -169,16 +184,20 @@ func (r *gateRepository) Update(ctx context.Context, gateID, wsID uuid.UUID, p r
 	err := scanGate(
 		r.pool.QueryRow(ctx,
 			`UPDATE gates
-			 SET name = $3, open_config = $4, close_config = $5, status_config = $6,
-			     meta_config = $7, status_rules = $8
+			 SET name        = COALESCE($3,       name),
+			     open_config = COALESCE($4::jsonb, open_config),
+			     close_config = COALESCE($5::jsonb, close_config),
+			     status_config = COALESCE($6::jsonb, status_config),
+			     meta_config = COALESCE($7::jsonb, meta_config),
+			     status_rules = COALESCE($8::jsonb, status_rules)
 			 WHERE id = $1 AND workspace_id = $2
 			 RETURNING `+colsFull,
 			gateID, wsID, p.Name,
 			marshalActionConfig(p.OpenConfig),
 			marshalActionConfig(p.CloseConfig),
 			marshalActionConfig(p.StatusConfig),
-			marshalJSONSlice(p.MetaConfig, "[]"),
-			marshalJSONSlice(p.StatusRules, "[]"),
+			marshalJSONSliceOrNull(p.MetaConfig),
+			marshalJSONSliceOrNull(p.StatusRules),
 		),
 		&g,
 	)
