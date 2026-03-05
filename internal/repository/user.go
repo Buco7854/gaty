@@ -13,6 +13,7 @@ import (
 
 var ErrNotFound = errors.New("not found")
 var ErrAlreadyExists = errors.New("already exists")
+var ErrUnauthorized = errors.New("unauthorized")
 
 type UserRepository struct {
 	pool *pgxpool.Pool

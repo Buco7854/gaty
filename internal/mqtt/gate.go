@@ -26,19 +26,32 @@ func CommandTopic(wsID, gateID uuid.UUID) string {
 	return fmt.Sprintf("workspace_%s/gates/%s/command", wsID, gateID)
 }
 
+// statusPayload is the message a gate publishes on its status topic.
+//
+// Required fields:
+//   - token  — the gate's authentication secret (gate_token column)
+//   - status — system-level state string (e.g. "open", "closed", "online", "offline")
+//
+// Optional field:
+//   - meta — arbitrary metadata (e.g. {"lora.snr": -10.5, "battery": 85})
+//     Stored in status_metadata and shown to users with gate:read_status permission.
 type statusPayload struct {
-	Status string `json:"status"`
+	Token  string         `json:"token"`
+	Status string         `json:"status"`
+	Meta   map[string]any `json:"meta,omitempty"`
 }
 
 // GateEvent is published to Redis Pub/Sub when a gate status changes.
 type GateEvent struct {
-	GateID      string `json:"gate_id"`
-	WorkspaceID string `json:"workspace_id"`
-	Status      string `json:"status"`
+	GateID         string         `json:"gate_id"`
+	WorkspaceID    string         `json:"workspace_id"`
+	Status         string         `json:"status"`
+	StatusMetadata map[string]any `json:"status_metadata,omitempty"`
 }
 
-// SubscribeGateStatuses subscribes to all gate status topics, updates the DB,
-// and if redisClient is non-nil, publishes GateEvents to gate:events:{workspace_id}.
+// SubscribeGateStatuses subscribes to all gate status topics, validates the gate token,
+// updates the DB (status + metadata), and if redisClient is non-nil publishes GateEvents
+// to gate:events:{workspace_id}.
 // Topic wildcard: +/gates/+/status
 func (c *Client) SubscribeGateStatuses(gateRepo *repository.GateRepository, redisClient *redis.Client) error {
 	return c.Subscribe("+/gates/+/status", func(_ pahomqtt.Client, msg pahomqtt.Message) {
@@ -53,20 +66,29 @@ func (c *Client) SubscribeGateStatuses(gateRepo *repository.GateRepository, redi
 			slog.Warn("mqtt: invalid status payload", "topic", msg.Topic())
 			return
 		}
+		if p.Token == "" {
+			slog.Warn("mqtt: status payload missing token", "gate_id", gateID)
+			return
+		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		if err := gateRepo.UpdateStatus(ctx, gateID, p.Status); err != nil {
-			slog.Error("mqtt: failed to update gate status", "gate_id", gateID, "error", err)
+		if err := gateRepo.UpdateStatusWithMeta(ctx, gateID, p.Token, p.Status, p.Meta); err != nil {
+			if err == repository.ErrUnauthorized {
+				slog.Warn("mqtt: invalid gate token, status update rejected", "gate_id", gateID)
+			} else {
+				slog.Error("mqtt: failed to update gate status", "gate_id", gateID, "error", err)
+			}
 			return
 		}
 
 		if redisClient != nil {
 			event := GateEvent{
-				GateID:      gateID.String(),
-				WorkspaceID: wsID.String(),
-				Status:      p.Status,
+				GateID:         gateID.String(),
+				WorkspaceID:    wsID.String(),
+				Status:         p.Status,
+				StatusMetadata: p.Meta,
 			}
 			payload, _ := json.Marshal(event)
 			channel := fmt.Sprintf("gate:events:%s", wsID)

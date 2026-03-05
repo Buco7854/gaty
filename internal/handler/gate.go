@@ -79,6 +79,9 @@ type CreateGateInput struct {
 		OpenConfig        *model.ActionConfig       `json:"open_config,omitempty"`
 		CloseConfig       *model.ActionConfig       `json:"close_config,omitempty"`
 		StatusConfig      *model.ActionConfig       `json:"status_config,omitempty"`
+		// MetaConfig defines how status metadata fields are displayed.
+		// Example: [{"key":"lora.snr","label":"SNR","unit":"dB"}]
+		MetaConfig []model.MetaField `json:"meta_config,omitempty"`
 	}
 }
 
@@ -98,11 +101,13 @@ func (h *GateHandler) Create(ctx context.Context, input *CreateGateInput) (*Gate
 		OpenConfig:        input.Body.OpenConfig,
 		CloseConfig:       input.Body.CloseConfig,
 		StatusConfig:      input.Body.StatusConfig,
+		MetaConfig:        input.Body.MetaConfig,
 	})
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create gate")
 	}
 	applyEffectiveStatus(gate)
+	// GateToken is already populated by Create (returned once, on creation).
 	return &GateOutput{Body: gate}, nil
 }
 
@@ -129,6 +134,11 @@ func (h *GateHandler) Get(ctx context.Context, input *GatePathParam) (*GateOutpu
 		if !ok {
 			return nil, huma.Error403Forbidden("access denied")
 		}
+		// MEMBERs without gate:read_status don't see metadata.
+		hasStatus, _ := h.policies.HasPermission(ctx, membershipID, gate.ID, "gate:read_status")
+		if !hasStatus {
+			gate.StatusMetadata = nil
+		}
 	}
 
 	applyEffectiveStatus(gate)
@@ -145,6 +155,7 @@ type UpdateGateInput struct {
 		OpenConfig   *model.ActionConfig `json:"open_config,omitempty"`
 		CloseConfig  *model.ActionConfig `json:"close_config,omitempty"`
 		StatusConfig *model.ActionConfig `json:"status_config,omitempty"`
+		MetaConfig   []model.MetaField   `json:"meta_config,omitempty"`
 	}
 }
 
@@ -154,6 +165,7 @@ func (h *GateHandler) Update(ctx context.Context, input *UpdateGateInput) (*Gate
 		OpenConfig:   input.Body.OpenConfig,
 		CloseConfig:  input.Body.CloseConfig,
 		StatusConfig: input.Body.StatusConfig,
+		MetaConfig:   input.Body.MetaConfig,
 	})
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")
@@ -272,6 +284,45 @@ func (h *GateHandler) Trigger(ctx context.Context, input *TriggerInput) (*struct
 	return nil, nil
 }
 
+// --- Gate token management (admin only) ---
+
+type GateTokenOutput struct {
+	Body struct {
+		GateID    uuid.UUID `json:"gate_id"`
+		GateToken string    `json:"gate_token"`
+	}
+}
+
+// GetToken returns the current gate authentication token.
+func (h *GateHandler) GetToken(ctx context.Context, input *GatePathParam) (*GateTokenOutput, error) {
+	token, err := h.gates.GetToken(ctx, input.GateID, input.WorkspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("gate not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get gate token")
+	}
+	out := &GateTokenOutput{}
+	out.Body.GateID = input.GateID
+	out.Body.GateToken = token
+	return out, nil
+}
+
+// RotateToken generates a new gate authentication token, invalidating the old one.
+func (h *GateHandler) RotateToken(ctx context.Context, input *GatePathParam) (*GateTokenOutput, error) {
+	token, err := h.gates.RotateToken(ctx, input.GateID, input.WorkspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("gate not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to rotate gate token")
+	}
+	out := &GateTokenOutput{}
+	out.Body.GateID = input.GateID
+	out.Body.GateToken = token
+	return out, nil
+}
+
 // RegisterRoutes wires all gate endpoints onto the Huma API.
 func (h *GateHandler) RegisterRoutes(
 	api huma.API,
@@ -293,6 +344,7 @@ func (h *GateHandler) RegisterRoutes(
 		Method:        http.MethodPost,
 		Path:          "/api/workspaces/{ws_id}/gates",
 		Summary:       "Create a gate",
+		Description:   "The response includes gate_token (the gate's auth secret). Store it — it won't be returned again (use rotate-token to get a new one).",
 		Tags:          []string{"Gates"},
 		DefaultStatus: http.StatusCreated,
 		Middlewares:   huma.Middlewares{wsAdmin},
@@ -333,4 +385,24 @@ func (h *GateHandler) RegisterRoutes(
 		Tags:        []string{"Gates"},
 		Middlewares: huma.Middlewares{wsMember},
 	}, h.Trigger)
+
+	// Token management: admin only.
+	huma.Register(api, huma.Operation{
+		OperationID: "gate-token-get",
+		Method:      http.MethodGet,
+		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/token",
+		Summary:     "Get the gate authentication token",
+		Tags:        []string{"Gates"},
+		Middlewares: huma.Middlewares{wsAdmin},
+	}, h.GetToken)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "gate-token-rotate",
+		Method:      http.MethodPost,
+		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/token/rotate",
+		Summary:     "Rotate (regenerate) the gate authentication token",
+		Description: "Generates a new token and immediately invalidates the old one. Update the gate firmware.",
+		Tags:        []string{"Gates"},
+		Middlewares: huma.Middlewares{wsAdmin},
+	}, h.RotateToken)
 }

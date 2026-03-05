@@ -41,6 +41,18 @@ type ActionConfig struct {
 	Config map[string]any `json:"config,omitempty"`
 }
 
+// MetaField describes how a raw status-payload key maps to a display label.
+// For example: Key="lora.snr", Label="SNR", Unit="dB".
+// The frontend shows this field when the user has gate:read_status permission.
+type MetaField struct {
+	// Key is the dot-notated path in the status payload's "meta" object.
+	Key string `json:"key" minLength:"1"`
+	// Label is the human-readable name shown in the UI.
+	Label string `json:"label" minLength:"1"`
+	// Unit is an optional suffix displayed next to the value (e.g. "dB", "%").
+	Unit string `json:"unit,omitempty"`
+}
+
 type Gate struct {
 	ID                uuid.UUID           `json:"id"`
 	WorkspaceID       uuid.UUID           `json:"workspace_id"`
@@ -57,6 +69,17 @@ type Gate struct {
 	Status     GateStatus `json:"status"`
 	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
+
+	// StatusMetadata holds the last payload's "meta" object received from the gate.
+	// Shown to users with gate:read_status permission.
+	StatusMetadata map[string]any `json:"status_metadata,omitempty"`
+
+	// MetaConfig configures which metadata fields to display and how to label them.
+	MetaConfig []MetaField `json:"meta_config,omitempty"`
+
+	// GateToken is the gate's authentication secret.
+	// Only populated in create and rotate-token responses (never in list/get).
+	GateToken *string `json:"gate_token,omitempty"`
 }
 
 // EffectiveStatus computes the live status based on last_seen_at:

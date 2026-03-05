@@ -154,6 +154,9 @@ func main() {
 	handler.NewCredentialHandler(credRepo, memberCredRepo, membershipRepo).RegisterRoutes(api, requireAuth, requireMembership, wsAdmin)
 	handler.NewCustomDomainHandler(domainRepo, gateRepo).RegisterRoutes(api, wsMember, wsGateManager)
 
+	// Inbound: gate-to-server status push (gate token auth, no workspace middleware).
+	handler.NewGateInboundHandler(gateRepo, redisClient).RegisterRoutes(api)
+
 	// SSE: raw chi route (long-lived, not Huma)
 	handler.NewSSEHandler(authSvc, redisClient).RegisterRoutes(router)
 
