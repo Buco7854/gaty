@@ -1,5 +1,5 @@
 import { api } from '@/lib/api'
-import type { Gate, MetaField } from '@/types'
+import type { Gate, MetaField, StatusRule } from '@/types'
 
 function normalizeList(data: unknown): Gate[] {
   if (Array.isArray(data)) return data as Gate[]
@@ -20,6 +20,7 @@ export interface CreateGateParams {
   close_config?: ActionConfig | null
   status_config?: ActionConfig | null
   meta_config?: MetaField[]
+  status_rules?: StatusRule[]
 }
 
 export interface UpdateGateParams {
@@ -28,6 +29,7 @@ export interface UpdateGateParams {
   close_config?: ActionConfig | null
   status_config?: ActionConfig | null
   meta_config?: MetaField[]
+  status_rules?: StatusRule[]
 }
 
 export interface GateTokenResponse {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/Buco7854/gaty/internal/model"
 	"github.com/google/uuid"
@@ -49,14 +50,25 @@ func unmarshalMetaConfig(data []byte) []model.MetaField {
 	return fields
 }
 
+func unmarshalStatusRules(data []byte) []model.StatusRule {
+	if len(data) == 0 {
+		return nil
+	}
+	var rules []model.StatusRule
+	if json.Unmarshal(data, &rules) != nil {
+		return nil
+	}
+	return rules
+}
+
 func scanGateRow(row pgx.Row, g *model.Gate) error {
-	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg []byte
+	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules []byte
 	err := row.Scan(
 		&g.ID, &g.WorkspaceID, &g.Name,
 		&g.IntegrationType, &g.IntegrationConfig,
 		&rawOpen, &rawClose, &rawStatus,
 		&g.Status, &g.LastSeenAt,
-		&rawMeta, &rawMetaCfg,
+		&rawMeta, &rawMetaCfg, &rawStatusRules,
 		&g.CreatedAt,
 	)
 	if err != nil {
@@ -69,17 +81,18 @@ func scanGateRow(row pgx.Row, g *model.Gate) error {
 		_ = json.Unmarshal(rawMeta, &g.StatusMetadata)
 	}
 	g.MetaConfig = unmarshalMetaConfig(rawMetaCfg)
+	g.StatusRules = unmarshalStatusRules(rawStatusRules)
 	return nil
 }
 
 func scanGateRows(rows pgx.Rows, g *model.Gate) error {
-	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg []byte
+	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules []byte
 	err := rows.Scan(
 		&g.ID, &g.WorkspaceID, &g.Name,
 		&g.IntegrationType, &g.IntegrationConfig,
 		&rawOpen, &rawClose, &rawStatus,
 		&g.Status, &g.LastSeenAt,
-		&rawMeta, &rawMetaCfg,
+		&rawMeta, &rawMetaCfg, &rawStatusRules,
 		&g.CreatedAt,
 	)
 	if err != nil {
@@ -92,12 +105,13 @@ func scanGateRows(rows pgx.Rows, g *model.Gate) error {
 		_ = json.Unmarshal(rawMeta, &g.StatusMetadata)
 	}
 	g.MetaConfig = unmarshalMetaConfig(rawMetaCfg)
+	g.StatusRules = unmarshalStatusRules(rawStatusRules)
 	return nil
 }
 
 const colsFull = `id, workspace_id, name, integration_type, integration_config,
                   open_config, close_config, status_config,
-                  status, last_seen_at, status_metadata, meta_config, created_at`
+                  status, last_seen_at, status_metadata, meta_config, status_rules, created_at`
 
 // CreateGateParams holds all parameters for creating a new gate.
 type CreateGateParams struct {
@@ -108,30 +122,35 @@ type CreateGateParams struct {
 	CloseConfig       *model.ActionConfig
 	StatusConfig      *model.ActionConfig
 	MetaConfig        []model.MetaField
+	StatusRules       []model.StatusRule
+}
+
+func marshalJSONSlice[T any](v []T, fallback string) json.RawMessage {
+	if len(v) == 0 {
+		return json.RawMessage(fallback)
+	}
+	b, _ := json.Marshal(v)
+	return json.RawMessage(b)
 }
 
 func (r *GateRepository) Create(ctx context.Context, wsID uuid.UUID, p CreateGateParams) (*model.Gate, error) {
 	if p.IntegrationConfig == nil {
 		p.IntegrationConfig = map[string]any{}
 	}
-	metaCfgJSON := json.RawMessage("[]")
-	if len(p.MetaConfig) > 0 {
-		b, _ := json.Marshal(p.MetaConfig)
-		metaCfgJSON = json.RawMessage(b)
-	}
 
 	var gateID uuid.UUID
 	var token string
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO gates (workspace_id, name, integration_type, integration_config,
-		                    open_config, close_config, status_config, meta_config)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		                    open_config, close_config, status_config, meta_config, status_rules)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 RETURNING id, gate_token`,
 		wsID, p.Name, p.IntegrationType, p.IntegrationConfig,
 		marshalActionConfig(p.OpenConfig),
 		marshalActionConfig(p.CloseConfig),
 		marshalActionConfig(p.StatusConfig),
-		metaCfgJSON,
+		marshalJSONSlice(p.MetaConfig, "[]"),
+		marshalJSONSlice(p.StatusRules, "[]"),
 	).Scan(&gateID, &token)
 	if err != nil {
 		return nil, fmt.Errorf("create gate: %w", err)
@@ -170,26 +189,24 @@ type UpdateGateParams struct {
 	CloseConfig  *model.ActionConfig
 	StatusConfig *model.ActionConfig
 	MetaConfig   []model.MetaField
+	StatusRules  []model.StatusRule
 }
 
 func (r *GateRepository) Update(ctx context.Context, gateID, wsID uuid.UUID, p UpdateGateParams) (*model.Gate, error) {
-	metaCfgJSON := json.RawMessage("[]")
-	if len(p.MetaConfig) > 0 {
-		b, _ := json.Marshal(p.MetaConfig)
-		metaCfgJSON = json.RawMessage(b)
-	}
 	var g model.Gate
 	err := scanGateRow(
 		r.pool.QueryRow(ctx,
 			`UPDATE gates
-			 SET name = $3, open_config = $4, close_config = $5, status_config = $6, meta_config = $7
+			 SET name = $3, open_config = $4, close_config = $5, status_config = $6,
+			     meta_config = $7, status_rules = $8
 			 WHERE id = $1 AND workspace_id = $2
 			 RETURNING `+colsFull,
 			gateID, wsID, p.Name,
 			marshalActionConfig(p.OpenConfig),
 			marshalActionConfig(p.CloseConfig),
 			marshalActionConfig(p.StatusConfig),
-			metaCfgJSON,
+			marshalJSONSlice(p.MetaConfig, "[]"),
+			marshalJSONSlice(p.StatusRules, "[]"),
 		),
 		&g,
 	)
@@ -273,27 +290,104 @@ func (r *GateRepository) UpdateStatus(ctx context.Context, gateID uuid.UUID, sta
 	return nil
 }
 
-// UpdateStatusWithMeta updates the gate status + metadata after validating the gate token.
+// UpdateStatusResult holds the outcome of a successful status update.
+type UpdateStatusResult struct {
+	WorkspaceID uuid.UUID
+	FinalStatus string
+}
+
+// UpdateStatusWithMeta validates the gate token, evaluates status rules against meta,
+// then writes the final status + metadata to the DB.
 // Returns ErrUnauthorized if id+token don't match any gate.
-func (r *GateRepository) UpdateStatusWithMeta(ctx context.Context, gateID uuid.UUID, token, status string, meta map[string]any) error {
+func (r *GateRepository) UpdateStatusWithMeta(ctx context.Context, gateID uuid.UUID, token, status string, meta map[string]any) (*UpdateStatusResult, error) {
+	// Fetch gate to validate token and retrieve status_rules.
+	var wsID uuid.UUID
+	var rawRules []byte
+	err := r.pool.QueryRow(ctx,
+		`SELECT workspace_id, status_rules FROM gates WHERE id = $1 AND gate_token = $2`,
+		gateID, token,
+	).Scan(&wsID, &rawRules)
+	if err == pgx.ErrNoRows {
+		return nil, ErrUnauthorized
+	}
+	if err != nil {
+		return nil, fmt.Errorf("validate gate token: %w", err)
+	}
+
+	// Evaluate status rules: first matching rule overrides the reported status.
+	rules := unmarshalStatusRules(rawRules)
+	finalStatus := status
+	if len(rules) > 0 && len(meta) > 0 {
+		if overridden, ok := model.EvaluateStatusRules(rules, meta); ok {
+			finalStatus = overridden
+		}
+	}
+
 	metaJSON := json.RawMessage("{}")
 	if len(meta) > 0 {
 		b, _ := json.Marshal(meta)
 		metaJSON = json.RawMessage(b)
 	}
-	tag, err := r.pool.Exec(ctx,
-		`UPDATE gates
-		 SET status = $3, last_seen_at = NOW(), status_metadata = $4
-		 WHERE id = $1 AND gate_token = $2`,
-		gateID, token, status, metaJSON,
+	_, err = r.pool.Exec(ctx,
+		`UPDATE gates SET status = $2, last_seen_at = NOW(), status_metadata = $3 WHERE id = $1`,
+		gateID, finalStatus, metaJSON,
 	)
 	if err != nil {
-		return fmt.Errorf("update gate status+meta: %w", err)
+		return nil, fmt.Errorf("update gate status+meta: %w", err)
+	}
+	return &UpdateStatusResult{WorkspaceID: wsID, FinalStatus: finalStatus}, nil
+}
+
+// UpdateKeepalive touches last_seen_at without changing status or metadata.
+// Returns ErrUnauthorized if id+token don't match any gate.
+func (r *GateRepository) UpdateKeepalive(ctx context.Context, gateID uuid.UUID, token string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE gates SET last_seen_at = NOW() WHERE id = $1 AND gate_token = $2`,
+		gateID, token,
+	)
+	if err != nil {
+		return fmt.Errorf("update gate keepalive: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrUnauthorized
 	}
 	return nil
+}
+
+// MarkUnresponsiveWithIDs sets status = 'unresponsive' for gates that haven't been seen
+// in longer than ttl. Returns gate+workspace ID pairs for SSE notification.
+func (r *GateRepository) MarkUnresponsiveWithIDs(ctx context.Context, ttl time.Duration) ([]UnresponsiveGate, error) {
+	rows, err := r.pool.Query(ctx,
+		`UPDATE gates
+		 SET status = $1
+		 WHERE last_seen_at IS NOT NULL
+		   AND last_seen_at < NOW() - $2::interval
+		   AND status NOT IN ($1, $3)
+		 RETURNING id, workspace_id`,
+		string(model.GateStatusUnresponsive),
+		fmt.Sprintf("%d seconds", int(ttl.Seconds())),
+		string(model.GateStatusUnknown),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("mark unresponsive: %w", err)
+	}
+	defer rows.Close()
+
+	var results []UnresponsiveGate
+	for rows.Next() {
+		var g UnresponsiveGate
+		if err := rows.Scan(&g.GateID, &g.WorkspaceID); err != nil {
+			return nil, err
+		}
+		results = append(results, g)
+	}
+	return results, rows.Err()
+}
+
+// UnresponsiveGate holds gate+workspace IDs for TTL expiry notifications.
+type UnresponsiveGate struct {
+	GateID      uuid.UUID
+	WorkspaceID uuid.UUID
 }
 
 // GetToken returns the current gate authentication token (admin only).
@@ -347,7 +441,7 @@ func (r *GateRepository) ListForWorkspace(ctx context.Context, wsID uuid.UUID, r
 	} else {
 		query = `SELECT DISTINCT g.id, g.workspace_id, g.name, g.integration_type, g.integration_config,
 		                g.open_config, g.close_config, g.status_config,
-		                g.status, g.last_seen_at, g.status_metadata, g.meta_config, g.created_at
+		                g.status, g.last_seen_at, g.status_metadata, g.meta_config, g.status_rules, g.created_at
 		         FROM gates g
 		         JOIN membership_policies p ON p.gate_id = g.id AND p.membership_id = $2
 		         WHERE g.workspace_id = $1

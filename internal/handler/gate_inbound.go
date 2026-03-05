@@ -52,39 +52,61 @@ func (h *GateInboundHandler) PushStatus(ctx context.Context, input *GateStatusPu
 		return nil, huma.Error401Unauthorized("missing gate token")
 	}
 
-	if err := h.gates.UpdateStatusWithMeta(ctx, input.GateID, token, input.Body.Status, input.Body.Meta); err != nil {
+	res, err := h.gates.UpdateStatusWithMeta(ctx, input.GateID, token, input.Body.Status, input.Body.Meta)
+	if err != nil {
 		if errors.Is(err, repository.ErrUnauthorized) {
 			return nil, huma.Error401Unauthorized("invalid gate token")
 		}
 		return nil, huma.Error500InternalServerError("failed to update status")
 	}
 
-	// Publish SSE event via Redis Pub/Sub (same channel as MQTT path).
+	// Publish SSE event via Redis Pub/Sub. workspace_id comes from the update result.
 	if h.redis != nil {
-		// We need the workspace_id for the event channel. Fetch the gate.
-		gate, err := h.gates.GetByIDPublic(ctx, input.GateID)
-		if err == nil {
-			event := internalmqtt.GateEvent{
-				GateID:         input.GateID.String(),
-				WorkspaceID:    gate.WorkspaceID.String(),
-				Status:         input.Body.Status,
-				StatusMetadata: input.Body.Meta,
-			}
-			payload, _ := json.Marshal(event)
-			channel := fmt.Sprintf("gate:events:%s", gate.WorkspaceID)
-			tCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-			defer cancel()
-			if err := h.redis.Publish(tCtx, channel, string(payload)).Err(); err != nil {
-				slog.Warn("inbound: failed to publish gate event", "channel", channel, "error", err)
-			}
+		event := internalmqtt.GateEvent{
+			GateID:         input.GateID.String(),
+			WorkspaceID:    res.WorkspaceID.String(),
+			Status:         res.FinalStatus,
+			StatusMetadata: input.Body.Meta,
+		}
+		payload, _ := json.Marshal(event)
+		channel := fmt.Sprintf("gate:events:%s", res.WorkspaceID)
+		tCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		if err := h.redis.Publish(tCtx, channel, string(payload)).Err(); err != nil {
+			slog.Warn("inbound: failed to publish gate event", "channel", channel, "error", err)
 		}
 	}
 
-	slog.Info("inbound: gate status updated", "gate_id", input.GateID, "status", input.Body.Status)
+	slog.Info("inbound: gate status updated", "gate_id", input.GateID, "status", res.FinalStatus)
 	return nil, nil
 }
 
-// RegisterRoutes wires the inbound gate endpoint onto the Huma API.
+// --- POST /api/inbound/gates/{gate_id}/keepalive ---
+
+type GateKeepaliveInput struct {
+	GateID        uuid.UUID `path:"gate_id"`
+	Authorization string    `header:"Authorization" required:"true"`
+}
+
+// Keepalive updates last_seen_at without changing status or metadata.
+// HTTP-mode gates should call this periodically to prove liveness.
+func (h *GateInboundHandler) Keepalive(ctx context.Context, input *GateKeepaliveInput) (*struct{}, error) {
+	token := strings.TrimPrefix(input.Authorization, "Bearer ")
+	if token == "" {
+		return nil, huma.Error401Unauthorized("missing gate token")
+	}
+
+	if err := h.gates.UpdateKeepalive(ctx, input.GateID, token); err != nil {
+		if errors.Is(err, repository.ErrUnauthorized) {
+			return nil, huma.Error401Unauthorized("invalid gate token")
+		}
+		return nil, huma.Error500InternalServerError("failed to update keepalive")
+	}
+
+	return nil, nil
+}
+
+// RegisterRoutes wires the inbound gate endpoints onto the Huma API.
 // No workspace middleware — the gate authenticates with its own token.
 func (h *GateInboundHandler) RegisterRoutes(api huma.API) {
 	huma.Register(api, huma.Operation{
@@ -96,4 +118,15 @@ func (h *GateInboundHandler) RegisterRoutes(api huma.API) {
 			"Authentication: Authorization: Bearer {gate_token}.",
 		Tags: []string{"Gate Inbound"},
 	}, h.PushStatus)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "gate-inbound-keepalive",
+		Method:      http.MethodPost,
+		Path:        "/api/inbound/gates/{gate_id}/keepalive",
+		Summary:     "Gate keepalive ping (authenticated by gate token)",
+		Description: "HTTP-mode gates call this endpoint periodically to prove liveness. " +
+			"Updates last_seen_at without changing status. " +
+			"Authentication: Authorization: Bearer {gate_token}.",
+		Tags: []string{"Gate Inbound"},
+	}, h.Keepalive)
 }

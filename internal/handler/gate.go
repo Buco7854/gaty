@@ -82,6 +82,9 @@ type CreateGateInput struct {
 		// MetaConfig defines how status metadata fields are displayed.
 		// Example: [{"key":"lora.snr","label":"SNR","unit":"dB"}]
 		MetaConfig []model.MetaField `json:"meta_config,omitempty"`
+		// StatusRules define conditions evaluated against metadata to override the gate status.
+		// Example: [{"key":"battery","op":"lt","value":"20","set_status":"low_battery"}]
+		StatusRules []model.StatusRule `json:"status_rules,omitempty"`
 	}
 }
 
@@ -102,6 +105,7 @@ func (h *GateHandler) Create(ctx context.Context, input *CreateGateInput) (*Gate
 		CloseConfig:       input.Body.CloseConfig,
 		StatusConfig:      input.Body.StatusConfig,
 		MetaConfig:        input.Body.MetaConfig,
+		StatusRules:       input.Body.StatusRules,
 	})
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create gate")
@@ -156,6 +160,7 @@ type UpdateGateInput struct {
 		CloseConfig  *model.ActionConfig `json:"close_config,omitempty"`
 		StatusConfig *model.ActionConfig `json:"status_config,omitempty"`
 		MetaConfig   []model.MetaField   `json:"meta_config,omitempty"`
+		StatusRules  []model.StatusRule  `json:"status_rules,omitempty"`
 	}
 }
 
@@ -166,6 +171,7 @@ func (h *GateHandler) Update(ctx context.Context, input *UpdateGateInput) (*Gate
 		CloseConfig:  input.Body.CloseConfig,
 		StatusConfig: input.Body.StatusConfig,
 		MetaConfig:   input.Body.MetaConfig,
+		StatusRules:  input.Body.StatusRules,
 	})
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")

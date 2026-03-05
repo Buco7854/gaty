@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { gatesApi, pinsApi, domainsApi, policiesApi, schedulesApi } from '@/api'
 import type { ActionConfig, PinMetadata } from '@/api'
-import type { Gate, GatePin, CustomDomain, WorkspaceWithRole, AccessSchedule, MetaField, GateStatus } from '@/types'
+import type { Gate, GatePin, CustomDomain, WorkspaceWithRole, AccessSchedule, MetaField, StatusRule, GateStatus } from '@/types'
 import { useAuthStore } from '@/store/auth'
 import { findLocalSession } from '@/utils/session'
 import { useTranslation } from 'react-i18next'
@@ -30,6 +30,7 @@ function getStatusColor(status: GateStatus | undefined): string {
     case 'open': return 'green'
     case 'offline':
     case 'closed': return 'red'
+    case 'unresponsive': return 'orange'
     default: return 'gray'
   }
 }
@@ -158,6 +159,90 @@ function MetaConfigEditor({
   )
 }
 
+const STATUS_RULE_OPS = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte'] as const
+
+/** Inline editor for a list of StatusRule entries. */
+function StatusRulesEditor({
+  value,
+  onChange,
+}: {
+  value: StatusRule[]
+  onChange: (v: StatusRule[]) => void
+}) {
+  const { t } = useTranslation()
+
+  function updateRule(idx: number, patch: Partial<StatusRule>) {
+    onChange(value.map((r, i) => (i === idx ? { ...r, ...patch } : r)))
+  }
+
+  const opData = STATUS_RULE_OPS.map((op) => ({
+    value: op,
+    label: t(`gates.statusRulesOp${op.charAt(0).toUpperCase()}${op.slice(1)}`),
+  }))
+
+  return (
+    <Stack gap="sm">
+      <Group justify="space-between">
+        <div>
+          <Text size="sm" fw={500}>{t('gates.statusRules')}</Text>
+          <Text size="xs" c="dimmed">{t('gates.statusRulesDesc')}</Text>
+        </div>
+        <Button
+          size="xs"
+          variant="subtle"
+          leftSection={<Plus size={12} />}
+          onClick={() => onChange([...value, { key: '', op: 'lt', value: '', set_status: '' }])}
+        >
+          {t('gates.statusRulesAdd')}
+        </Button>
+      </Group>
+      {value.map((rule, idx) => (
+        <Group key={idx} gap="xs" align="flex-end">
+          <TextInput
+            label={idx === 0 ? t('gates.statusRulesKey') : undefined}
+            placeholder={t('gates.statusRulesKeyPlaceholder')}
+            value={rule.key}
+            onChange={(e) => updateRule(idx, { key: e.target.value })}
+            style={{ flex: 2 }}
+            styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+          />
+          <Select
+            label={idx === 0 ? t('gates.statusRulesOp') : undefined}
+            value={rule.op}
+            onChange={(v) => updateRule(idx, { op: v ?? 'lt' })}
+            data={opData}
+            style={{ flex: 2 }}
+          />
+          <TextInput
+            label={idx === 0 ? t('gates.statusRulesValue') : undefined}
+            placeholder={t('gates.statusRulesValuePlaceholder')}
+            value={rule.value}
+            onChange={(e) => updateRule(idx, { value: e.target.value })}
+            style={{ flex: 1 }}
+            styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+          />
+          <TextInput
+            label={idx === 0 ? t('gates.statusRulesSetStatus') : undefined}
+            placeholder={t('gates.statusRulesSetStatusPlaceholder')}
+            value={rule.set_status}
+            onChange={(e) => updateRule(idx, { set_status: e.target.value })}
+            style={{ flex: 2 }}
+            styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+          />
+          <ActionIcon
+            variant="subtle"
+            color="red"
+            mb={idx === 0 ? 0 : undefined}
+            onClick={() => onChange(value.filter((_, i) => i !== idx))}
+          >
+            <Trash2 size={14} />
+          </ActionIcon>
+        </Group>
+      ))}
+    </Stack>
+  )
+}
+
 // ---------- Main page ----------
 
 export default function GatePage() {
@@ -220,6 +305,7 @@ export default function GatePage() {
   const [editCloseConfig, setEditCloseConfig] = useState<ActionConfig | null>(null)
   const [editStatusConfig, setEditStatusConfig] = useState<ActionConfig | null>(null)
   const [editMetaConfig, setEditMetaConfig] = useState<MetaField[]>([])
+  const [editStatusRules, setEditStatusRules] = useState<StatusRule[]>([])
 
   const PIN_SESSION_PRESETS = [
     { value: '', label: t('members.session7d') },
@@ -312,6 +398,7 @@ export default function GatePage() {
         close_config: editCloseConfig,
         status_config: editStatusConfig,
         meta_config: editMetaConfig,
+        status_rules: editStatusRules,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['gate', wsId, gateId] })
@@ -436,6 +523,7 @@ export default function GatePage() {
     setEditCloseConfig(gate?.close_config ?? null)
     setEditStatusConfig(gate?.status_config ?? null)
     setEditMetaConfig(gate?.meta_config ?? [])
+    setEditStatusRules(gate?.status_rules ?? [])
     openConfigModal()
   }
 
@@ -650,6 +738,8 @@ export default function GatePage() {
             />
             <Divider />
             <MetaConfigEditor value={editMetaConfig} onChange={setEditMetaConfig} />
+            <Divider />
+            <StatusRulesEditor value={editStatusRules} onChange={setEditStatusRules} />
             <Group justify="flex-end">
               <Button variant="default" onClick={closeConfigModal}>{t('common.cancel')}</Button>
               <Button type="submit" loading={updateConfig.isPending}>{t('common.save')}</Button>

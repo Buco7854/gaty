@@ -74,7 +74,8 @@ func (c *Client) SubscribeGateStatuses(gateRepo *repository.GateRepository, redi
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		if err := gateRepo.UpdateStatusWithMeta(ctx, gateID, p.Token, p.Status, p.Meta); err != nil {
+		res, err := gateRepo.UpdateStatusWithMeta(ctx, gateID, p.Token, p.Status, p.Meta)
+		if err != nil {
 			if err == repository.ErrUnauthorized {
 				slog.Warn("mqtt: invalid gate token, status update rejected", "gate_id", gateID)
 			} else {
@@ -87,7 +88,7 @@ func (c *Client) SubscribeGateStatuses(gateRepo *repository.GateRepository, redi
 			event := GateEvent{
 				GateID:         gateID.String(),
 				WorkspaceID:    wsID.String(),
-				Status:         p.Status,
+				Status:         res.FinalStatus,
 				StatusMetadata: p.Meta,
 			}
 			payload, _ := json.Marshal(event)

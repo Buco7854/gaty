@@ -37,6 +37,18 @@ export interface MetaField {
   unit?: string
 }
 
+/** Condition evaluated against incoming metadata to override the gate status. */
+export interface StatusRule {
+  /** Dot-notated key in the status payload's meta object. */
+  key: string
+  /** Comparison operator: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" */
+  op: string
+  /** Threshold value as a string (numeric comparisons convert to float64). */
+  value: string
+  /** Gate status to set when this rule matches. */
+  set_status: string
+}
+
 export interface Gate {
   id: string
   workspace_id: string
@@ -53,6 +65,8 @@ export interface Gate {
   status_metadata?: Record<string, unknown>
   /** Display mapping: which metadata keys to show and how to label them. */
   meta_config?: MetaField[]
+  /** Rules evaluated against metadata to auto-override the reported status. */
+  status_rules?: StatusRule[]
   /** Gate authentication token — only populated on create and rotate-token responses. */
   gate_token?: string
 }

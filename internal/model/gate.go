@@ -1,6 +1,8 @@
 package model
 
 import (
+	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,10 +22,101 @@ const (
 type GateStatus string
 
 const (
-	GateStatusOnline  GateStatus = "online"
-	GateStatusOffline GateStatus = "offline"
-	GateStatusUnknown GateStatus = "unknown"
+	GateStatusOnline       GateStatus = "online"
+	GateStatusOffline      GateStatus = "offline"
+	GateStatusUnknown      GateStatus = "unknown"
+	GateStatusUnresponsive GateStatus = "unresponsive"
 )
+
+// StatusRule defines a condition evaluated against status metadata.
+// When the condition matches, the gate status is overridden with SetStatus.
+//
+// Example: {Key: "battery", Op: "lt", Value: "20", SetStatus: "low_battery"}
+// → if meta["battery"] < 20 → status becomes "low_battery"
+type StatusRule struct {
+	// Key is the dot-notated path in the status payload's "meta" object.
+	Key string `json:"key" minLength:"1"`
+	// Op is the comparison operator: "eq", "ne", "gt", "gte", "lt", "lte"
+	Op string `json:"op" minLength:"2"`
+	// Value is the threshold as a string. Numeric comparisons convert both sides to float64.
+	Value string `json:"value"`
+	// SetStatus is the gate status to set when this rule matches.
+	SetStatus string `json:"set_status" minLength:"1"`
+}
+
+// EvaluateStatusRules checks each rule against meta in order and returns the first matching
+// (setStatus, true), or ("", false) if no rule matches.
+func EvaluateStatusRules(rules []StatusRule, meta map[string]any) (string, bool) {
+	for _, rule := range rules {
+		val, ok := meta[rule.Key]
+		if !ok {
+			continue
+		}
+		if ruleMatches(rule.Op, val, rule.Value) {
+			return rule.SetStatus, true
+		}
+	}
+	return "", false
+}
+
+func ruleMatches(op string, actual any, threshold string) bool {
+	// Try numeric comparison first
+	var actualF float64
+	switch v := actual.(type) {
+	case float64:
+		actualF = v
+	case float32:
+		actualF = float64(v)
+	case int:
+		actualF = float64(v)
+	case int64:
+		actualF = float64(v)
+	case string:
+		f, err := strconv.ParseFloat(v, 64)
+		if err == nil {
+			actualF = f
+		} else {
+			// Fall through to string equality for eq/ne
+			switch op {
+			case "eq":
+				return v == threshold
+			case "ne":
+				return v != threshold
+			}
+			return false
+		}
+	default:
+		// Compare via string representation for eq/ne
+		s := fmt.Sprintf("%v", actual)
+		switch op {
+		case "eq":
+			return s == threshold
+		case "ne":
+			return s != threshold
+		}
+		return false
+	}
+
+	threshF, err := strconv.ParseFloat(threshold, 64)
+	if err != nil {
+		return false
+	}
+	switch op {
+	case "eq":
+		return actualF == threshF
+	case "ne":
+		return actualF != threshF
+	case "gt":
+		return actualF > threshF
+	case "gte":
+		return actualF >= threshF
+	case "lt":
+		return actualF < threshF
+	case "lte":
+		return actualF <= threshF
+	}
+	return false
+}
 
 // DriverType identifies which integration driver handles a gate action.
 type DriverType string
@@ -76,6 +169,10 @@ type Gate struct {
 
 	// MetaConfig configures which metadata fields to display and how to label them.
 	MetaConfig []MetaField `json:"meta_config,omitempty"`
+
+	// StatusRules are evaluated against incoming metadata to override the reported status.
+	// Rules are evaluated in order; the first match wins.
+	StatusRules []StatusRule `json:"status_rules,omitempty"`
 
 	// GateToken is the gate's authentication secret.
 	// Only populated in create and rotate-token responses (never in list/get).
