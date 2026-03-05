@@ -184,30 +184,54 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenP
 
 		switch typ {
 		case "local":
-			membershipID, err := uuid.Parse(payload["sub"].(string))
+			sub, ok := payload["sub"].(string)
+			if !ok {
+				return nil, ErrInvalidToken
+			}
+			membershipID, err := uuid.Parse(sub)
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
-			workspaceID, err := uuid.Parse(payload["wid"].(string))
+			wid, ok := payload["wid"].(string)
+			if !ok {
+				return nil, ErrInvalidToken
+			}
+			workspaceID, err := uuid.Parse(wid)
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
-			role := model.WorkspaceRole(payload["role"].(string))
+			roleStr, ok := payload["role"].(string)
+			if !ok {
+				return nil, ErrInvalidToken
+			}
+			role := model.WorkspaceRole(roleStr)
 			return s.issueLocalTokenPair(ctx, membershipID, workspaceID, role, sessionDuration)
 
 		case "global":
-			userID, err := uuid.Parse(payload["sub"].(string))
+			sub, ok := payload["sub"].(string)
+			if !ok {
+				return nil, ErrInvalidToken
+			}
+			userID, err := uuid.Parse(sub)
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
 			return s.issueGlobalTokenPair(ctx, userID, sessionDuration)
 
 		case "pin_session":
-			pinID, err := uuid.Parse(payload["sub"].(string))
+			sub, ok := payload["sub"].(string)
+			if !ok {
+				return nil, ErrInvalidToken
+			}
+			pinID, err := uuid.Parse(sub)
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
-			gateID, err := uuid.Parse(payload["gate_id"].(string))
+			gateIDStr, ok := payload["gate_id"].(string)
+			if !ok {
+				return nil, ErrInvalidToken
+			}
+			gateID, err := uuid.Parse(gateIDStr)
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
@@ -323,7 +347,11 @@ func (s *AuthService) ValidateMemberToken(tokenStr string) (membershipID, worksp
 		return uuid.Nil, uuid.Nil, "", ErrInvalidToken
 	}
 
-	role = model.WorkspaceRole(claims["role"].(string))
+	roleStr, ok := claims["role"].(string)
+	if !ok || roleStr == "" {
+		return uuid.Nil, uuid.Nil, "", ErrInvalidToken
+	}
+	role = model.WorkspaceRole(roleStr)
 	return membershipID, workspaceID, role, nil
 }
 
