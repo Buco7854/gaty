@@ -203,3 +203,17 @@ huma.Error400BadRequest | 401Unauthorized | 403Forbidden | 404NotFound | 409Conf
 
 Input tags : `path:"x"` `query:"x"` `header:"x"` `required:"true"` `minLength:"n"` `format:"email"`
 Output : Body présent → 200, nil → 204.
+
+### Champs requis / optionnels — règles Huma
+
+| Situation | Comportement |
+|-----------|-------------|
+| Champ body sans tag spécial | **Requis** par défaut |
+| Query / header / cookie param | **Optionnel** par défaut |
+| `json:"x,omitempty"` | Optionnel |
+| `json:"x" omitzero:"true"` | Optionnel (zéro-value) |
+| `required:"false"` | Optionnel explicite |
+| `required:"true"` | Requis explicite (utile pour query/header) |
+| `*string`, `*int`, etc. | **Aucun effet** — pointeur ≠ optionnel |
+
+> **Règle d'or** : tout champ optionnel dans un body (input **ou** output) doit avoir `omitempty` (ou `required:"false"`). Un pointeur seul ne suffit pas.
