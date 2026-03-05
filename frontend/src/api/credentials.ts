@@ -13,21 +13,23 @@ export interface CreatedToken extends MemberCredential {
   token: string
 }
 
-export const credentialsApi = {
-  adminList: (wsId: string, memberId: string): Promise<MemberCredential[]> =>
-    api
-      .get<MemberCredential[]>(`/workspaces/${wsId}/members/${memberId}/credentials`)
-      .then((r) => (Array.isArray(r.data) ? r.data : [])),
+function authHeader(bearerToken: string) {
+  return { headers: { Authorization: `Bearer ${bearerToken}` } }
+}
 
-  adminCreateToken: (
-    wsId: string,
-    memberId: string,
-    params: { label: string; expires_at?: string }
-  ): Promise<CreatedToken> =>
+/** Member self-service: calls /api/auth/local/me/* with the member's own JWT */
+export const memberCredApi = {
+  listTokens: (bearerToken: string): Promise<MemberCredential[]> =>
     api
-      .post<CreatedToken>(`/workspaces/${wsId}/members/${memberId}/api-tokens`, params)
+      .get<MemberCredential[]>('/auth/local/me/credentials', authHeader(bearerToken))
+      .then((r) => (Array.isArray(r.data) ? r.data : []))
+      .then((data) => data.filter((c) => c.type === 'API_TOKEN')),
+
+  createToken: (bearerToken: string, label: string): Promise<CreatedToken> =>
+    api
+      .post<CreatedToken>('/auth/local/me/api-tokens', { label }, authHeader(bearerToken))
       .then((r) => r.data),
 
-  adminDelete: (wsId: string, memberId: string, credId: string): Promise<void> =>
-    api.delete(`/workspaces/${wsId}/members/${memberId}/credentials/${credId}`).then(() => {}),
+  deleteToken: (bearerToken: string, credId: string): Promise<void> =>
+    api.delete(`/auth/local/me/credentials/${credId}`, authHeader(bearerToken)).then(() => {}),
 }

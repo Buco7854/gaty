@@ -46,6 +46,16 @@ function RequireGuest() {
 }
 
 export const router = createBrowserRouter([
+  // Custom domain root — must come first so it is matched before RequireAuth captures '/'
+  { path: '/', element: <GatePortalPage /> },
+  // Public gate portal (no auth required)
+  { path: '/workspaces/:wsId/gates/:gateId/public', element: <GatePortalPage /> },
+  { path: '/workspaces/:wsId/gates/:gateId/public/pin', element: <PinPadPage /> },
+  { path: '/workspaces/:wsId/gates/:gateId/public/password', element: <PasswordAccessPage /> },
+  // Member login — workspace-scoped, gate_id optional for redirect context
+  { path: '/workspaces/:wsId/login', element: <MemberLoginPage /> },
+  // SSO callback — handles redirect from SSO provider after authentication
+  { path: '/auth/sso/callback', element: <SsoCallbackPage /> },
   // Auth routes (only for unauthenticated users)
   {
     element: <RequireGuest />,
@@ -66,7 +76,6 @@ export const router = createBrowserRouter([
       {
         element: <AppLayout />,
         children: [
-          { path: '/', element: <Navigate to="/workspaces" replace /> },
           { path: '/workspaces', element: <WorkspacesPage /> },
           { path: '/workspaces/:wsId', element: <WorkspacePage /> },
           { path: '/workspaces/:wsId/members', element: <MembersPage /> },
@@ -76,17 +85,4 @@ export const router = createBrowserRouter([
       },
     ],
   },
-  // Public gate portal (no auth required)
-  { path: '/', element: <GatePortalPage /> },                                              // custom domain root path
-  { path: '/unlock', element: <GatePortalPage /> },                                       // legacy custom domain entry
-  { path: '/unlock/:gateId', element: <GatePortalPage /> },                              // gate portal by ID (from SSO fallback)
-  { path: '/unlock/:gateId/pin', element: <PinPadPage /> },
-  { path: '/unlock/:gateId/password', element: <PasswordAccessPage /> },
-  { path: '/workspaces/:wsId/gates/:gateId/public', element: <GatePortalPage /> },       // standard portal
-  { path: '/workspaces/:wsId/gates/:gateId/public/pin', element: <PinPadPage /> },
-  { path: '/workspaces/:wsId/gates/:gateId/public/password', element: <PasswordAccessPage /> },
-  // Member login — workspace-scoped, gate_id optional for redirect context
-  { path: '/workspaces/:wsId/login', element: <MemberLoginPage /> },
-  // SSO callback — handles redirect from SSO provider after authentication
-  { path: '/auth/sso/callback', element: <SsoCallbackPage /> },
 ])

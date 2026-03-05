@@ -155,21 +155,13 @@ export default function GatePortalPage() {
   }, [session, policiesReady, canOpen])
 
   function navigateToPin() {
-    if (!effectiveGateId) return
-    if (effectiveWsId) {
-      navigate(`/workspaces/${effectiveWsId}/gates/${effectiveGateId}/public/pin`)
-    } else {
-      navigate(`/unlock/${effectiveGateId}/pin`)
-    }
+    if (!effectiveGateId || !effectiveWsId) return
+    navigate(`/workspaces/${effectiveWsId}/gates/${effectiveGateId}/public/pin`)
   }
 
   function navigateToPassword() {
-    if (!effectiveGateId) return
-    if (effectiveWsId) {
-      navigate(`/workspaces/${effectiveWsId}/gates/${effectiveGateId}/public/password`)
-    } else {
-      navigate(`/unlock/${effectiveGateId}/password`)
-    }
+    if (!effectiveGateId || !effectiveWsId) return
+    navigate(`/workspaces/${effectiveWsId}/gates/${effectiveGateId}/public/password`)
   }
 
   function navigateToMemberLogin() {

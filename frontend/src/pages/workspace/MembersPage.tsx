@@ -1,17 +1,16 @@
 import { useState } from 'react'
 import { useParams } from 'react-router'
 import { useQuery, useMutation, useQueryClient, useQueries } from '@tanstack/react-query'
-import { membersApi, gatesApi, policiesApi, schedulesApi, credentialsApi } from '@/api'
-import type { MemberCredential, CreatedToken } from '@/api'
+import { membersApi, gatesApi, policiesApi, schedulesApi } from '@/api'
 import type { WorkspaceMembership, Gate, MembershipPolicy, AccessSchedule } from '@/types'
 import { useTranslation } from 'react-i18next'
 import {
   Container, Title, Text, Group, Button, Modal, Stack, Alert, Tabs,
   TextInput, PasswordInput, Select, Badge, Avatar, ActionIcon, Center, Skeleton,
-  Table, Checkbox, Paper, SegmentedControl, Drawer, Code, CopyButton, Tooltip,
+  Table, Checkbox, Paper, SegmentedControl, Drawer,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
-import { UserPlus, Trash2, Users, AlertCircle, Settings2, X, Pencil, Copy, Check, KeyRound } from 'lucide-react'
+import { UserPlus, Trash2, Users, AlertCircle, Settings2, X, Pencil } from 'lucide-react'
 
 const ROLE_COLOR: Record<string, string> = {
   OWNER: 'yellow',
@@ -109,118 +108,6 @@ function MemberSchedulesTab({
   )
 }
 
-// ---------- Member tokens tab ----------
-
-function MemberTokensTab({ wsId, memberId, opened }: { wsId: string; memberId: string; opened: boolean }) {
-  const { t } = useTranslation()
-  const qc = useQueryClient()
-  const [label, setLabel] = useState('')
-  const [createError, setCreateError] = useState<string | null>(null)
-  const [newToken, setNewToken] = useState<CreatedToken | null>(null)
-
-  const { data: credentials = [], isLoading } = useQuery<MemberCredential[]>({
-    queryKey: ['member-credentials', wsId, memberId],
-    queryFn: () => credentialsApi.adminList(wsId, memberId),
-    enabled: opened,
-    select: (data) => data.filter((c) => c.type === 'API_TOKEN'),
-  })
-
-  const create = useMutation({
-    mutationFn: () => credentialsApi.adminCreateToken(wsId, memberId, { label }),
-    onSuccess: (created) => {
-      setNewToken(created)
-      setLabel('')
-      setCreateError(null)
-      qc.invalidateQueries({ queryKey: ['member-credentials', wsId, memberId] })
-    },
-    onError: (err: unknown) => {
-      const msg = (err as { response?: { data?: { title?: string } } })?.response?.data?.title
-      setCreateError(msg ?? t('common.error'))
-    },
-  })
-
-  const del = useMutation({
-    mutationFn: (credId: string) => credentialsApi.adminDelete(wsId, memberId, credId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['member-credentials', wsId, memberId] }),
-  })
-
-  return (
-    <Stack gap="md">
-      {newToken && (
-        <Alert
-          icon={<KeyRound size={16} />}
-          color="green"
-          variant="light"
-          withCloseButton
-          onClose={() => setNewToken(null)}
-          title={t('members.tokenCreated')}
-        >
-          <Text size="xs" mb={4}>{t('members.tokenCreatedHint')}</Text>
-          <Group gap={4} align="center">
-            <Code style={{ flex: 1, wordBreak: 'break-all', fontSize: 11 }}>{newToken.token}</Code>
-            <CopyButton value={newToken.token}>
-              {({ copied, copy }) => (
-                <Tooltip label={copied ? t('common.copied') : t('common.copy')}>
-                  <ActionIcon size="sm" variant="subtle" onClick={copy}>
-                    {copied ? <Check size={12} /> : <Copy size={12} />}
-                  </ActionIcon>
-                </Tooltip>
-              )}
-            </CopyButton>
-          </Group>
-        </Alert>
-      )}
-
-      <form onSubmit={(e) => { e.preventDefault(); create.mutate() }}>
-        <Group gap="xs" align="flex-end">
-          <TextInput
-            label={t('members.tokenLabel')}
-            placeholder={t('members.tokenLabelPlaceholder')}
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            size="xs"
-            style={{ flex: 1 }}
-          />
-          <Button type="submit" size="xs" loading={create.isPending} disabled={!label.trim()}>
-            {t('common.add')}
-          </Button>
-        </Group>
-        {createError && <Text size="xs" c="red" mt={4}>{createError}</Text>}
-      </form>
-
-      {isLoading ? (
-        <Skeleton h={40} />
-      ) : credentials.length === 0 ? (
-        <Text size="sm" c="dimmed">{t('members.noTokens')}</Text>
-      ) : (
-        <Stack gap={4}>
-          {credentials.map((cred) => (
-            <Group key={cred.id} justify="space-between" wrap="nowrap" p={4}
-              style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 6 }}>
-              <Stack gap={0} style={{ minWidth: 0 }}>
-                <Text size="xs" fw={500} truncate>{cred.label ?? t('pins.unlabeled')}</Text>
-                <Text size="xs" c="dimmed">
-                  {new Date(cred.created_at).toLocaleDateString()}
-                  {cred.expires_at && ` · ${t('pins.expires')} ${new Date(cred.expires_at).toLocaleDateString()}`}
-                </Text>
-              </Stack>
-              <ActionIcon
-                size="sm"
-                color="red"
-                variant="subtle"
-                loading={del.isPending}
-                onClick={() => del.mutate(cred.id)}
-              >
-                <Trash2 size={13} />
-              </ActionIcon>
-            </Group>
-          ))}
-        </Stack>
-      )}
-    </Stack>
-  )
-}
-
 // ---------- Member settings Drawer ----------
 
 function MemberSettingsDrawer({
@@ -305,7 +192,6 @@ function MemberSettingsDrawer({
           <Tabs.Tab value="permissions">{t('members.gatePermissions')}</Tabs.Tab>
           <Tabs.Tab value="schedules">{t('members.schedules')}</Tabs.Tab>
           <Tabs.Tab value="auth">{t('members.authOverrides')}</Tabs.Tab>
-          <Tabs.Tab value="tokens">{t('members.apiTokens')}</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="permissions" p="md">
@@ -370,9 +256,6 @@ function MemberSettingsDrawer({
           </Stack>
         </Tabs.Panel>
 
-        <Tabs.Panel value="tokens" p="md">
-          <MemberTokensTab wsId={wsId} memberId={member.id} opened={opened} />
-        </Tabs.Panel>
       </Tabs>
     </Drawer>
   )
