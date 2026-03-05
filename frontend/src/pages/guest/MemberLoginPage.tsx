@@ -192,7 +192,7 @@ export default function MemberLoginPage() {
                   type="button"
                   size="xs"
                   c="dimmed"
-                  onClick={() => navigate(`/workspaces/${wsId}/gates/${gateId}/public`)}
+                  onClick={() => navigate(redirectParam ?? `/workspaces/${wsId}/gates/${gateId}/public`)}
                 >
                   {t('pinpad.useAnotherMethod')}
                 </Anchor>
