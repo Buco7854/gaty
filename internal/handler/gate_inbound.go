@@ -19,6 +19,7 @@ import (
 
 // GateInboundHandler handles status reports pushed by gates over HTTP.
 // Authentication is performed using the gate's unique gate_token.
+// A successful status push also counts as a keepalive (updates last_seen_at).
 type GateInboundHandler struct {
 	gates *repository.GateRepository
 	redis *redis.Client
@@ -31,10 +32,8 @@ func NewGateInboundHandler(gates *repository.GateRepository, redis *redis.Client
 // --- POST /api/inbound/gates/{gate_id}/status ---
 
 type GateStatusPushInput struct {
-	// GateID is extracted from the URL path.
-	GateID uuid.UUID `path:"gate_id"`
-	// Authorization must be "Bearer {gate_token}".
-	Authorization string `header:"Authorization" required:"true"`
+	GateID        uuid.UUID `path:"gate_id"`
+	Authorization string    `header:"Authorization" required:"true"`
 	Body          struct {
 		// Status is the system-level state of the gate.
 		// Well-known values: "open", "closed", "online", "offline".
@@ -60,7 +59,6 @@ func (h *GateInboundHandler) PushStatus(ctx context.Context, input *GateStatusPu
 		return nil, huma.Error500InternalServerError("failed to update status")
 	}
 
-	// Publish SSE event via Redis Pub/Sub. workspace_id comes from the update result.
 	if h.redis != nil {
 		event := internalmqtt.GateEvent{
 			GateID:         input.GateID.String(),
@@ -81,52 +79,16 @@ func (h *GateInboundHandler) PushStatus(ctx context.Context, input *GateStatusPu
 	return nil, nil
 }
 
-// --- POST /api/inbound/gates/{gate_id}/keepalive ---
-
-type GateKeepaliveInput struct {
-	GateID        uuid.UUID `path:"gate_id"`
-	Authorization string    `header:"Authorization" required:"true"`
-}
-
-// Keepalive updates last_seen_at without changing status or metadata.
-// HTTP-mode gates should call this periodically to prove liveness.
-func (h *GateInboundHandler) Keepalive(ctx context.Context, input *GateKeepaliveInput) (*struct{}, error) {
-	token := strings.TrimPrefix(input.Authorization, "Bearer ")
-	if token == "" {
-		return nil, huma.Error401Unauthorized("missing gate token")
-	}
-
-	if err := h.gates.UpdateKeepalive(ctx, input.GateID, token); err != nil {
-		if errors.Is(err, repository.ErrUnauthorized) {
-			return nil, huma.Error401Unauthorized("invalid gate token")
-		}
-		return nil, huma.Error500InternalServerError("failed to update keepalive")
-	}
-
-	return nil, nil
-}
-
-// RegisterRoutes wires the inbound gate endpoints onto the Huma API.
-// No workspace middleware — the gate authenticates with its own token.
 func (h *GateInboundHandler) RegisterRoutes(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "gate-inbound-status",
 		Method:      http.MethodPost,
 		Path:        "/api/inbound/gates/{gate_id}/status",
-		Summary:     "Gate pushes its current status (authenticated by gate token)",
+		Summary:     "Gate reports its current status (authenticated by gate token)",
 		Description: "Used by HTTP-mode gates to report their state to the server. " +
+			"Each successful call also acts as a keepalive — it updates last_seen_at, " +
+			"resetting the unresponsive TTL. " +
 			"Authentication: Authorization: Bearer {gate_token}.",
 		Tags: []string{"Gate Inbound"},
 	}, h.PushStatus)
-
-	huma.Register(api, huma.Operation{
-		OperationID: "gate-inbound-keepalive",
-		Method:      http.MethodPost,
-		Path:        "/api/inbound/gates/{gate_id}/keepalive",
-		Summary:     "Gate keepalive ping (authenticated by gate token)",
-		Description: "HTTP-mode gates call this endpoint periodically to prove liveness. " +
-			"Updates last_seen_at without changing status. " +
-			"Authentication: Authorization: Bearer {gate_token}.",
-		Tags: []string{"Gate Inbound"},
-	}, h.Keepalive)
 }

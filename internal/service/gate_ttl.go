@@ -12,41 +12,55 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// GateTTLWorker periodically marks gates as unresponsive when they haven't
-// sent a status update (or keepalive ping) within the configured TTL.
+const (
+	// DefaultGateTTL is the default inactivity threshold after which a gate is
+	// marked "unresponsive". Both MQTT and HTTP-mode gates reset this timer on
+	// every status message they send.
+	DefaultGateTTL = 30 * time.Second
+
+	// ttlCheckInterval is how often the worker scans for expired gates.
+	// Short enough to catch expiries within a few seconds without hammering the DB.
+	// The partial index on (last_seen_at) makes each scan very cheap.
+	ttlCheckInterval = 5 * time.Second
+)
+
+// GateTTLWorker periodically marks gates as "unresponsive" when they haven't
+// sent a status update within the configured TTL.
 //
-// Both MQTT and HTTP-mode gates update last_seen_at on every message/ping.
-// If no update arrives within TTL, the gate is marked "unresponsive" and a
-// real-time SSE event is published so connected clients update immediately.
+// Architecture note: the worker relies on the partial index
+// idx_gates_ttl_candidates so the bulk UPDATE touches only candidate rows,
+// keeping the query O(k) where k is the number of newly-expired gates
+// (typically zero between ticks).
 type GateTTLWorker struct {
-	gates *repository.GateRepository
-	redis *redis.Client
+	gates  *repository.GateRepository
+	redis  *redis.Client
+	ttl    time.Duration
 }
 
-// sseGateEvent mirrors internalmqtt.GateEvent to avoid circular imports.
-type sseGateEvent struct {
+// gateUnresponsiveEvent is the Redis Pub/Sub payload pushed when a gate's TTL
+// expires. It mirrors internalmqtt.GateEvent to avoid a circular import.
+type gateUnresponsiveEvent struct {
 	GateID      string `json:"gate_id"`
 	WorkspaceID string `json:"workspace_id"`
 	Status      string `json:"status"`
 }
 
-func NewGateTTLWorker(gates *repository.GateRepository, redis *redis.Client) *GateTTLWorker {
-	return &GateTTLWorker{gates: gates, redis: redis}
+// NewGateTTLWorker creates a worker with the given inactivity threshold.
+func NewGateTTLWorker(gates *repository.GateRepository, redis *redis.Client, ttl time.Duration) *GateTTLWorker {
+	return &GateTTLWorker{gates: gates, redis: redis, ttl: ttl}
 }
 
-// Run starts the TTL check loop. It ticks every interval and marks gates
-// unresponsive when their last_seen_at is older than ttl.
-// The loop stops when ctx is cancelled.
-func (w *GateTTLWorker) Run(ctx context.Context, interval, ttl time.Duration) {
-	ticker := time.NewTicker(interval)
+// Run starts the TTL check loop. It blocks until ctx is cancelled.
+func (w *GateTTLWorker) Run(ctx context.Context) {
+	ticker := time.NewTicker(ttlCheckInterval)
 	defer ticker.Stop()
 
-	slog.Info("gate TTL worker started", "interval", interval, "ttl", ttl)
+	slog.Info("gate TTL worker started", "ttl", w.ttl, "check_interval", ttlCheckInterval)
 
 	for {
 		select {
 		case <-ticker.C:
-			w.tick(ctx, ttl)
+			w.markExpired(ctx)
 		case <-ctx.Done():
 			slog.Info("gate TTL worker stopped")
 			return
@@ -54,35 +68,30 @@ func (w *GateTTLWorker) Run(ctx context.Context, interval, ttl time.Duration) {
 	}
 }
 
-func (w *GateTTLWorker) tick(ctx context.Context, ttl time.Duration) {
+func (w *GateTTLWorker) markExpired(ctx context.Context) {
 	tCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	affected, err := w.gates.MarkUnresponsiveWithIDs(tCtx, ttl)
+	affected, err := w.gates.MarkUnresponsiveWithIDs(tCtx, w.ttl)
 	if err != nil {
 		slog.Error("gate TTL: failed to mark unresponsive gates", "error", err)
 		return
 	}
-	if len(affected) == 0 {
+	if len(affected) == 0 || w.redis == nil {
 		return
 	}
 
-	slog.Info("gate TTL: marked gates unresponsive", "count", len(affected))
-
-	if w.redis == nil {
-		return
-	}
+	slog.Info("gate TTL: gates marked unresponsive", "count", len(affected))
 
 	for _, g := range affected {
-		event := sseGateEvent{
+		payload, _ := json.Marshal(gateUnresponsiveEvent{
 			GateID:      g.GateID.String(),
 			WorkspaceID: g.WorkspaceID.String(),
 			Status:      string(model.GateStatusUnresponsive),
-		}
-		payload, _ := json.Marshal(event)
+		})
 		channel := fmt.Sprintf("gate:events:%s", g.WorkspaceID)
 		if err := w.redis.Publish(tCtx, channel, string(payload)).Err(); err != nil {
-			slog.Warn("gate TTL: failed to publish unresponsive event",
+			slog.Warn("gate TTL: failed to publish SSE event",
 				"gate_id", g.GateID, "error", err)
 		}
 	}

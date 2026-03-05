@@ -99,10 +99,10 @@ func main() {
 	membershipSvc := service.NewMembershipService(membershipRepo, memberCredRepo, wsRepo)
 	ssoSvc := service.NewSSOService(wsRepo, membershipRepo, memberCredRepo, redisClient, cfg.BaseURL)
 
-	// Gate TTL worker: marks gates unresponsive after 1 min of inactivity.
+	// Gate TTL worker: marks gates unresponsive when last_seen_at > DefaultGateTTL ago.
 	ttlCtx, ttlCancel := context.WithCancel(ctx)
 	defer ttlCancel()
-	go service.NewGateTTLWorker(gateRepo, redisClient).Run(ttlCtx, 30*time.Second, 1*time.Minute)
+	go service.NewGateTTLWorker(gateRepo, redisClient, service.DefaultGateTTL).Run(ttlCtx)
 
 	api := humachi.New(router, huma.DefaultConfig("GATY API", "0.1.0"))
 

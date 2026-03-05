@@ -338,22 +338,6 @@ func (r *GateRepository) UpdateStatusWithMeta(ctx context.Context, gateID uuid.U
 	return &UpdateStatusResult{WorkspaceID: wsID, FinalStatus: finalStatus}, nil
 }
 
-// UpdateKeepalive touches last_seen_at without changing status or metadata.
-// Returns ErrUnauthorized if id+token don't match any gate.
-func (r *GateRepository) UpdateKeepalive(ctx context.Context, gateID uuid.UUID, token string) error {
-	tag, err := r.pool.Exec(ctx,
-		`UPDATE gates SET last_seen_at = NOW() WHERE id = $1 AND gate_token = $2`,
-		gateID, token,
-	)
-	if err != nil {
-		return fmt.Errorf("update gate keepalive: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrUnauthorized
-	}
-	return nil
-}
-
 // MarkUnresponsiveWithIDs sets status = 'unresponsive' for gates that haven't been seen
 // in longer than ttl. Returns gate+workspace ID pairs for SSE notification.
 func (r *GateRepository) MarkUnresponsiveWithIDs(ctx context.Context, ttl time.Duration) ([]UnresponsiveGate, error) {
