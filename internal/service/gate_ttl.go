@@ -32,9 +32,9 @@ const (
 // keeping the query O(k) where k is the number of newly-expired gates
 // (typically zero between ticks).
 type GateTTLWorker struct {
-	gates  *repository.GateRepository
-	redis  *redis.Client
-	ttl    time.Duration
+	gates repository.GateRepository
+	redis *redis.Client
+	ttl   time.Duration
 }
 
 // gateUnresponsiveEvent is the Redis Pub/Sub payload pushed when a gate's TTL
@@ -46,7 +46,7 @@ type gateUnresponsiveEvent struct {
 }
 
 // NewGateTTLWorker creates a worker with the given inactivity threshold.
-func NewGateTTLWorker(gates *repository.GateRepository, redis *redis.Client, ttl time.Duration) *GateTTLWorker {
+func NewGateTTLWorker(gates repository.GateRepository, redis *redis.Client, ttl time.Duration) *GateTTLWorker {
 	return &GateTTLWorker{gates: gates, redis: redis, ttl: ttl}
 }
 

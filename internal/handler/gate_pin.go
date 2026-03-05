@@ -34,7 +34,7 @@ var dummyPINHash, _ = bcrypt.GenerateFromPassword([]byte("__dummy__"), bcrypt.De
 
 type GatePinHandler struct {
 	pins      *repository.GatePinRepository
-	gates     *repository.GateRepository
+	gates     repository.GateRepository
 	policies  *repository.PolicyRepository
 	schedules *repository.AccessScheduleRepository
 	mqtt      *internalmqtt.Client
@@ -44,7 +44,7 @@ type GatePinHandler struct {
 
 func NewGatePinHandler(
 	pins *repository.GatePinRepository,
-	gates *repository.GateRepository,
+	gates repository.GateRepository,
 	policies *repository.PolicyRepository,
 	schedules *repository.AccessScheduleRepository,
 	mqtt *internalmqtt.Client,

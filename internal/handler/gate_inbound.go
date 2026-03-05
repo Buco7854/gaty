@@ -11,6 +11,7 @@ import (
 	"time"
 
 	internalmqtt "github.com/Buco7854/gaty/internal/mqtt"
+	"github.com/Buco7854/gaty/internal/model"
 	"github.com/Buco7854/gaty/internal/repository"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
@@ -19,13 +20,13 @@ import (
 
 // GateInboundHandler handles status reports pushed by gates over HTTP.
 // Authentication is performed using the gate's unique gate_token.
-// A successful status push also counts as a keepalive (updates last_seen_at).
+// A successful status push also acts as a keepalive (updates last_seen_at).
 type GateInboundHandler struct {
-	gates *repository.GateRepository
+	gates repository.GateRepository
 	redis *redis.Client
 }
 
-func NewGateInboundHandler(gates *repository.GateRepository, redis *redis.Client) *GateInboundHandler {
+func NewGateInboundHandler(gates repository.GateRepository, redis *redis.Client) *GateInboundHandler {
 	return &GateInboundHandler{gates: gates, redis: redis}
 }
 
@@ -51,23 +52,34 @@ func (h *GateInboundHandler) PushStatus(ctx context.Context, input *GateStatusPu
 		return nil, huma.Error401Unauthorized("missing gate token")
 	}
 
-	res, err := h.gates.UpdateStatusWithMeta(ctx, input.GateID, token, input.Body.Status, input.Body.Meta)
+	// Validate token and retrieve gate (including status_rules for rule evaluation).
+	gate, err := h.gates.GetByToken(ctx, input.GateID, token)
 	if err != nil {
 		if errors.Is(err, repository.ErrUnauthorized) {
 			return nil, huma.Error401Unauthorized("invalid gate token")
 		}
+		return nil, huma.Error500InternalServerError("failed to authenticate gate")
+	}
+
+	// Business logic: evaluate status rules against the incoming metadata.
+	finalStatus := input.Body.Status
+	if override, ok := model.EvaluateStatusRules(gate.StatusRules, input.Body.Meta); ok {
+		finalStatus = override
+	}
+
+	if err := h.gates.UpdateStatus(ctx, input.GateID, finalStatus, input.Body.Meta); err != nil {
 		return nil, huma.Error500InternalServerError("failed to update status")
 	}
 
 	if h.redis != nil {
 		event := internalmqtt.GateEvent{
 			GateID:         input.GateID.String(),
-			WorkspaceID:    res.WorkspaceID.String(),
-			Status:         res.FinalStatus,
+			WorkspaceID:    gate.WorkspaceID.String(),
+			Status:         finalStatus,
 			StatusMetadata: input.Body.Meta,
 		}
 		payload, _ := json.Marshal(event)
-		channel := fmt.Sprintf("gate:events:%s", res.WorkspaceID)
+		channel := fmt.Sprintf("gate:events:%s", gate.WorkspaceID)
 		tCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		if err := h.redis.Publish(tCtx, channel, string(payload)).Err(); err != nil {
@@ -75,7 +87,7 @@ func (h *GateInboundHandler) PushStatus(ctx context.Context, input *GateStatusPu
 		}
 	}
 
-	slog.Info("inbound: gate status updated", "gate_id", input.GateID, "status", res.FinalStatus)
+	slog.Info("inbound: gate status updated", "gate_id", input.GateID, "status", finalStatus)
 	return nil, nil
 }
 

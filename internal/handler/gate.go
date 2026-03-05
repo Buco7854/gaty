@@ -17,7 +17,7 @@ import (
 )
 
 type GateHandler struct {
-	gates     *repository.GateRepository
+	gates     repository.GateRepository
 	policies  *repository.PolicyRepository
 	schedules *repository.AccessScheduleRepository
 	audit     *repository.AuditRepository
@@ -25,7 +25,7 @@ type GateHandler struct {
 }
 
 func NewGateHandler(
-	gates *repository.GateRepository,
+	gates repository.GateRepository,
 	policies *repository.PolicyRepository,
 	schedules *repository.AccessScheduleRepository,
 	audit *repository.AuditRepository,

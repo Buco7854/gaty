@@ -12,12 +12,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type GateRepository struct {
+// pgGateRepository is the PostgreSQL implementation of GateRepository.
+type pgGateRepository struct {
 	pool *pgxpool.Pool
 }
 
-func NewGateRepository(pool *pgxpool.Pool) *GateRepository {
-	return &GateRepository{pool: pool}
+// NewGateRepository returns a GateRepository backed by PostgreSQL.
+func NewGateRepository(pool *pgxpool.Pool) GateRepository {
+	return &pgGateRepository{pool: pool}
 }
 
 func marshalActionConfig(cfg *model.ActionConfig) json.RawMessage {
@@ -133,7 +135,7 @@ func marshalJSONSlice[T any](v []T, fallback string) json.RawMessage {
 	return json.RawMessage(b)
 }
 
-func (r *GateRepository) Create(ctx context.Context, wsID uuid.UUID, p CreateGateParams) (*model.Gate, error) {
+func (r *pgGateRepository) Create(ctx context.Context, wsID uuid.UUID, p CreateGateParams) (*model.Gate, error) {
 	if p.IntegrationConfig == nil {
 		p.IntegrationConfig = map[string]any{}
 	}
@@ -164,7 +166,7 @@ func (r *GateRepository) Create(ctx context.Context, wsID uuid.UUID, p CreateGat
 	return gate, nil
 }
 
-func (r *GateRepository) GetByID(ctx context.Context, gateID, wsID uuid.UUID) (*model.Gate, error) {
+func (r *pgGateRepository) GetByID(ctx context.Context, gateID, wsID uuid.UUID) (*model.Gate, error) {
 	var g model.Gate
 	err := scanGateRow(
 		r.pool.QueryRow(ctx,
@@ -192,7 +194,7 @@ type UpdateGateParams struct {
 	StatusRules  []model.StatusRule
 }
 
-func (r *GateRepository) Update(ctx context.Context, gateID, wsID uuid.UUID, p UpdateGateParams) (*model.Gate, error) {
+func (r *pgGateRepository) Update(ctx context.Context, gateID, wsID uuid.UUID, p UpdateGateParams) (*model.Gate, error) {
 	var g model.Gate
 	err := scanGateRow(
 		r.pool.QueryRow(ctx,
@@ -219,7 +221,7 @@ func (r *GateRepository) Update(ctx context.Context, gateID, wsID uuid.UUID, p U
 	return &g, nil
 }
 
-func (r *GateRepository) Delete(ctx context.Context, gateID, wsID uuid.UUID) error {
+func (r *pgGateRepository) Delete(ctx context.Context, gateID, wsID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx,
 		`DELETE FROM gates WHERE id = $1 AND workspace_id = $2`,
 		gateID, wsID,
@@ -234,7 +236,7 @@ func (r *GateRepository) Delete(ctx context.Context, gateID, wsID uuid.UUID) err
 }
 
 // GetByIDPublic loads a gate by ID alone (no workspace constraint).
-func (r *GateRepository) GetByIDPublic(ctx context.Context, gateID uuid.UUID) (*model.Gate, error) {
+func (r *pgGateRepository) GetByIDPublic(ctx context.Context, gateID uuid.UUID) (*model.Gate, error) {
 	var g model.Gate
 	err := scanGateRow(
 		r.pool.QueryRow(ctx,
@@ -261,7 +263,7 @@ type GatePublicInfo struct {
 }
 
 // GetPublicInfo returns gate + workspace info for the public PIN pad by gate ID alone.
-func (r *GateRepository) GetPublicInfo(ctx context.Context, gateID uuid.UUID) (*GatePublicInfo, error) {
+func (r *pgGateRepository) GetPublicInfo(ctx context.Context, gateID uuid.UUID) (*GatePublicInfo, error) {
 	info := &GatePublicInfo{}
 	err := r.pool.QueryRow(ctx,
 		`SELECT g.id, g.name, w.id, w.name
@@ -279,10 +281,39 @@ func (r *GateRepository) GetPublicInfo(ctx context.Context, gateID uuid.UUID) (*
 	return info, nil
 }
 
-func (r *GateRepository) UpdateStatus(ctx context.Context, gateID uuid.UUID, status string) error {
+// GetByToken returns the full gate record after validating the gate token.
+// Returns ErrUnauthorized when id+token don't match any row.
+// Callers are responsible for any business logic (e.g. status-rule evaluation).
+func (r *pgGateRepository) GetByToken(ctx context.Context, gateID uuid.UUID, token string) (*model.Gate, error) {
+	var g model.Gate
+	err := scanGateRow(
+		r.pool.QueryRow(ctx,
+			`SELECT `+colsFull+` FROM gates WHERE id = $1 AND gate_token = $2`,
+			gateID, token,
+		),
+		&g,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, ErrUnauthorized
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get gate by token: %w", err)
+	}
+	return &g, nil
+}
+
+// UpdateStatus persists a new status (and optional metadata) for the gate.
+// This is a pure data write — callers must compute the final status beforehand.
+// Passing a nil meta map leaves status_metadata unchanged; pass an empty map to clear it.
+func (r *pgGateRepository) UpdateStatus(ctx context.Context, gateID uuid.UUID, status string, meta map[string]any) error {
+	metaJSON := json.RawMessage("{}")
+	if len(meta) > 0 {
+		b, _ := json.Marshal(meta)
+		metaJSON = json.RawMessage(b)
+	}
 	_, err := r.pool.Exec(ctx,
-		`UPDATE gates SET status = $2, last_seen_at = NOW() WHERE id = $1`,
-		gateID, status,
+		`UPDATE gates SET status = $2, last_seen_at = NOW(), status_metadata = $3 WHERE id = $1`,
+		gateID, status, metaJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("update gate status: %w", err)
@@ -290,57 +321,9 @@ func (r *GateRepository) UpdateStatus(ctx context.Context, gateID uuid.UUID, sta
 	return nil
 }
 
-// UpdateStatusResult holds the outcome of a successful status update.
-type UpdateStatusResult struct {
-	WorkspaceID uuid.UUID
-	FinalStatus string
-}
-
-// UpdateStatusWithMeta validates the gate token, evaluates status rules against meta,
-// then writes the final status + metadata to the DB.
-// Returns ErrUnauthorized if id+token don't match any gate.
-func (r *GateRepository) UpdateStatusWithMeta(ctx context.Context, gateID uuid.UUID, token, status string, meta map[string]any) (*UpdateStatusResult, error) {
-	// Fetch gate to validate token and retrieve status_rules.
-	var wsID uuid.UUID
-	var rawRules []byte
-	err := r.pool.QueryRow(ctx,
-		`SELECT workspace_id, status_rules FROM gates WHERE id = $1 AND gate_token = $2`,
-		gateID, token,
-	).Scan(&wsID, &rawRules)
-	if err == pgx.ErrNoRows {
-		return nil, ErrUnauthorized
-	}
-	if err != nil {
-		return nil, fmt.Errorf("validate gate token: %w", err)
-	}
-
-	// Evaluate status rules: first matching rule overrides the reported status.
-	rules := unmarshalStatusRules(rawRules)
-	finalStatus := status
-	if len(rules) > 0 && len(meta) > 0 {
-		if overridden, ok := model.EvaluateStatusRules(rules, meta); ok {
-			finalStatus = overridden
-		}
-	}
-
-	metaJSON := json.RawMessage("{}")
-	if len(meta) > 0 {
-		b, _ := json.Marshal(meta)
-		metaJSON = json.RawMessage(b)
-	}
-	_, err = r.pool.Exec(ctx,
-		`UPDATE gates SET status = $2, last_seen_at = NOW(), status_metadata = $3 WHERE id = $1`,
-		gateID, finalStatus, metaJSON,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("update gate status+meta: %w", err)
-	}
-	return &UpdateStatusResult{WorkspaceID: wsID, FinalStatus: finalStatus}, nil
-}
-
 // MarkUnresponsiveWithIDs sets status = 'unresponsive' for gates that haven't been seen
 // in longer than ttl. Returns gate+workspace ID pairs for SSE notification.
-func (r *GateRepository) MarkUnresponsiveWithIDs(ctx context.Context, ttl time.Duration) ([]UnresponsiveGate, error) {
+func (r *pgGateRepository) MarkUnresponsiveWithIDs(ctx context.Context, ttl time.Duration) ([]UnresponsiveGate, error) {
 	rows, err := r.pool.Query(ctx,
 		`UPDATE gates
 		 SET status = $1
@@ -375,7 +358,7 @@ type UnresponsiveGate struct {
 }
 
 // GetToken returns the current gate authentication token (admin only).
-func (r *GateRepository) GetToken(ctx context.Context, gateID, wsID uuid.UUID) (string, error) {
+func (r *pgGateRepository) GetToken(ctx context.Context, gateID, wsID uuid.UUID) (string, error) {
 	var token string
 	err := r.pool.QueryRow(ctx,
 		`SELECT gate_token FROM gates WHERE id = $1 AND workspace_id = $2`,
@@ -391,7 +374,7 @@ func (r *GateRepository) GetToken(ctx context.Context, gateID, wsID uuid.UUID) (
 }
 
 // RotateToken generates a new random token for the gate and returns it.
-func (r *GateRepository) RotateToken(ctx context.Context, gateID, wsID uuid.UUID) (string, error) {
+func (r *pgGateRepository) RotateToken(ctx context.Context, gateID, wsID uuid.UUID) (string, error) {
 	var token string
 	err := r.pool.QueryRow(ctx,
 		`UPDATE gates
@@ -411,7 +394,7 @@ func (r *GateRepository) RotateToken(ctx context.Context, gateID, wsID uuid.UUID
 
 // ListForWorkspace returns gates for a workspace.
 // OWNER/ADMIN see all gates; MEMBER sees only gates with at least one policy.
-func (r *GateRepository) ListForWorkspace(ctx context.Context, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID) ([]model.Gate, error) {
+func (r *pgGateRepository) ListForWorkspace(ctx context.Context, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID) ([]model.Gate, error) {
 	isAdmin := role == model.RoleOwner || role == model.RoleAdmin
 
 	var (

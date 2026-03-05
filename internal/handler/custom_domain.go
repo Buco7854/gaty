@@ -18,12 +18,12 @@ import (
 
 type CustomDomainHandler struct {
 	domains *repository.CustomDomainRepository
-	gates   *repository.GateRepository
+	gates   repository.GateRepository
 }
 
 func NewCustomDomainHandler(
 	domains *repository.CustomDomainRepository,
-	gates *repository.GateRepository,
+	gates repository.GateRepository,
 ) *CustomDomainHandler {
 	return &CustomDomainHandler{domains: domains, gates: gates}
 }
