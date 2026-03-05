@@ -218,12 +218,6 @@ type pinMetadata struct {
 	Permissions []string `json:"permissions"`
 
 	ExpiresAt *time.Time `json:"expires_at"`
-
-	// Deprecated: use a named AccessSchedule attached via ScheduleID instead.
-	// These fields predate the schedule system and will be removed in a future release.
-	AllowedDays       []int `json:"allowed_days"`        // 0=Sun … 6=Sat
-	AllowedHoursStart *int  `json:"allowed_hours_start"` // 0–23 inclusive
-	AllowedHoursEnd   *int  `json:"allowed_hours_end"`   // 0–23 exclusive
 }
 
 func parsePinMetadata(raw map[string]any) pinMetadata {
@@ -236,25 +230,6 @@ func parsePinMetadata(raw map[string]any) pinMetadata {
 func checkPINRules(meta pinMetadata, now time.Time) error {
 	if meta.ExpiresAt != nil && now.After(*meta.ExpiresAt) {
 		return fmt.Errorf("pin expired")
-	}
-	if len(meta.AllowedDays) > 0 {
-		dow := int(now.Weekday())
-		allowed := false
-		for _, d := range meta.AllowedDays {
-			if d == dow {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return fmt.Errorf("not allowed today")
-		}
-	}
-	if meta.AllowedHoursStart != nil && meta.AllowedHoursEnd != nil {
-		h := now.Hour()
-		if h < *meta.AllowedHoursStart || h >= *meta.AllowedHoursEnd {
-			return fmt.Errorf("outside allowed hours")
-		}
 	}
 	return nil
 }
