@@ -1,17 +1,7 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- Alias around the PostgreSQL 18 built-in uuidv7().
+-- Used as DEFAULT for all primary keys (timestamp-ordered, compact B-tree index).
 CREATE OR REPLACE FUNCTION uuid_generate_v7() RETURNS uuid
-LANGUAGE plpgsql PARALLEL SAFE
-AS $$
-DECLARE
-  unix_ts_ms bytea;
-  uuid_bytes bytea;
-BEGIN
-  unix_ts_ms = substring(int8send(floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint) FROM 3);
-  uuid_bytes = uuid_send(gen_random_uuid());
-  uuid_bytes = overlay(uuid_bytes PLACING unix_ts_ms FROM 1 FOR 6);
-  uuid_bytes = set_byte(uuid_bytes, 6, (b'0111' || get_byte(uuid_bytes, 6)::bit(4))::bit(8)::int);
-  uuid_bytes = set_byte(uuid_bytes, 8, (b'10'   || get_byte(uuid_bytes, 8)::bit(6))::bit(8)::int);
-  RETURN encode(uuid_bytes, 'hex')::uuid;
-END;
-$$;
+LANGUAGE sql PARALLEL SAFE
+AS $$ SELECT uuidv7(); $$;
