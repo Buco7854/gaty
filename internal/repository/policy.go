@@ -2,10 +2,12 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/Buco7854/gaty/internal/model"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -130,4 +132,46 @@ func (r *PolicyRepository) RevokePermission(ctx context.Context, membershipID, g
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SetMemberGateSchedule attaches (or replaces) a time-restriction schedule to a member-gate pair.
+func (r *PolicyRepository) SetMemberGateSchedule(ctx context.Context, membershipID, gateID, scheduleID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO membership_gate_schedules (membership_id, gate_id, schedule_id)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (membership_id, gate_id) DO UPDATE SET schedule_id = EXCLUDED.schedule_id`,
+		membershipID, gateID, scheduleID,
+	)
+	if err != nil {
+		return fmt.Errorf("set member gate schedule: %w", err)
+	}
+	return nil
+}
+
+// RemoveMemberGateSchedule detaches any schedule from a member-gate pair (makes access unrestricted).
+func (r *PolicyRepository) RemoveMemberGateSchedule(ctx context.Context, membershipID, gateID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx,
+		`DELETE FROM membership_gate_schedules WHERE membership_id = $1 AND gate_id = $2`,
+		membershipID, gateID,
+	)
+	if err != nil {
+		return fmt.Errorf("remove member gate schedule: %w", err)
+	}
+	return nil
+}
+
+// GetMemberGateScheduleID returns the schedule_id attached to a member-gate pair, or ErrNotFound if none.
+func (r *PolicyRepository) GetMemberGateScheduleID(ctx context.Context, membershipID, gateID uuid.UUID) (uuid.UUID, error) {
+	var scheduleID uuid.UUID
+	err := r.pool.QueryRow(ctx,
+		`SELECT schedule_id FROM membership_gate_schedules WHERE membership_id = $1 AND gate_id = $2`,
+		membershipID, gateID,
+	).Scan(&scheduleID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrNotFound
+	}
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("get member gate schedule: %w", err)
+	}
+	return scheduleID, nil
 }

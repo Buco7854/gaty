@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/Buco7854/gaty/internal/integration"
 	"github.com/Buco7854/gaty/internal/middleware"
@@ -16,19 +17,21 @@ import (
 )
 
 type GateHandler struct {
-	gates    *repository.GateRepository
-	policies *repository.PolicyRepository
-	audit    *repository.AuditRepository
-	mqtt     *internalmqtt.Client // nil if broker unavailable
+	gates     *repository.GateRepository
+	policies  *repository.PolicyRepository
+	schedules *repository.AccessScheduleRepository
+	audit     *repository.AuditRepository
+	mqtt      *internalmqtt.Client // nil if broker unavailable
 }
 
 func NewGateHandler(
 	gates *repository.GateRepository,
 	policies *repository.PolicyRepository,
+	schedules *repository.AccessScheduleRepository,
 	audit *repository.AuditRepository,
 	mqtt *internalmqtt.Client,
 ) *GateHandler {
-	return &GateHandler{gates: gates, policies: policies, audit: audit, mqtt: mqtt}
+	return &GateHandler{gates: gates, policies: policies, schedules: schedules, audit: audit, mqtt: mqtt}
 }
 
 // --- Shared path params (used by policy.go too) ---
@@ -210,6 +213,16 @@ func (h *GateHandler) Trigger(ctx context.Context, input *TriggerInput) (*struct
 		}
 		if !ok {
 			return nil, huma.Error403Forbidden("missing " + permCode + " permission")
+		}
+		// Check time-restriction schedule attached to this member-gate pair (if any).
+		if scheduleID, schErr := h.policies.GetMemberGateScheduleID(ctx, membershipID, input.GateID); schErr == nil {
+			schedule, schErr := h.schedules.GetByIDPublic(ctx, scheduleID)
+			if schErr == nil {
+				if schErr = CheckSchedule(schedule, time.Now()); schErr != nil {
+					slog.Info("gate trigger: schedule rejected", "membership_id", membershipID, "gate_id", input.GateID, "schedule_id", scheduleID)
+					return nil, huma.Error403Forbidden("access not allowed at this time")
+				}
+			}
 		}
 	}
 

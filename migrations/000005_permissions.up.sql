@@ -20,3 +20,12 @@ CREATE TABLE membership_policies (
 
 CREATE INDEX idx_membership_policies_membership ON membership_policies(membership_id);
 CREATE INDEX idx_membership_policies_gate ON membership_policies(gate_id);
+
+-- Optional time-restriction schedule for a member's access to a specific gate.
+-- A single schedule per (membership, gate) pair. If absent, access is unrestricted (time-wise).
+CREATE TABLE membership_gate_schedules (
+    membership_id UUID NOT NULL REFERENCES workspace_memberships(id) ON DELETE CASCADE,
+    gate_id       UUID NOT NULL REFERENCES gates(id)                 ON DELETE CASCADE,
+    schedule_id   UUID NOT NULL REFERENCES access_schedules(id)      ON DELETE CASCADE,
+    PRIMARY KEY (membership_id, gate_id)
+);

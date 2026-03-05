@@ -65,8 +65,8 @@ func (s *MembershipService) List(ctx context.Context, workspaceID uuid.UUID) ([]
 	return s.memberships.List(ctx, workspaceID)
 }
 
-func (s *MembershipService) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName *string, role *model.WorkspaceRole, authConfig map[string]any) (*model.WorkspaceMembership, error) {
-	return s.memberships.Update(ctx, membershipID, workspaceID, displayName, role, authConfig)
+func (s *MembershipService) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName, localUsername *string, role *model.WorkspaceRole, authConfig map[string]any) (*model.WorkspaceMembership, error) {
+	return s.memberships.Update(ctx, membershipID, workspaceID, displayName, localUsername, role, authConfig)
 }
 
 func (s *MembershipService) Delete(ctx context.Context, membershipID, workspaceID uuid.UUID) error {

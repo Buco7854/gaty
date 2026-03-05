@@ -83,6 +83,7 @@ func main() {
 	gateRepo := repository.NewGateRepository(pool)
 	gatePinRepo := repository.NewGatePinRepository(pool)
 	policyRepo := repository.NewPolicyRepository(pool)
+	scheduleRepo := repository.NewAccessScheduleRepository(pool)
 	auditRepo := repository.NewAuditRepository(pool)
 	domainRepo := repository.NewCustomDomainRepository(pool)
 
@@ -144,10 +145,11 @@ func main() {
 	// Register route groups
 	handler.NewAuthHandler(authSvc, userRepo).RegisterRoutes(api, requireAuth)
 	handler.NewWorkspaceHandler(wsRepo).RegisterRoutes(api, requireAuth, wsAdmin)
-	handler.NewGateHandler(gateRepo, policyRepo, auditRepo, mqttClient).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
-	handler.NewPolicyHandler(policyRepo).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
+	handler.NewGateHandler(gateRepo, policyRepo, scheduleRepo, auditRepo, mqttClient).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
+	handler.NewPolicyHandler(policyRepo, scheduleRepo).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
 	handler.NewMemberHandler(membershipSvc).RegisterRoutes(api, wsAdmin)
-	handler.NewGatePinHandler(gatePinRepo, gateRepo, policyRepo, mqttClient, redisClient, authSvc).RegisterRoutes(api, wsMember, wsGateManager)
+	handler.NewGatePinHandler(gatePinRepo, gateRepo, policyRepo, scheduleRepo, mqttClient, redisClient, authSvc).RegisterRoutes(api, wsMember, wsGateManager)
+	handler.NewAccessScheduleHandler(scheduleRepo).RegisterRoutes(api, wsAdmin)
 	handler.NewSSOHandler(ssoSvc, authSvc, wsRepo, cfg.FrontendURL).RegisterRoutes(api, wsAdmin)
 	handler.NewCredentialHandler(credRepo, memberCredRepo, membershipRepo).RegisterRoutes(api, requireAuth, requireMembership, wsAdmin)
 	handler.NewCustomDomainHandler(domainRepo, gateRepo).RegisterRoutes(api, wsMember, wsGateManager)

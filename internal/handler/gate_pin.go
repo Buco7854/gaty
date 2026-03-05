@@ -33,23 +33,25 @@ const (
 var dummyPINHash, _ = bcrypt.GenerateFromPassword([]byte("__dummy__"), bcrypt.DefaultCost)
 
 type GatePinHandler struct {
-	pins     *repository.GatePinRepository
-	gates    *repository.GateRepository
-	policies *repository.PolicyRepository
-	mqtt     *internalmqtt.Client
-	redis    *redis.Client
-	authSvc  *service.AuthService
+	pins      *repository.GatePinRepository
+	gates     *repository.GateRepository
+	policies  *repository.PolicyRepository
+	schedules *repository.AccessScheduleRepository
+	mqtt      *internalmqtt.Client
+	redis     *redis.Client
+	authSvc   *service.AuthService
 }
 
 func NewGatePinHandler(
 	pins *repository.GatePinRepository,
 	gates *repository.GateRepository,
 	policies *repository.PolicyRepository,
+	schedules *repository.AccessScheduleRepository,
 	mqtt *internalmqtt.Client,
 	redis *redis.Client,
 	authSvc *service.AuthService,
 ) *GatePinHandler {
-	return &GatePinHandler{pins: pins, gates: gates, policies: policies, mqtt: mqtt, redis: redis, authSvc: authSvc}
+	return &GatePinHandler{pins: pins, gates: gates, policies: policies, schedules: schedules, mqtt: mqtt, redis: redis, authSvc: authSvc}
 }
 
 // --- Admin: Create PIN ---
@@ -58,10 +60,11 @@ type CreatePINInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	GateID      uuid.UUID `path:"gate_id"`
 	Body        struct {
-		PIN      string         `json:"pin" minLength:"1"`
-		CodeType string         `json:"code_type,omitempty" enum:"pin,password" default:"pin"`
-		Label    string         `json:"label" minLength:"1" maxLength:"100"`
-		Metadata map[string]any `json:"metadata,omitempty"`
+		PIN        string         `json:"pin" minLength:"1"`
+		CodeType   string         `json:"code_type,omitempty" enum:"pin,password" default:"pin"`
+		Label      string         `json:"label" minLength:"1" maxLength:"100"`
+		Metadata   map[string]any `json:"metadata,omitempty"`
+		ScheduleID *uuid.UUID     `json:"schedule_id,omitempty"`
 	}
 }
 
@@ -90,7 +93,7 @@ func (h *GatePinHandler) CreatePIN(ctx context.Context, input *CreatePINInput) (
 		meta = map[string]any{}
 	}
 	meta["code_type"] = codeType
-	pin, err := h.pins.Create(ctx, input.GateID, string(hashed), input.Body.Label, meta)
+	pin, err := h.pins.Create(ctx, input.GateID, string(hashed), input.Body.Label, meta, input.Body.ScheduleID)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create pin")
 	}
@@ -133,6 +136,47 @@ func (h *GatePinHandler) UpdatePIN(ctx context.Context, input *UpdatePINInput) (
 	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to update pin")
+	}
+	return &GatePinOutput{Body: pin}, nil
+}
+
+// --- Admin: Set schedule on a PIN ---
+
+type SetPinScheduleInput struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	GateID      uuid.UUID `path:"gate_id"`
+	PinID       uuid.UUID `path:"pin_id"`
+	Body        struct {
+		ScheduleID uuid.UUID `json:"schedule_id"`
+	}
+}
+
+func (h *GatePinHandler) SetPinSchedule(ctx context.Context, input *SetPinScheduleInput) (*GatePinOutput, error) {
+	pin, err := h.pins.SetPinSchedule(ctx, input.PinID, input.GateID, input.Body.ScheduleID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("pin not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to set schedule")
+	}
+	return &GatePinOutput{Body: pin}, nil
+}
+
+// --- Admin: Clear schedule from a PIN ---
+
+type PinIDPathParam struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	GateID      uuid.UUID `path:"gate_id"`
+	PinID       uuid.UUID `path:"pin_id"`
+}
+
+func (h *GatePinHandler) ClearPinSchedule(ctx context.Context, input *PinIDPathParam) (*GatePinOutput, error) {
+	pin, err := h.pins.ClearPinSchedule(ctx, input.PinID, input.GateID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("pin not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to clear schedule")
 	}
 	return &GatePinOutput{Body: pin}, nil
 }
@@ -246,9 +290,21 @@ func (h *GatePinHandler) validatePIN(ctx context.Context, gateID uuid.UUID, pin,
 	}
 
 	meta := parsePinMetadata(matched.Metadata)
-	if err := checkPINRules(meta, time.Now()); err != nil {
+	now := time.Now()
+	if err := checkPINRules(meta, now); err != nil {
 		slog.Info("pin validate: business rule rejected", "pin_id", matched.ID, "reason", err)
 		return nil, pinMetadata{}, huma.Error403Forbidden("access denied")
+	}
+
+	// Check attached access schedule if present.
+	if matched.ScheduleID != nil {
+		schedule, schErr := h.schedules.GetByIDPublic(ctx, *matched.ScheduleID)
+		if schErr == nil {
+			if schErr = CheckSchedule(schedule, now); schErr != nil {
+				slog.Info("pin validate: schedule rejected", "pin_id", matched.ID, "schedule_id", matched.ScheduleID, "reason", schErr)
+				return nil, pinMetadata{}, huma.Error403Forbidden("access denied")
+			}
+		}
 	}
 
 	// Reset rate limit on success.
@@ -477,6 +533,24 @@ func (h *GatePinHandler) RegisterRoutes(
 		Tags:        []string{"Gate Pins"},
 		Middlewares: huma.Middlewares{wsMember, wsGateManager},
 	}, h.DeletePIN)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "gate-pin-set-schedule",
+		Method:      http.MethodPut,
+		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/pins/{pin_id}/schedule",
+		Summary:     "Attach (or replace) a time-restriction schedule on a PIN",
+		Tags:        []string{"Gate Pins"},
+		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+	}, h.SetPinSchedule)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "gate-pin-clear-schedule",
+		Method:      http.MethodDelete,
+		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/pins/{pin_id}/schedule",
+		Summary:     "Remove the time-restriction schedule from a PIN",
+		Tags:        []string{"Gate Pins"},
+		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+	}, h.ClearPinSchedule)
 
 	// Backward-compatible one-shot unlock (always opens immediately, no session).
 	huma.Register(api, huma.Operation{
