@@ -17,15 +17,15 @@ var (
 )
 
 type MembershipService struct {
-	memberships *repository.WorkspaceMembershipRepository
-	memberCreds *repository.MembershipCredentialRepository
-	workspaces  *repository.WorkspaceRepository
+	memberships repository.WorkspaceMembershipRepository
+	memberCreds repository.MembershipCredentialRepository
+	workspaces  repository.WorkspaceRepository
 }
 
 func NewMembershipService(
-	memberships *repository.WorkspaceMembershipRepository,
-	memberCreds *repository.MembershipCredentialRepository,
-	workspaces *repository.WorkspaceRepository,
+	memberships repository.WorkspaceMembershipRepository,
+	memberCreds repository.MembershipCredentialRepository,
+	workspaces repository.WorkspaceRepository,
 ) *MembershipService {
 	return &MembershipService{
 		memberships: memberships,

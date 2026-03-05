@@ -13,12 +13,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type MembershipCredentialRepository struct {
+type pgMembershipCredentialRepository struct {
 	pool *pgxpool.Pool
 }
 
-func NewMembershipCredentialRepository(pool *pgxpool.Pool) *MembershipCredentialRepository {
-	return &MembershipCredentialRepository{pool: pool}
+func NewMembershipCredentialRepository(pool *pgxpool.Pool) MembershipCredentialRepository {
+	return &pgMembershipCredentialRepository{pool: pool}
 }
 
 const membershipCredColumns = `id, membership_id, type, hashed_value, label, expires_at, metadata, created_at`
@@ -35,7 +35,7 @@ func scanMembershipCredential(row pgx.Row) (*model.MembershipCredential, error) 
 	return c, nil
 }
 
-func (r *MembershipCredentialRepository) Create(ctx context.Context, membershipID uuid.UUID, credType model.CredentialType, hashedValue string, label *string, expiresAt *time.Time, metadata map[string]any) (*model.MembershipCredential, error) {
+func (r *pgMembershipCredentialRepository) Create(ctx context.Context, membershipID uuid.UUID, credType model.CredentialType, hashedValue string, label *string, expiresAt *time.Time, metadata map[string]any) (*model.MembershipCredential, error) {
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
@@ -57,7 +57,7 @@ func (r *MembershipCredentialRepository) Create(ctx context.Context, membershipI
 
 // GetByMembershipAndType returns the first credential of a given type for a membership.
 // Used for PASSWORD and SSO_IDENTITY lookups.
-func (r *MembershipCredentialRepository) GetByMembershipAndType(ctx context.Context, membershipID uuid.UUID, credType model.CredentialType) (*model.MembershipCredential, error) {
+func (r *pgMembershipCredentialRepository) GetByMembershipAndType(ctx context.Context, membershipID uuid.UUID, credType model.CredentialType) (*model.MembershipCredential, error) {
 	return scanMembershipCredential(r.pool.QueryRow(ctx,
 		`SELECT `+membershipCredColumns+` FROM membership_credentials
 		 WHERE membership_id = $1 AND type = $2
@@ -66,7 +66,7 @@ func (r *MembershipCredentialRepository) GetByMembershipAndType(ctx context.Cont
 	))
 }
 
-func (r *MembershipCredentialRepository) GetByID(ctx context.Context, credID, membershipID uuid.UUID) (*model.MembershipCredential, error) {
+func (r *pgMembershipCredentialRepository) GetByID(ctx context.Context, credID, membershipID uuid.UUID) (*model.MembershipCredential, error) {
 	return scanMembershipCredential(r.pool.QueryRow(ctx,
 		`SELECT `+membershipCredColumns+` FROM membership_credentials
 		 WHERE id = $1 AND membership_id = $2`,
@@ -76,7 +76,7 @@ func (r *MembershipCredentialRepository) GetByID(ctx context.Context, credID, me
 
 // ListByMembershipAndType lists all credentials of a given type for a membership.
 // Used for API token listing.
-func (r *MembershipCredentialRepository) ListByMembershipAndType(ctx context.Context, membershipID uuid.UUID, credType model.CredentialType) ([]*model.MembershipCredential, error) {
+func (r *pgMembershipCredentialRepository) ListByMembershipAndType(ctx context.Context, membershipID uuid.UUID, credType model.CredentialType) ([]*model.MembershipCredential, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT `+membershipCredColumns+` FROM membership_credentials
 		 WHERE membership_id = $1 AND type = $2
@@ -101,7 +101,7 @@ func (r *MembershipCredentialRepository) ListByMembershipAndType(ctx context.Con
 
 // FindBySSOIdentity looks up a membership credential by provider sub within a workspace.
 // Used to resolve an inbound SSO callback to an existing membership.
-func (r *MembershipCredentialRepository) FindBySSOIdentity(ctx context.Context, workspaceID uuid.UUID, providerSub string) (*model.MembershipCredential, error) {
+func (r *pgMembershipCredentialRepository) FindBySSOIdentity(ctx context.Context, workspaceID uuid.UUID, providerSub string) (*model.MembershipCredential, error) {
 	c := &model.MembershipCredential{}
 	err := r.pool.QueryRow(ctx,
 		`SELECT mc.id, mc.membership_id, mc.type, mc.hashed_value, mc.label, mc.expires_at, mc.metadata, mc.created_at
@@ -121,7 +121,7 @@ func (r *MembershipCredentialRepository) FindBySSOIdentity(ctx context.Context, 
 }
 
 // Delete hard-deletes a membership credential, scoped to the owning membership.
-func (r *MembershipCredentialRepository) Delete(ctx context.Context, credID, membershipID uuid.UUID) error {
+func (r *pgMembershipCredentialRepository) Delete(ctx context.Context, credID, membershipID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx,
 		`DELETE FROM membership_credentials WHERE id = $1 AND membership_id = $2`,
 		credID, membershipID,

@@ -13,10 +13,10 @@ import (
 )
 
 type WorkspaceHandler struct {
-	workspaces *repository.WorkspaceRepository
+	workspaces repository.WorkspaceRepository
 }
 
-func NewWorkspaceHandler(workspaces *repository.WorkspaceRepository) *WorkspaceHandler {
+func NewWorkspaceHandler(workspaces repository.WorkspaceRepository) *WorkspaceHandler {
 	return &WorkspaceHandler{workspaces: workspaces}
 }
 

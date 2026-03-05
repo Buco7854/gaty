@@ -36,22 +36,22 @@ type TokenPair struct {
 }
 
 type AuthService struct {
-	users                 *repository.UserRepository
-	credentials           *repository.CredentialRepository
-	memberships           *repository.WorkspaceMembershipRepository
-	memberCreds           *repository.MembershipCredentialRepository
-	workspaces            *repository.WorkspaceRepository
+	users                 repository.UserRepository
+	credentials           repository.CredentialRepository
+	memberships           repository.WorkspaceMembershipRepository
+	memberCreds           repository.MembershipCredentialRepository
+	workspaces            repository.WorkspaceRepository
 	redis                 *redis.Client
 	jwtSecret             []byte
 	globalSessionDuration time.Duration // 0 = infinite
 }
 
 func NewAuthService(
-	users *repository.UserRepository,
-	credentials *repository.CredentialRepository,
-	memberships *repository.WorkspaceMembershipRepository,
-	memberCreds *repository.MembershipCredentialRepository,
-	workspaces *repository.WorkspaceRepository,
+	users repository.UserRepository,
+	credentials repository.CredentialRepository,
+	memberships repository.WorkspaceMembershipRepository,
+	memberCreds repository.MembershipCredentialRepository,
+	workspaces repository.WorkspaceRepository,
 	redisClient *redis.Client,
 	jwtSecret string,
 	globalSessionDuration time.Duration,

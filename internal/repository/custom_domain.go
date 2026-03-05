@@ -13,12 +13,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type CustomDomainRepository struct {
+type pgCustomDomainRepository struct {
 	pool *pgxpool.Pool
 }
 
-func NewCustomDomainRepository(pool *pgxpool.Pool) *CustomDomainRepository {
-	return &CustomDomainRepository{pool: pool}
+func NewCustomDomainRepository(pool *pgxpool.Pool) CustomDomainRepository {
+	return &pgCustomDomainRepository{pool: pool}
 }
 
 const domainCols = `id, gate_id, workspace_id, domain, dns_challenge_token, verified_at, created_at`
@@ -35,7 +35,7 @@ func scanDomain(row pgx.Row) (*model.CustomDomain, error) {
 	return d, nil
 }
 
-func (r *CustomDomainRepository) Create(ctx context.Context, gateID, workspaceID uuid.UUID, domain string) (*model.CustomDomain, error) {
+func (r *pgCustomDomainRepository) Create(ctx context.Context, gateID, workspaceID uuid.UUID, domain string) (*model.CustomDomain, error) {
 	d, err := scanDomain(r.pool.QueryRow(ctx,
 		`INSERT INTO custom_domains (gate_id, workspace_id, domain)
 		 VALUES ($1, $2, $3)
@@ -52,21 +52,21 @@ func (r *CustomDomainRepository) Create(ctx context.Context, gateID, workspaceID
 	return d, nil
 }
 
-func (r *CustomDomainRepository) GetByID(ctx context.Context, domainID, gateID uuid.UUID) (*model.CustomDomain, error) {
+func (r *pgCustomDomainRepository) GetByID(ctx context.Context, domainID, gateID uuid.UUID) (*model.CustomDomain, error) {
 	return scanDomain(r.pool.QueryRow(ctx,
 		`SELECT `+domainCols+` FROM custom_domains WHERE id = $1 AND gate_id = $2`,
 		domainID, gateID,
 	))
 }
 
-func (r *CustomDomainRepository) GetByDomain(ctx context.Context, domain string) (*model.CustomDomain, error) {
+func (r *pgCustomDomainRepository) GetByDomain(ctx context.Context, domain string) (*model.CustomDomain, error) {
 	return scanDomain(r.pool.QueryRow(ctx,
 		`SELECT `+domainCols+` FROM custom_domains WHERE domain = $1`,
 		domain,
 	))
 }
 
-func (r *CustomDomainRepository) ListByGate(ctx context.Context, gateID uuid.UUID) ([]*model.CustomDomain, error) {
+func (r *pgCustomDomainRepository) ListByGate(ctx context.Context, gateID uuid.UUID) ([]*model.CustomDomain, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT `+domainCols+` FROM custom_domains WHERE gate_id = $1 ORDER BY created_at DESC`,
 		gateID,
@@ -88,7 +88,7 @@ func (r *CustomDomainRepository) ListByGate(ctx context.Context, gateID uuid.UUI
 }
 
 // ListAllVerified returns all verified domains. Used by external proxy automation.
-func (r *CustomDomainRepository) ListAllVerified(ctx context.Context) ([]*model.CustomDomain, error) {
+func (r *pgCustomDomainRepository) ListAllVerified(ctx context.Context) ([]*model.CustomDomain, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT `+domainCols+` FROM custom_domains WHERE verified_at IS NOT NULL ORDER BY domain`,
 	)
@@ -109,7 +109,7 @@ func (r *CustomDomainRepository) ListAllVerified(ctx context.Context) ([]*model.
 }
 
 // SetVerified marks a domain as verified at the given time.
-func (r *CustomDomainRepository) SetVerified(ctx context.Context, domainID uuid.UUID, at time.Time) error {
+func (r *pgCustomDomainRepository) SetVerified(ctx context.Context, domainID uuid.UUID, at time.Time) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE custom_domains SET verified_at = $2 WHERE id = $1`,
 		domainID, at,
@@ -133,7 +133,7 @@ type DomainResolveResult struct {
 
 // ResolveByDomain returns gate + workspace info for a verified custom domain.
 // Used by the public resolve endpoint so the frontend knows which gate page to render.
-func (r *CustomDomainRepository) ResolveByDomain(ctx context.Context, domain string) (*DomainResolveResult, error) {
+func (r *pgCustomDomainRepository) ResolveByDomain(ctx context.Context, domain string) (*DomainResolveResult, error) {
 	var res DomainResolveResult
 	err := r.pool.QueryRow(ctx,
 		`SELECT g.id, g.name, w.id, w.name
@@ -152,7 +152,7 @@ func (r *CustomDomainRepository) ResolveByDomain(ctx context.Context, domain str
 	return &res, nil
 }
 
-func (r *CustomDomainRepository) Delete(ctx context.Context, domainID, gateID uuid.UUID) error {
+func (r *pgCustomDomainRepository) Delete(ctx context.Context, domainID, gateID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx,
 		`DELETE FROM custom_domains WHERE id = $1 AND gate_id = $2`,
 		domainID, gateID,

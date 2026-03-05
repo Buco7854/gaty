@@ -11,15 +11,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type PolicyRepository struct {
+type pgPolicyRepository struct {
 	pool *pgxpool.Pool
 }
 
-func NewPolicyRepository(pool *pgxpool.Pool) *PolicyRepository {
-	return &PolicyRepository{pool: pool}
+func NewPolicyRepository(pool *pgxpool.Pool) PolicyRepository {
+	return &pgPolicyRepository{pool: pool}
 }
 
-func (r *PolicyRepository) List(ctx context.Context, gateID uuid.UUID) ([]model.MembershipPolicy, error) {
+func (r *pgPolicyRepository) List(ctx context.Context, gateID uuid.UUID) ([]model.MembershipPolicy, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT membership_id, gate_id, permission_code FROM membership_policies
 		 WHERE gate_id = $1
@@ -42,7 +42,7 @@ func (r *PolicyRepository) List(ctx context.Context, gateID uuid.UUID) ([]model.
 	return result, rows.Err()
 }
 
-func (r *PolicyRepository) ListForMembership(ctx context.Context, membershipID uuid.UUID) ([]model.MembershipPolicy, error) {
+func (r *pgPolicyRepository) ListForMembership(ctx context.Context, membershipID uuid.UUID) ([]model.MembershipPolicy, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT membership_id, gate_id, permission_code FROM membership_policies
 		 WHERE membership_id = $1
@@ -66,7 +66,7 @@ func (r *PolicyRepository) ListForMembership(ctx context.Context, membershipID u
 }
 
 // Grant adds a permission for a membership on a gate. Idempotent (ON CONFLICT DO NOTHING).
-func (r *PolicyRepository) Grant(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) error {
+func (r *pgPolicyRepository) Grant(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO membership_policies (membership_id, gate_id, permission_code)
 		 VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
@@ -79,7 +79,7 @@ func (r *PolicyRepository) Grant(ctx context.Context, membershipID, gateID uuid.
 }
 
 // HasPermission returns true if the membership has the given permission on the gate.
-func (r *PolicyRepository) HasPermission(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) (bool, error) {
+func (r *pgPolicyRepository) HasPermission(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) (bool, error) {
 	var exists bool
 	err := r.pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM membership_policies
@@ -93,7 +93,7 @@ func (r *PolicyRepository) HasPermission(ctx context.Context, membershipID, gate
 }
 
 // HasAnyPermission returns true if the membership has at least one policy on the gate.
-func (r *PolicyRepository) HasAnyPermission(ctx context.Context, membershipID, gateID uuid.UUID) (bool, error) {
+func (r *pgPolicyRepository) HasAnyPermission(ctx context.Context, membershipID, gateID uuid.UUID) (bool, error) {
 	var exists bool
 	err := r.pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM membership_policies
@@ -107,7 +107,7 @@ func (r *PolicyRepository) HasAnyPermission(ctx context.Context, membershipID, g
 }
 
 // Revoke removes all permissions for a membership on a gate.
-func (r *PolicyRepository) Revoke(ctx context.Context, membershipID, gateID uuid.UUID) error {
+func (r *pgPolicyRepository) Revoke(ctx context.Context, membershipID, gateID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx,
 		`DELETE FROM membership_policies WHERE membership_id = $1 AND gate_id = $2`,
 		membershipID, gateID,
@@ -119,7 +119,7 @@ func (r *PolicyRepository) Revoke(ctx context.Context, membershipID, gateID uuid
 }
 
 // RevokePermission removes a specific permission for a membership on a gate.
-func (r *PolicyRepository) RevokePermission(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) error {
+func (r *pgPolicyRepository) RevokePermission(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) error {
 	tag, err := r.pool.Exec(ctx,
 		`DELETE FROM membership_policies
 		 WHERE membership_id = $1 AND gate_id = $2 AND permission_code = $3`,
@@ -135,7 +135,7 @@ func (r *PolicyRepository) RevokePermission(ctx context.Context, membershipID, g
 }
 
 // SetMemberGateSchedule attaches (or replaces) a time-restriction schedule to a member-gate pair.
-func (r *PolicyRepository) SetMemberGateSchedule(ctx context.Context, membershipID, gateID, scheduleID uuid.UUID) error {
+func (r *pgPolicyRepository) SetMemberGateSchedule(ctx context.Context, membershipID, gateID, scheduleID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO membership_gate_schedules (membership_id, gate_id, schedule_id)
 		 VALUES ($1, $2, $3)
@@ -149,7 +149,7 @@ func (r *PolicyRepository) SetMemberGateSchedule(ctx context.Context, membership
 }
 
 // RemoveMemberGateSchedule detaches any schedule from a member-gate pair (makes access unrestricted).
-func (r *PolicyRepository) RemoveMemberGateSchedule(ctx context.Context, membershipID, gateID uuid.UUID) error {
+func (r *pgPolicyRepository) RemoveMemberGateSchedule(ctx context.Context, membershipID, gateID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx,
 		`DELETE FROM membership_gate_schedules WHERE membership_id = $1 AND gate_id = $2`,
 		membershipID, gateID,
@@ -161,7 +161,7 @@ func (r *PolicyRepository) RemoveMemberGateSchedule(ctx context.Context, members
 }
 
 // GetMemberGateScheduleID returns the schedule_id attached to a member-gate pair, or ErrNotFound if none.
-func (r *PolicyRepository) GetMemberGateScheduleID(ctx context.Context, membershipID, gateID uuid.UUID) (uuid.UUID, error) {
+func (r *pgPolicyRepository) GetMemberGateScheduleID(ctx context.Context, membershipID, gateID uuid.UUID) (uuid.UUID, error) {
 	var scheduleID uuid.UUID
 	err := r.pool.QueryRow(ctx,
 		`SELECT schedule_id FROM membership_gate_schedules WHERE membership_id = $1 AND gate_id = $2`,

@@ -12,12 +12,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type WorkspaceMembershipRepository struct {
+type pgWorkspaceMembershipRepository struct {
 	pool *pgxpool.Pool
 }
 
-func NewWorkspaceMembershipRepository(pool *pgxpool.Pool) *WorkspaceMembershipRepository {
-	return &WorkspaceMembershipRepository{pool: pool}
+func NewWorkspaceMembershipRepository(pool *pgxpool.Pool) WorkspaceMembershipRepository {
+	return &pgWorkspaceMembershipRepository{pool: pool}
 }
 
 const membershipColumns = `id, workspace_id, user_id, local_username, display_name, role, auth_config, invited_by, created_at`
@@ -35,7 +35,7 @@ func scanMembership(row pgx.Row) (*model.WorkspaceMembership, error) {
 }
 
 // CreateLocal creates a managed (local) membership identified by a local username.
-func (r *WorkspaceMembershipRepository) CreateLocal(ctx context.Context, workspaceID uuid.UUID, localUsername string, displayName *string, role model.WorkspaceRole, invitedBy *uuid.UUID) (*model.WorkspaceMembership, error) {
+func (r *pgWorkspaceMembershipRepository) CreateLocal(ctx context.Context, workspaceID uuid.UUID, localUsername string, displayName *string, role model.WorkspaceRole, invitedBy *uuid.UUID) (*model.WorkspaceMembership, error) {
 	row := r.pool.QueryRow(ctx,
 		`INSERT INTO workspace_memberships (workspace_id, local_username, display_name, role, invited_by)
 		 VALUES ($1, $2, $3, $4, $5)
@@ -54,7 +54,7 @@ func (r *WorkspaceMembershipRepository) CreateLocal(ctx context.Context, workspa
 }
 
 // CreateForUser creates a membership for an existing platform user.
-func (r *WorkspaceMembershipRepository) CreateForUser(ctx context.Context, workspaceID, userID uuid.UUID, displayName *string, role model.WorkspaceRole, invitedBy *uuid.UUID) (*model.WorkspaceMembership, error) {
+func (r *pgWorkspaceMembershipRepository) CreateForUser(ctx context.Context, workspaceID, userID uuid.UUID, displayName *string, role model.WorkspaceRole, invitedBy *uuid.UUID) (*model.WorkspaceMembership, error) {
 	row := r.pool.QueryRow(ctx,
 		`INSERT INTO workspace_memberships (workspace_id, user_id, display_name, role, invited_by)
 		 VALUES ($1, $2, $3, $4, $5)
@@ -72,7 +72,7 @@ func (r *WorkspaceMembershipRepository) CreateForUser(ctx context.Context, works
 	return m, nil
 }
 
-func (r *WorkspaceMembershipRepository) GetByID(ctx context.Context, membershipID, workspaceID uuid.UUID) (*model.WorkspaceMembership, error) {
+func (r *pgWorkspaceMembershipRepository) GetByID(ctx context.Context, membershipID, workspaceID uuid.UUID) (*model.WorkspaceMembership, error) {
 	return scanMembership(r.pool.QueryRow(ctx,
 		`SELECT `+membershipColumns+` FROM workspace_memberships
 		 WHERE id = $1 AND workspace_id = $2`,
@@ -80,7 +80,7 @@ func (r *WorkspaceMembershipRepository) GetByID(ctx context.Context, membershipI
 	))
 }
 
-func (r *WorkspaceMembershipRepository) GetByUserID(ctx context.Context, workspaceID, userID uuid.UUID) (*model.WorkspaceMembership, error) {
+func (r *pgWorkspaceMembershipRepository) GetByUserID(ctx context.Context, workspaceID, userID uuid.UUID) (*model.WorkspaceMembership, error) {
 	return scanMembership(r.pool.QueryRow(ctx,
 		`SELECT `+membershipColumns+` FROM workspace_memberships
 		 WHERE workspace_id = $1 AND user_id = $2`,
@@ -88,7 +88,7 @@ func (r *WorkspaceMembershipRepository) GetByUserID(ctx context.Context, workspa
 	))
 }
 
-func (r *WorkspaceMembershipRepository) GetByLocalUsername(ctx context.Context, workspaceID uuid.UUID, localUsername string) (*model.WorkspaceMembership, error) {
+func (r *pgWorkspaceMembershipRepository) GetByLocalUsername(ctx context.Context, workspaceID uuid.UUID, localUsername string) (*model.WorkspaceMembership, error) {
 	return scanMembership(r.pool.QueryRow(ctx,
 		`SELECT `+membershipColumns+` FROM workspace_memberships
 		 WHERE workspace_id = $1 AND local_username = $2`,
@@ -96,7 +96,7 @@ func (r *WorkspaceMembershipRepository) GetByLocalUsername(ctx context.Context, 
 	))
 }
 
-func (r *WorkspaceMembershipRepository) List(ctx context.Context, workspaceID uuid.UUID) ([]*model.WorkspaceMembership, error) {
+func (r *pgWorkspaceMembershipRepository) List(ctx context.Context, workspaceID uuid.UUID) ([]*model.WorkspaceMembership, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT `+membershipColumns+` FROM workspace_memberships
 		 WHERE workspace_id = $1
@@ -119,7 +119,7 @@ func (r *WorkspaceMembershipRepository) List(ctx context.Context, workspaceID uu
 	return result, rows.Err()
 }
 
-func (r *WorkspaceMembershipRepository) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName *string, localUsername *string, role *model.WorkspaceRole, authConfig map[string]any) (*model.WorkspaceMembership, error) {
+func (r *pgWorkspaceMembershipRepository) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName *string, localUsername *string, role *model.WorkspaceRole, authConfig map[string]any) (*model.WorkspaceMembership, error) {
 	row := r.pool.QueryRow(ctx,
 		`UPDATE workspace_memberships
 		 SET display_name    = COALESCE($3, display_name),
@@ -144,7 +144,7 @@ func (r *WorkspaceMembershipRepository) Update(ctx context.Context, membershipID
 	return m, nil
 }
 
-func (r *WorkspaceMembershipRepository) Delete(ctx context.Context, membershipID, workspaceID uuid.UUID) error {
+func (r *pgWorkspaceMembershipRepository) Delete(ctx context.Context, membershipID, workspaceID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx,
 		`DELETE FROM workspace_memberships WHERE id = $1 AND workspace_id = $2`,
 		membershipID, workspaceID,
@@ -160,7 +160,7 @@ func (r *WorkspaceMembershipRepository) Delete(ctx context.Context, membershipID
 
 // MergeUser atomically links a local membership to a platform user.
 // Sets user_id and clears local_username. Only applies if user_id is currently NULL.
-func (r *WorkspaceMembershipRepository) MergeUser(ctx context.Context, membershipID, userID uuid.UUID) error {
+func (r *pgWorkspaceMembershipRepository) MergeUser(ctx context.Context, membershipID, userID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE workspace_memberships
 		 SET user_id = $2, local_username = NULL

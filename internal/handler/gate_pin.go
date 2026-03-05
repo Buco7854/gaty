@@ -33,20 +33,20 @@ const (
 var dummyPINHash, _ = bcrypt.GenerateFromPassword([]byte("__dummy__"), bcrypt.DefaultCost)
 
 type GatePinHandler struct {
-	pins      *repository.GatePinRepository
+	pins      repository.GatePinRepository
 	gates     repository.GateRepository
-	policies  *repository.PolicyRepository
-	schedules *repository.AccessScheduleRepository
+	policies  repository.PolicyRepository
+	schedules repository.AccessScheduleRepository
 	mqtt      *internalmqtt.Client
 	redis     *redis.Client
 	authSvc   *service.AuthService
 }
 
 func NewGatePinHandler(
-	pins *repository.GatePinRepository,
+	pins repository.GatePinRepository,
 	gates repository.GateRepository,
-	policies *repository.PolicyRepository,
-	schedules *repository.AccessScheduleRepository,
+	policies repository.PolicyRepository,
+	schedules repository.AccessScheduleRepository,
 	mqtt *internalmqtt.Client,
 	redis *redis.Client,
 	authSvc *service.AuthService,

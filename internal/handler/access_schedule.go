@@ -16,10 +16,10 @@ import (
 )
 
 type AccessScheduleHandler struct {
-	schedules *repository.AccessScheduleRepository
+	schedules repository.AccessScheduleRepository
 }
 
-func NewAccessScheduleHandler(schedules *repository.AccessScheduleRepository) *AccessScheduleHandler {
+func NewAccessScheduleHandler(schedules repository.AccessScheduleRepository) *AccessScheduleHandler {
 	return &AccessScheduleHandler{schedules: schedules}
 }
 

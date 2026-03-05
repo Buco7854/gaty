@@ -7,12 +7,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type AuditRepository struct {
+type pgAuditRepository struct {
 	pool *pgxpool.Pool
 }
 
-func NewAuditRepository(pool *pgxpool.Pool) *AuditRepository {
-	return &AuditRepository{pool: pool}
+func NewAuditRepository(pool *pgxpool.Pool) AuditRepository {
+	return &pgAuditRepository{pool: pool}
 }
 
 type AuditEntry struct {
@@ -24,6 +24,6 @@ type AuditEntry struct {
 }
 
 // Insert is a no-op until the audit_logs table is re-added in a future migration.
-func (r *AuditRepository) Insert(_ context.Context, _ AuditEntry) error {
+func (r *pgAuditRepository) Insert(_ context.Context, _ AuditEntry) error {
 	return nil
 }

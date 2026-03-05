@@ -13,11 +13,11 @@ import (
 )
 
 type PolicyHandler struct {
-	policies  *repository.PolicyRepository
-	schedules *repository.AccessScheduleRepository
+	policies  repository.PolicyRepository
+	schedules repository.AccessScheduleRepository
 }
 
-func NewPolicyHandler(policies *repository.PolicyRepository, schedules *repository.AccessScheduleRepository) *PolicyHandler {
+func NewPolicyHandler(policies repository.PolicyRepository, schedules repository.AccessScheduleRepository) *PolicyHandler {
 	return &PolicyHandler{policies: policies, schedules: schedules}
 }
 

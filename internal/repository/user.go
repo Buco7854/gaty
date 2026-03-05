@@ -15,15 +15,15 @@ var ErrNotFound = errors.New("not found")
 var ErrAlreadyExists = errors.New("already exists")
 var ErrUnauthorized = errors.New("unauthorized")
 
-type UserRepository struct {
+type pgUserRepository struct {
 	pool *pgxpool.Pool
 }
 
-func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
-	return &UserRepository{pool: pool}
+func NewUserRepository(pool *pgxpool.Pool) UserRepository {
+	return &pgUserRepository{pool: pool}
 }
 
-func (r *UserRepository) Create(ctx context.Context, email string) (*model.User, error) {
+func (r *pgUserRepository) Create(ctx context.Context, email string) (*model.User, error) {
 	user := &model.User{}
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO users (email) VALUES ($1)
@@ -36,7 +36,7 @@ func (r *UserRepository) Create(ctx context.Context, email string) (*model.User,
 	return user, nil
 }
 
-func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*model.User, error) {
+func (r *pgUserRepository) GetByEmail(ctx context.Context, email string) (*model.User, error) {
 	user := &model.User{}
 	err := r.pool.QueryRow(ctx,
 		`SELECT id, email, created_at FROM users WHERE email = $1`,
@@ -52,7 +52,7 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*model.U
 }
 
 // HasAny returns true if at least one user exists in the database.
-func (r *UserRepository) HasAny(ctx context.Context) (bool, error) {
+func (r *pgUserRepository) HasAny(ctx context.Context) (bool, error) {
 	var exists bool
 	err := r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users LIMIT 1)`).Scan(&exists)
 	if err != nil {
@@ -61,7 +61,7 @@ func (r *UserRepository) HasAny(ctx context.Context) (bool, error) {
 	return exists, nil
 }
 
-func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
+func (r *pgUserRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
 	user := &model.User{}
 	err := r.pool.QueryRow(ctx,
 		`SELECT id, email, created_at FROM users WHERE id = $1`,

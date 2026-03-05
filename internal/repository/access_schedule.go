@@ -12,12 +12,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type AccessScheduleRepository struct {
+type pgAccessScheduleRepository struct {
 	pool *pgxpool.Pool
 }
 
-func NewAccessScheduleRepository(pool *pgxpool.Pool) *AccessScheduleRepository {
-	return &AccessScheduleRepository{pool: pool}
+func NewAccessScheduleRepository(pool *pgxpool.Pool) AccessScheduleRepository {
+	return &pgAccessScheduleRepository{pool: pool}
 }
 
 const scheduleColumns = `id, workspace_id, name, description, rules, created_at`
@@ -41,7 +41,7 @@ func scanSchedule(row pgx.Row) (*model.AccessSchedule, error) {
 	return s, nil
 }
 
-func (r *AccessScheduleRepository) Create(ctx context.Context, workspaceID uuid.UUID, name string, description *string, rules []model.ScheduleRule) (*model.AccessSchedule, error) {
+func (r *pgAccessScheduleRepository) Create(ctx context.Context, workspaceID uuid.UUID, name string, description *string, rules []model.ScheduleRule) (*model.AccessSchedule, error) {
 	if rules == nil {
 		rules = []model.ScheduleRule{}
 	}
@@ -57,7 +57,7 @@ func (r *AccessScheduleRepository) Create(ctx context.Context, workspaceID uuid.
 	))
 }
 
-func (r *AccessScheduleRepository) GetByID(ctx context.Context, scheduleID, workspaceID uuid.UUID) (*model.AccessSchedule, error) {
+func (r *pgAccessScheduleRepository) GetByID(ctx context.Context, scheduleID, workspaceID uuid.UUID) (*model.AccessSchedule, error) {
 	return scanSchedule(r.pool.QueryRow(ctx,
 		`SELECT `+scheduleColumns+` FROM access_schedules WHERE id = $1 AND workspace_id = $2`,
 		scheduleID, workspaceID,
@@ -66,14 +66,14 @@ func (r *AccessScheduleRepository) GetByID(ctx context.Context, scheduleID, work
 
 // GetByIDPublic fetches a schedule without workspace check. Used during PIN validation
 // where only the schedule ID is stored on the access code.
-func (r *AccessScheduleRepository) GetByIDPublic(ctx context.Context, scheduleID uuid.UUID) (*model.AccessSchedule, error) {
+func (r *pgAccessScheduleRepository) GetByIDPublic(ctx context.Context, scheduleID uuid.UUID) (*model.AccessSchedule, error) {
 	return scanSchedule(r.pool.QueryRow(ctx,
 		`SELECT `+scheduleColumns+` FROM access_schedules WHERE id = $1`,
 		scheduleID,
 	))
 }
 
-func (r *AccessScheduleRepository) List(ctx context.Context, workspaceID uuid.UUID) ([]*model.AccessSchedule, error) {
+func (r *pgAccessScheduleRepository) List(ctx context.Context, workspaceID uuid.UUID) ([]*model.AccessSchedule, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT `+scheduleColumns+` FROM access_schedules WHERE workspace_id = $1 ORDER BY name`,
 		workspaceID,
@@ -101,7 +101,7 @@ func (r *AccessScheduleRepository) List(ctx context.Context, workspaceID uuid.UU
 	return result, rows.Err()
 }
 
-func (r *AccessScheduleRepository) Update(ctx context.Context, scheduleID, workspaceID uuid.UUID, name string, description *string, rules []model.ScheduleRule) (*model.AccessSchedule, error) {
+func (r *pgAccessScheduleRepository) Update(ctx context.Context, scheduleID, workspaceID uuid.UUID, name string, description *string, rules []model.ScheduleRule) (*model.AccessSchedule, error) {
 	if rules == nil {
 		rules = []model.ScheduleRule{}
 	}
@@ -122,7 +122,7 @@ func (r *AccessScheduleRepository) Update(ctx context.Context, scheduleID, works
 	return s, nil
 }
 
-func (r *AccessScheduleRepository) Delete(ctx context.Context, scheduleID, workspaceID uuid.UUID) error {
+func (r *pgAccessScheduleRepository) Delete(ctx context.Context, scheduleID, workspaceID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx,
 		`DELETE FROM access_schedules WHERE id = $1 AND workspace_id = $2`,
 		scheduleID, workspaceID,

@@ -19,15 +19,15 @@ import (
 
 // CredentialHandler manages credentials for platform users and managed members.
 type CredentialHandler struct {
-	credRepo       *repository.CredentialRepository
-	memberCredRepo *repository.MembershipCredentialRepository
-	membershipRepo *repository.WorkspaceMembershipRepository
+	credRepo       repository.CredentialRepository
+	memberCredRepo repository.MembershipCredentialRepository
+	membershipRepo repository.WorkspaceMembershipRepository
 }
 
 func NewCredentialHandler(
-	credRepo *repository.CredentialRepository,
-	memberCredRepo *repository.MembershipCredentialRepository,
-	membershipRepo *repository.WorkspaceMembershipRepository,
+	credRepo repository.CredentialRepository,
+	memberCredRepo repository.MembershipCredentialRepository,
+	membershipRepo repository.WorkspaceMembershipRepository,
 ) *CredentialHandler {
 	return &CredentialHandler{
 		credRepo:       credRepo,

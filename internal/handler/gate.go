@@ -18,17 +18,17 @@ import (
 
 type GateHandler struct {
 	gates     repository.GateRepository
-	policies  *repository.PolicyRepository
-	schedules *repository.AccessScheduleRepository
-	audit     *repository.AuditRepository
+	policies  repository.PolicyRepository
+	schedules repository.AccessScheduleRepository
+	audit     repository.AuditRepository
 	mqtt      *internalmqtt.Client // nil if broker unavailable
 }
 
 func NewGateHandler(
 	gates repository.GateRepository,
-	policies *repository.PolicyRepository,
-	schedules *repository.AccessScheduleRepository,
-	audit *repository.AuditRepository,
+	policies repository.PolicyRepository,
+	schedules repository.AccessScheduleRepository,
+	audit repository.AuditRepository,
 	mqtt *internalmqtt.Client,
 ) *GateHandler {
 	return &GateHandler{gates: gates, policies: policies, schedules: schedules, audit: audit, mqtt: mqtt}

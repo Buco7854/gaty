@@ -13,12 +13,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type CredentialRepository struct {
+type pgCredentialRepository struct {
 	pool *pgxpool.Pool
 }
 
-func NewCredentialRepository(pool *pgxpool.Pool) *CredentialRepository {
-	return &CredentialRepository{pool: pool}
+func NewCredentialRepository(pool *pgxpool.Pool) CredentialRepository {
+	return &pgCredentialRepository{pool: pool}
 }
 
 const credColumns = `id, user_id, type, hashed_value, label, expires_at, metadata, created_at`
@@ -35,7 +35,7 @@ func scanCredential(row pgx.Row) (*model.Credential, error) {
 	return c, nil
 }
 
-func (r *CredentialRepository) Create(ctx context.Context, userID uuid.UUID, credType model.CredentialType, hashedValue string, label *string, expiresAt *time.Time, metadata map[string]any) (*model.Credential, error) {
+func (r *pgCredentialRepository) Create(ctx context.Context, userID uuid.UUID, credType model.CredentialType, hashedValue string, label *string, expiresAt *time.Time, metadata map[string]any) (*model.Credential, error) {
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
@@ -57,7 +57,7 @@ func (r *CredentialRepository) Create(ctx context.Context, userID uuid.UUID, cre
 
 // GetByUserAndType returns the first credential of the given type for a user.
 // Used for PASSWORD and SSO_IDENTITY lookups.
-func (r *CredentialRepository) GetByUserAndType(ctx context.Context, userID uuid.UUID, credType model.CredentialType) (*model.Credential, error) {
+func (r *pgCredentialRepository) GetByUserAndType(ctx context.Context, userID uuid.UUID, credType model.CredentialType) (*model.Credential, error) {
 	return scanCredential(r.pool.QueryRow(ctx,
 		`SELECT `+credColumns+` FROM credentials
 		 WHERE user_id = $1 AND type = $2
@@ -66,7 +66,7 @@ func (r *CredentialRepository) GetByUserAndType(ctx context.Context, userID uuid
 	))
 }
 
-func (r *CredentialRepository) GetByID(ctx context.Context, credID uuid.UUID) (*model.Credential, error) {
+func (r *pgCredentialRepository) GetByID(ctx context.Context, credID uuid.UUID) (*model.Credential, error) {
 	return scanCredential(r.pool.QueryRow(ctx,
 		`SELECT `+credColumns+` FROM credentials WHERE id = $1`,
 		credID,
@@ -75,7 +75,7 @@ func (r *CredentialRepository) GetByID(ctx context.Context, credID uuid.UUID) (*
 
 // ListByUserAndType lists all credentials of a given type for a user.
 // Used for API token listing.
-func (r *CredentialRepository) ListByUserAndType(ctx context.Context, userID uuid.UUID, credType model.CredentialType) ([]*model.Credential, error) {
+func (r *pgCredentialRepository) ListByUserAndType(ctx context.Context, userID uuid.UUID, credType model.CredentialType) ([]*model.Credential, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT `+credColumns+` FROM credentials
 		 WHERE user_id = $1 AND type = $2
@@ -99,7 +99,7 @@ func (r *CredentialRepository) ListByUserAndType(ctx context.Context, userID uui
 }
 
 // Delete hard-deletes a credential by ID, scoped to the owning user.
-func (r *CredentialRepository) Delete(ctx context.Context, credID, userID uuid.UUID) error {
+func (r *pgCredentialRepository) Delete(ctx context.Context, credID, userID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx,
 		`DELETE FROM credentials WHERE id = $1 AND user_id = $2`,
 		credID, userID,

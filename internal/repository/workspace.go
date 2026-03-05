@@ -11,12 +11,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type WorkspaceRepository struct {
+type pgWorkspaceRepository struct {
 	pool *pgxpool.Pool
 }
 
-func NewWorkspaceRepository(pool *pgxpool.Pool) *WorkspaceRepository {
-	return &WorkspaceRepository{pool: pool}
+func NewWorkspaceRepository(pool *pgxpool.Pool) WorkspaceRepository {
+	return &pgWorkspaceRepository{pool: pool}
 }
 
 const workspaceColumns = `id, name, owner_id, sso_settings, member_auth_config, created_at`
@@ -34,7 +34,7 @@ func scanWorkspace(row pgx.Row) (*model.Workspace, error) {
 }
 
 // Create creates a workspace and adds the owner as an OWNER membership in a single transaction.
-func (r *WorkspaceRepository) Create(ctx context.Context, name string, ownerID uuid.UUID) (*model.Workspace, error) {
+func (r *pgWorkspaceRepository) Create(ctx context.Context, name string, ownerID uuid.UUID) (*model.Workspace, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -64,7 +64,7 @@ func (r *WorkspaceRepository) Create(ctx context.Context, name string, ownerID u
 	return ws, nil
 }
 
-func (r *WorkspaceRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Workspace, error) {
+func (r *pgWorkspaceRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Workspace, error) {
 	return scanWorkspace(r.pool.QueryRow(ctx,
 		`SELECT `+workspaceColumns+` FROM workspaces WHERE id = $1`,
 		id,
@@ -72,7 +72,7 @@ func (r *WorkspaceRepository) GetByID(ctx context.Context, id uuid.UUID) (*model
 }
 
 // ListForUser returns workspaces where the given user_id has a membership.
-func (r *WorkspaceRepository) ListForUser(ctx context.Context, userID uuid.UUID) ([]model.WorkspaceWithRole, error) {
+func (r *pgWorkspaceRepository) ListForUser(ctx context.Context, userID uuid.UUID) ([]model.WorkspaceWithRole, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT w.id, w.name, w.owner_id, w.sso_settings, w.member_auth_config, w.created_at, wm.role
 		 FROM workspaces w
@@ -98,7 +98,7 @@ func (r *WorkspaceRepository) ListForUser(ctx context.Context, userID uuid.UUID)
 }
 
 // UpdateSSOSettings replaces the workspace's SSO configuration.
-func (r *WorkspaceRepository) UpdateSSOSettings(ctx context.Context, id uuid.UUID, settings map[string]any) (*model.Workspace, error) {
+func (r *pgWorkspaceRepository) UpdateSSOSettings(ctx context.Context, id uuid.UUID, settings map[string]any) (*model.Workspace, error) {
 	if settings == nil {
 		settings = map[string]any{}
 	}
@@ -113,7 +113,7 @@ func (r *WorkspaceRepository) UpdateSSOSettings(ctx context.Context, id uuid.UUI
 }
 
 // UpdateMemberAuthConfig replaces the workspace's default member auth configuration.
-func (r *WorkspaceRepository) UpdateMemberAuthConfig(ctx context.Context, id uuid.UUID, config map[string]any) (*model.Workspace, error) {
+func (r *pgWorkspaceRepository) UpdateMemberAuthConfig(ctx context.Context, id uuid.UUID, config map[string]any) (*model.Workspace, error) {
 	if config == nil {
 		config = map[string]any{}
 	}
@@ -129,7 +129,7 @@ func (r *WorkspaceRepository) UpdateMemberAuthConfig(ctx context.Context, id uui
 
 // GetMemberRole returns the role of a platform user in a workspace.
 // Returns ErrNotFound if the user has no membership.
-func (r *WorkspaceRepository) GetMemberRole(ctx context.Context, workspaceID, userID uuid.UUID) (model.WorkspaceRole, error) {
+func (r *pgWorkspaceRepository) GetMemberRole(ctx context.Context, workspaceID, userID uuid.UUID) (model.WorkspaceRole, error) {
 	var role model.WorkspaceRole
 	err := r.pool.QueryRow(ctx,
 		`SELECT role FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2`,
