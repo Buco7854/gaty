@@ -1,9 +1,5 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- UUID v7: timestamp-ordered UUID (ms precision prefix + 62 random bits).
--- Used as DEFAULT for all primary keys instead of gen_random_uuid() (v4).
--- Benefits over v4: monotone B-tree insertions, less index fragmentation,
--- natural sort order by creation time. Conflict risk unchanged (62 random bits).
 CREATE OR REPLACE FUNCTION uuid_generate_v7() RETURNS uuid
 LANGUAGE plpgsql PARALLEL SAFE
 AS $$
