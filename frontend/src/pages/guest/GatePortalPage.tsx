@@ -98,8 +98,10 @@ export default function GatePortalPage() {
       .map((p) => p.permission_code) ?? []
   }, [session, myPolicies, effectiveGateId])
 
-  const canOpen = permissions.includes('gate:trigger_open')
-  const canClose = permissions.includes('gate:trigger_close')
+  const gateHasOpen = resolved?.has_open_action ?? true
+  const gateHasClose = resolved?.has_close_action ?? false
+  const canOpen = permissions.includes('gate:trigger_open') && gateHasOpen
+  const canClose = permissions.includes('gate:trigger_close') && gateHasClose
   const sessionRole = session?.type === 'member' ? getRoleFromJWT(session.access_token) : null
   const isAdminSession = sessionRole === 'ADMIN' || sessionRole === 'OWNER'
   const policiesReady = session?.type === 'pin' || !!myPolicies

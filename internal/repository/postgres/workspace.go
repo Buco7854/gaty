@@ -124,6 +124,32 @@ func (r *workspaceRepository) UpdateMemberAuthConfig(ctx context.Context, id uui
 	return ws, nil
 }
 
+func (r *workspaceRepository) Rename(ctx context.Context, id uuid.UUID, name string) (*model.Workspace, error) {
+	ws, err := scanWorkspace(r.pool.QueryRow(ctx,
+		`UPDATE workspaces SET name = $2 WHERE id = $1
+		 RETURNING id, name, owner_id, sso_settings, member_auth_config, created_at`,
+		id, name,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, repository.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("rename workspace: %w", err)
+	}
+	return ws, nil
+}
+
+func (r *workspaceRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM workspaces WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete workspace: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return repository.ErrNotFound
+	}
+	return nil
+}
+
 func (r *workspaceRepository) GetMemberRole(ctx context.Context, workspaceID, userID uuid.UUID) (model.WorkspaceRole, error) {
 	var role model.WorkspaceRole
 	err := r.pool.QueryRow(ctx,

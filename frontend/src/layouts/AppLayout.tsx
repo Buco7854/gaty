@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '@/store/auth'
 import type { WorkspaceWithRole } from '@/types'
 import { workspacesApi, memberCredApi, workspaceCredApi } from '@/api'
-import type { MemberCredential, CreatedToken } from '@/api'
+import type { MemberCredential, CreatedToken, MyEffectiveAuthConfig } from '@/api'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
 import { useTranslation } from 'react-i18next'
@@ -64,6 +64,7 @@ export default function AppLayout() {
   const [tokenLabel, setTokenLabel] = useState('')
   const [tokenExpiresAt, setTokenExpiresAt] = useState('')
   const [newToken, setNewToken] = useState<CreatedToken | null>(null)
+  const [memberAuthConfig, setMemberAuthConfig] = useState<MyEffectiveAuthConfig | null>(null)
 
   const isAdmin = isAuthenticated()
 
@@ -103,18 +104,27 @@ export default function AppLayout() {
     }
   }
 
-  // Load tokens when modal opens
+  // Load tokens and effective auth config when modal opens
   useEffect(() => {
     if (!tokenModalOpened) return
     setTokensLoading(true)
+    setMemberAuthConfig(null)
     if (isAdmin && wsId) {
-      workspaceCredApi.listTokens(wsId)
-        .then(setTokens)
-        .finally(() => setTokensLoading(false))
-    } else if (localSession?.access_token) {
-      memberCredApi.listTokens(localSession.access_token)
-        .then(setTokens)
-        .finally(() => setTokensLoading(false))
+      Promise.all([
+        workspaceCredApi.listTokens(wsId),
+        workspaceCredApi.getMyAuthConfig(wsId).catch(() => null),
+      ]).then(([tks, cfg]) => {
+        setTokens(tks)
+        setMemberAuthConfig(cfg)
+      }).finally(() => setTokensLoading(false))
+    } else if (localSession?.access_token && wsId) {
+      Promise.all([
+        memberCredApi.listTokens(localSession.access_token),
+        workspaceCredApi.getMyAuthConfig(wsId, localSession.access_token).catch(() => null),
+      ]).then(([tks, cfg]) => {
+        setTokens(tks)
+        setMemberAuthConfig(cfg)
+      }).finally(() => setTokensLoading(false))
     } else {
       setTokensLoading(false)
     }
@@ -225,15 +235,15 @@ export default function AppLayout() {
       {/* Navigation */}
       <ScrollArea style={{ flex: 1 }}>
         {wsId && (
-          <Stack gap={4} p="xs">
+          <Stack gap={2} p="xs">
             <NavLink
               component={RouterNavLink as React.FC}
               to={`/workspaces/${wsId}`}
               end
               label={t('gates.title')}
-              leftSection={<LayoutGrid size={16} />}
+              leftSection={<LayoutGrid size={18} />}
               onClick={() => setNavOpened(false)}
-              styles={{ root: { borderRadius: 'var(--mantine-radius-md)' } }}
+              styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
             />
             {(isAdmin || localSession?.role === 'ADMIN' || localSession?.role === 'OWNER') && (
               <>
@@ -241,25 +251,25 @@ export default function AppLayout() {
                   component={RouterNavLink as React.FC}
                   to={`/workspaces/${wsId}/members`}
                   label={t('members.title')}
-                  leftSection={<Users size={16} />}
+                  leftSection={<Users size={18} />}
                   onClick={() => setNavOpened(false)}
-                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)' } }}
+                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
                 />
                 <NavLink
                   component={RouterNavLink as React.FC}
                   to={`/workspaces/${wsId}/schedules`}
                   label={t('schedules.title')}
-                  leftSection={<CalendarClock size={16} />}
+                  leftSection={<CalendarClock size={18} />}
                   onClick={() => setNavOpened(false)}
-                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)' } }}
+                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
                 />
                 <NavLink
                   component={RouterNavLink as React.FC}
                   to={`/workspaces/${wsId}/settings`}
                   label={t('settings.title')}
-                  leftSection={<Settings size={16} />}
+                  leftSection={<Settings size={18} />}
                   onClick={() => setNavOpened(false)}
-                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)' } }}
+                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
                 />
               </>
             )}
@@ -326,7 +336,7 @@ export default function AppLayout() {
 
   return (
     <AppShell
-      navbar={{ width: 240, breakpoint: 'sm', collapsed: { mobile: true } }}
+      navbar={{ width: 280, breakpoint: 'sm', collapsed: { mobile: true } }}
       header={{ height: { base: 56, sm: 0 } }}
       padding={0}
     >
@@ -356,7 +366,7 @@ export default function AppLayout() {
       <Drawer
         opened={navOpened}
         onClose={() => setNavOpened(false)}
-        size={240}
+        size={280}
         padding={0}
         withCloseButton={false}
         styles={{ body: { padding: 0, height: '100%', display: 'flex', flexDirection: 'column' } }}
@@ -412,11 +422,17 @@ export default function AppLayout() {
       {/* API token management modal */}
       <Modal
         opened={tokenModalOpened}
-        onClose={() => { closeTokenModal(); setNewToken(null); setTokenLabel(''); setTokenExpiresAt('') }}
+        onClose={() => { closeTokenModal(); setNewToken(null); setTokenLabel(''); setTokenExpiresAt(''); setMemberAuthConfig(null) }}
         title={t('members.apiTokens')}
         size="sm"
       >
         <Stack gap="md">
+          {memberAuthConfig?.api_token === false && (
+            <Alert color="orange" variant="light" title={t('members.tokenDisabled')}>
+              <Text size="xs">{t('members.tokenDisabledHint')}</Text>
+            </Alert>
+          )}
+
           {newToken && (
             <Alert
               color="green"
@@ -441,27 +457,29 @@ export default function AppLayout() {
             </Alert>
           )}
 
-          <form onSubmit={handleCreateToken}>
-            <Stack gap="xs">
-              <TextInput
-                label={t('members.tokenLabel')}
-                placeholder={t('members.tokenLabelPlaceholder')}
-                value={tokenLabel}
-                onChange={(e) => setTokenLabel(e.target.value)}
-                size="xs"
-              />
-              <TextInput
-                label={`${t('members.tokenExpiresAt')} (${t('common.optional')})`}
-                type="date"
-                value={tokenExpiresAt}
-                onChange={(e) => setTokenExpiresAt(e.target.value)}
-                size="xs"
-              />
-              <Button type="submit" size="xs" disabled={!tokenLabel.trim()} fullWidth>
-                {t('common.add')}
-              </Button>
-            </Stack>
-          </form>
+          {memberAuthConfig?.api_token !== false && (
+            <form onSubmit={handleCreateToken}>
+              <Stack gap="xs">
+                <TextInput
+                  label={t('members.tokenLabel')}
+                  placeholder={t('members.tokenLabelPlaceholder')}
+                  value={tokenLabel}
+                  onChange={(e) => setTokenLabel(e.target.value)}
+                  size="xs"
+                />
+                <TextInput
+                  label={`${t('members.tokenExpiresAt')} (${t('common.optional')})`}
+                  type="date"
+                  value={tokenExpiresAt}
+                  onChange={(e) => setTokenExpiresAt(e.target.value)}
+                  size="xs"
+                />
+                <Button type="submit" size="xs" disabled={!tokenLabel.trim()} fullWidth>
+                  {t('common.add')}
+                </Button>
+              </Stack>
+            </form>
+          )}
 
           {tokensLoading ? (
             <Skeleton h={40} />

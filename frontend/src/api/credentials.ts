@@ -22,8 +22,20 @@ function authHeader(bearerToken: string) {
   return { headers: { Authorization: `Bearer ${bearerToken}` } }
 }
 
+export interface MyEffectiveAuthConfig {
+  api_token: boolean
+}
+
 /** Workspace member self-service: calls /api/workspaces/{ws_id}/members/me/* — JWT auto-attached by axios interceptor */
 export const workspaceCredApi = {
+  getMyAuthConfig: (wsId: string, bearerToken?: string): Promise<MyEffectiveAuthConfig> =>
+    api
+      .get<MyEffectiveAuthConfig>(
+        `/workspaces/${wsId}/members/me/auth-config`,
+        bearerToken ? authHeader(bearerToken) : undefined,
+      )
+      .then((r) => r.data),
+
   listTokens: (wsId: string): Promise<MemberCredential[]> =>
     api
       .get<MemberCredential[]>(`/workspaces/${wsId}/members/me/credentials`)

@@ -125,13 +125,15 @@ func (r *customDomainRepository) SetVerified(ctx context.Context, domainID uuid.
 func (r *customDomainRepository) ResolveByDomain(ctx context.Context, domain string) (*repository.DomainResolveResult, error) {
 	var res repository.DomainResolveResult
 	err := r.pool.QueryRow(ctx,
-		`SELECT g.id, g.name, w.id, w.name
+		`SELECT g.id, g.name, w.id, w.name,
+		        COALESCE(g.open_config->>'type', 'NONE') <> 'NONE',
+		        COALESCE(g.close_config->>'type', 'NONE') <> 'NONE'
 		 FROM custom_domains cd
 		 JOIN gates g       ON g.id = cd.gate_id
 		 JOIN workspaces w  ON w.id = cd.workspace_id
 		 WHERE cd.domain = $1 AND cd.verified_at IS NOT NULL`,
 		domain,
-	).Scan(&res.GateID, &res.GateName, &res.WorkspaceID, &res.WorkspaceName)
+	).Scan(&res.GateID, &res.GateName, &res.WorkspaceID, &res.WorkspaceName, &res.HasOpenAction, &res.HasCloseAction)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, repository.ErrNotFound
 	}

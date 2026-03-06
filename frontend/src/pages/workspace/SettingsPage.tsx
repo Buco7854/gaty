@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useParams } from 'react-router'
+import { useParams, useNavigate } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { workspacesApi } from '@/api'
 import { useTranslation } from 'react-i18next'
@@ -8,7 +8,8 @@ import {
   Switch, Divider, ActionIcon, Badge, Modal, NumberInput, Loader, Center, Collapse, Anchor,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
-import { KeyRound, Save, CheckCircle2, Plus, Trash2, Pencil } from 'lucide-react'
+import { KeyRound, Save, CheckCircle2, Plus, Trash2, Pencil, AlertTriangle } from 'lucide-react'
+import { notifySuccess, notifyError } from '@/lib/notify'
 
 interface RoleMappingEntry {
   claim: string
@@ -260,6 +261,7 @@ function ProviderModal({
 
 export default function SettingsPage() {
   const { wsId } = useParams<{ wsId: string }>()
+  const navigate = useNavigate()
   const qc = useQueryClient()
   const { t } = useTranslation()
   const [saved, setSaved] = useState(false)
@@ -267,6 +269,39 @@ export default function SettingsPage() {
   const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false)
   const [editingProvider, setEditingProvider] = useState<SSOProvider | null>(null)
   const [modalKey, setModalKey] = useState(0)
+
+  // Rename
+  const [newName, setNewName] = useState('')
+
+  // Delete workspace
+  const [deleteModalOpened, { open: openDeleteModal, close: closeDeleteModal }] = useDisclosure(false)
+  const [deleteConfirmName, setDeleteConfirmName] = useState('')
+
+  const { data: wsData } = useQuery({
+    queryKey: ['workspace', wsId],
+    queryFn: () => workspacesApi.get(wsId!),
+    enabled: !!wsId,
+  })
+
+  const renameWorkspace = useMutation({
+    mutationFn: (name: string) => workspacesApi.rename(wsId!, name),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workspaces'] })
+      qc.invalidateQueries({ queryKey: ['workspace', wsId] })
+      setNewName('')
+      notifySuccess(t('common.saved'))
+    },
+    onError: (err: unknown) => notifyError(err, t('common.error')),
+  })
+
+  const deleteWorkspace = useMutation({
+    mutationFn: () => workspacesApi.delete(wsId!),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workspaces'] })
+      navigate('/workspaces')
+    },
+    onError: (err: unknown) => notifyError(err, t('common.error')),
+  })
 
   const { data: ssoData, isLoading: ssoLoading } = useQuery({
     queryKey: ['sso-settings', wsId],
@@ -365,6 +400,33 @@ export default function SettingsPage() {
         <Title order={2}>{t('settings.title')}</Title>
         <Text c="dimmed" size="sm">{t('settings.subtitle')}</Text>
       </Stack>
+
+      {/* Rename workspace */}
+      <Paper withBorder p="lg" radius="md" mb="md">
+        <Text fw={600} mb={4}>{t('settings.renameWorkspace')}</Text>
+        <Text size="xs" c="dimmed" mb="xs">{t('settings.renameWorkspaceHint')}</Text>
+        <Group gap="xs" align="flex-end">
+          <TextInput
+            placeholder={wsData?.name ?? ''}
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            size="sm"
+            style={{ flex: 1 }}
+            label={t('settings.newWorkspaceName')}
+          />
+          <Button
+            size="sm"
+            variant="light"
+            leftSection={<Save size={14} />}
+            loading={renameWorkspace.isPending}
+            disabled={!newName.trim() || newName.trim() === wsData?.name}
+            onClick={() => renameWorkspace.mutate(newName.trim())}
+            mb={1}
+          >
+            {t('common.save')}
+          </Button>
+        </Group>
+      </Paper>
 
       {/* SSO Providers */}
       <Paper withBorder p="lg" radius="md" mb="md">
@@ -475,6 +537,27 @@ export default function SettingsPage() {
         </Group>
       </Paper>
 
+      {/* Danger zone */}
+      <Paper withBorder p="lg" radius="md" mt="md" style={{ borderColor: 'var(--mantine-color-red-6)' }}>
+        <Group gap="xs" mb="md">
+          <AlertTriangle size={18} color="var(--mantine-color-red-6)" />
+          <Text fw={600} c="red">{t('settings.dangerZone')}</Text>
+        </Group>
+
+        <div>
+          <Text size="sm" fw={500} mb={4}>{t('settings.deleteWorkspace')}</Text>
+          <Text size="xs" c="dimmed" mb="xs">{t('settings.deleteWorkspaceHint')}</Text>
+          <Button
+            color="red"
+            variant="light"
+            leftSection={<Trash2 size={14} />}
+            onClick={openDeleteModal}
+          >
+            {t('settings.deleteWorkspace')}
+          </Button>
+        </div>
+      </Paper>
+
       <ProviderModal
         key={modalKey}
         opened={modalOpened}
@@ -482,6 +565,38 @@ export default function SettingsPage() {
         initial={editingProvider}
         onSave={handleSaveProvider}
       />
+
+      {/* Delete confirmation modal */}
+      <Modal
+        opened={deleteModalOpened}
+        onClose={() => { closeDeleteModal(); setDeleteConfirmName('') }}
+        title={<Text fw={600} c="red">{t('settings.deleteWorkspaceConfirm')}</Text>}
+        size="sm"
+      >
+        <Stack>
+          <Text size="sm">{t('settings.deleteWorkspaceConfirmHint')}</Text>
+          <Text size="sm" fw={600} ff="mono">{wsData?.name}</Text>
+          <TextInput
+            placeholder={wsData?.name ?? ''}
+            value={deleteConfirmName}
+            onChange={(e) => setDeleteConfirmName(e.target.value)}
+          />
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => { closeDeleteModal(); setDeleteConfirmName('') }}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              color="red"
+              loading={deleteWorkspace.isPending}
+              disabled={deleteConfirmName !== wsData?.name}
+              leftSection={<Trash2 size={14} />}
+              onClick={() => deleteWorkspace.mutate()}
+            >
+              {t('settings.deleteWorkspaceConfirm')}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Container>
   )
 }

@@ -12,15 +12,20 @@ import (
 	"github.com/google/uuid"
 )
 
-// GateManager is a Huma per-operation middleware that allows ADMIN/OWNER unconditionally,
-// and MEMBER only if they have gate:manage permission on the gate in the {gate_id} path param.
+// GateManager is a Huma per-operation middleware that requires gate:manage permission.
+// ADMIN/OWNER are exempt — unless the request is authenticated via an API token, in which case
+// the token's explicit gate+permission policies are always enforced regardless of role.
 // Must be chained after WorkspaceMember (requires ws_role and ws_membership_id in context).
 func GateManager(api huma.API, policyRepo repository.PolicyRepository) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
-		role, _ := WorkspaceRoleFromContext(ctx.Context())
-		if role == model.RoleAdmin || role == model.RoleOwner {
-			next(ctx)
-			return
+		// ADMIN/OWNER bypass only for session-based auth (password/SSO).
+		// API tokens are always fine-grained: enforce policy even for privileged roles.
+		if !IsAPITokenAuth(ctx.Context()) {
+			role, _ := WorkspaceRoleFromContext(ctx.Context())
+			if role == model.RoleAdmin || role == model.RoleOwner {
+				next(ctx)
+				return
+			}
 		}
 		gateID, err := uuid.Parse(chi.URLParamFromCtx(ctx.Context(), "gate_id"))
 		if err != nil {
@@ -114,8 +119,33 @@ func WorkspaceMember(api huma.API, wsRepo repository.WorkspaceRepository, member
 }
 
 // WorkspaceAdmin is a Huma per-operation middleware that requires OWNER or ADMIN.
+// API tokens are rejected regardless of role: tokens are gate-scoped and cannot perform
+// workspace management operations (member management, SSO settings, etc.).
 func WorkspaceAdmin(api huma.API, wsRepo repository.WorkspaceRepository, memberRepo repository.WorkspaceMembershipRepository) func(huma.Context, func(huma.Context)) {
-	return workspaceAccess(api, wsRepo, memberRepo, model.RoleAdmin)
+	inner := workspaceAccess(api, wsRepo, memberRepo, model.RoleAdmin)
+	return func(ctx huma.Context, next func(huma.Context)) {
+		if IsAPITokenAuth(ctx.Context()) {
+			huma.WriteErr(api, ctx, http.StatusForbidden, "API tokens cannot perform workspace management operations")
+			return
+		}
+		inner(ctx, next)
+	}
+}
+
+// IsPrivilegedMember returns true if the caller is ADMIN or OWNER authenticated via a session
+// (password or SSO). Always returns false for API token auth — tokens are fine-grained and
+// must never bypass auth config restrictions based on role.
+func IsPrivilegedMember(ctx context.Context) bool {
+	if IsAPITokenAuth(ctx) {
+		return false
+	}
+	if role, ok := WorkspaceRoleFromContext(ctx); ok {
+		return role == model.RoleAdmin || role == model.RoleOwner
+	}
+	if role, ok := MemberRoleFromContext(ctx); ok {
+		return role == model.RoleAdmin || role == model.RoleOwner
+	}
+	return false
 }
 
 // WorkspaceRoleFromContext retrieves the workspace role injected by WorkspaceMember/WorkspaceAdmin.

@@ -87,6 +87,54 @@ func (h *WorkspaceHandler) Get(ctx context.Context, input *WorkspacePathParam) (
 	return &WorkspaceOutput{Body: *ws}, nil
 }
 
+// --- Rename ---
+
+type RenameWorkspaceInput struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	Body        struct {
+		Name string `json:"name" minLength:"1" maxLength:"100"`
+	}
+}
+
+func (h *WorkspaceHandler) Rename(ctx context.Context, input *RenameWorkspaceInput) (*WorkspaceOutput, error) {
+	userID, ok := middleware.UserIDFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized("unauthorized")
+	}
+	ws, err := h.workspaces.Get(ctx, input.WorkspaceID, userID)
+	if err != nil || ws.Role != model.RoleOwner {
+		return nil, huma.Error403Forbidden("only the workspace owner can rename it")
+	}
+	renamed, err := h.workspaces.Rename(ctx, input.WorkspaceID, input.Body.Name)
+	if errors.Is(err, model.ErrNotFound) {
+		return nil, huma.Error404NotFound("workspace not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to rename workspace")
+	}
+	return &WorkspaceOutput{Body: model.WorkspaceWithRole{Workspace: *renamed, Role: model.RoleOwner}}, nil
+}
+
+// --- Delete ---
+
+func (h *WorkspaceHandler) Delete(ctx context.Context, input *WorkspacePathParam) (*struct{}, error) {
+	userID, ok := middleware.UserIDFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized("unauthorized")
+	}
+	ws, err := h.workspaces.Get(ctx, input.WorkspaceID, userID)
+	if err != nil || ws.Role != model.RoleOwner {
+		return nil, huma.Error403Forbidden("only the workspace owner can delete it")
+	}
+	if err := h.workspaces.Delete(ctx, input.WorkspaceID); err != nil {
+		if errors.Is(err, model.ErrNotFound) {
+			return nil, huma.Error404NotFound("workspace not found")
+		}
+		return nil, huma.Error500InternalServerError("failed to delete workspace")
+	}
+	return nil, nil
+}
+
 // --- Member auth config ---
 
 type MemberAuthConfigOutput struct {
@@ -154,6 +202,25 @@ func (h *WorkspaceHandler) RegisterRoutes(
 		Tags:        []string{"Workspaces"},
 		Middlewares: huma.Middlewares{requireAuth},
 	}, h.Get)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "workspace-rename",
+		Method:      http.MethodPatch,
+		Path:        "/api/workspaces/{ws_id}/name",
+		Summary:     "Rename a workspace (owner only)",
+		Tags:        []string{"Workspaces"},
+		Middlewares: huma.Middlewares{requireAuth},
+	}, h.Rename)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "workspace-delete",
+		Method:        http.MethodDelete,
+		Path:          "/api/workspaces/{ws_id}",
+		Summary:       "Delete a workspace (owner only)",
+		Tags:          []string{"Workspaces"},
+		DefaultStatus: http.StatusNoContent,
+		Middlewares:   huma.Middlewares{requireAuth},
+	}, h.Delete)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "workspace-get-member-auth-config",

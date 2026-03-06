@@ -34,10 +34,12 @@ type UpdateGateParams struct {
 
 // GatePublicInfo holds gate + workspace context needed for the public PIN pad.
 type GatePublicInfo struct {
-	GateID        uuid.UUID
-	GateName      string
-	WorkspaceID   uuid.UUID
-	WorkspaceName string
+	GateID         uuid.UUID
+	GateName       string
+	WorkspaceID    uuid.UUID
+	WorkspaceName  string
+	HasOpenAction  bool
+	HasCloseAction bool
 }
 
 // UnresponsiveGate holds gate + workspace IDs for TTL expiry notifications.

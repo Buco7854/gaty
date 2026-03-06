@@ -23,6 +23,7 @@ type CredentialHandler struct {
 	memberCredRepo repository.MembershipCredentialRepository
 	membershipRepo repository.WorkspaceMembershipRepository
 	credPolicyRepo repository.CredentialPolicyRepository
+	wsRepo         repository.WorkspaceRepository
 }
 
 func NewCredentialHandler(
@@ -30,12 +31,14 @@ func NewCredentialHandler(
 	memberCredRepo repository.MembershipCredentialRepository,
 	membershipRepo repository.WorkspaceMembershipRepository,
 	credPolicyRepo repository.CredentialPolicyRepository,
+	wsRepo repository.WorkspaceRepository,
 ) *CredentialHandler {
 	return &CredentialHandler{
 		credRepo:       credRepo,
 		memberCredRepo: memberCredRepo,
 		membershipRepo: membershipRepo,
 		credPolicyRepo: credPolicyRepo,
+		wsRepo:         wsRepo,
 	}
 }
 
@@ -192,6 +195,44 @@ type workspaceSelfCredPathParam struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 }
 
+type myEffectiveAuthConfigOutput struct {
+	Body struct {
+		APIToken bool `json:"api_token"`
+	}
+}
+
+// GetMyEffectiveAuthConfig returns the effective API token auth setting for the current member.
+// Considers per-member override first, falls back to workspace default, defaults to true.
+// ADMIN/OWNER are always unrestricted regardless of settings.
+// Accessible to any workspace member (not admin-only).
+func (h *CredentialHandler) GetMyEffectiveAuthConfig(ctx context.Context, input *workspaceSelfCredPathParam) (*myEffectiveAuthConfigOutput, error) {
+	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized("not authenticated as workspace member")
+	}
+	out := &myEffectiveAuthConfigOutput{}
+	if middleware.IsPrivilegedMember(ctx) {
+		out.Body.APIToken = true
+		return out, nil
+	}
+	m, err := h.membershipRepo.GetByID(ctx, membershipID, input.WorkspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("membership not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to load membership")
+	}
+	ws, err := h.wsRepo.GetByID(ctx, input.WorkspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("workspace not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to load workspace")
+	}
+	out.Body.APIToken = credAPITokenEnabled(m.AuthConfig, ws.MemberAuthConfig)
+	return out, nil
+}
+
 type workspaceSelfCredWithIDPathParam struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	CredID      uuid.UUID `path:"cred_id"`
@@ -229,6 +270,10 @@ func (h *CredentialHandler) CreateMyWorkspaceMemberAPIToken(ctx context.Context,
 	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized("not authenticated as workspace member")
+	}
+
+	if err := h.checkAPITokenEnabled(ctx, membershipID, input.WorkspaceID); err != nil {
+		return nil, err
 	}
 
 	rawToken, hash, err := generateAPIToken()
@@ -323,8 +368,12 @@ func (h *CredentialHandler) ListMyMemberCredentials(ctx context.Context, _ *stru
 }
 
 func (h *CredentialHandler) CreateMyMemberAPIToken(ctx context.Context, input *createAPITokenInput) (*createAPITokenOutput, error) {
-	membershipID, err := requireLocalMember(ctx)
-	if err != nil {
+	membershipID, workspaceID, ok := middleware.MemberFromContext(ctx)
+	if !ok {
+		return nil, huma.Error403Forbidden("this endpoint requires local membership authentication")
+	}
+
+	if err := h.checkAPITokenEnabled(ctx, membershipID, workspaceID); err != nil {
 		return nil, err
 	}
 
@@ -587,6 +636,15 @@ func (h *CredentialHandler) RegisterRoutes(
 
 	// Workspace member self-service — own workspace membership API tokens
 	huma.Register(api, huma.Operation{
+		OperationID: "get-my-effective-auth-config",
+		Method:      http.MethodGet,
+		Path:        "/api/workspaces/{ws_id}/members/me/auth-config",
+		Summary:     "Get effective auth config for current member",
+		Tags:        []string{"Credentials"},
+		Middlewares: huma.Middlewares{wsMember},
+	}, h.GetMyEffectiveAuthConfig)
+
+	huma.Register(api, huma.Operation{
 		OperationID: "list-my-workspace-member-credentials",
 		Method:      http.MethodGet,
 		Path:        "/api/workspaces/{ws_id}/members/me/credentials",
@@ -692,6 +750,43 @@ func (h *CredentialHandler) RegisterRoutes(
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// checkAPITokenEnabled returns a 403 error if API token authentication is disabled
+// for the given membership (considering per-member override and workspace default).
+// ADMIN/OWNER are always unrestricted regardless of settings.
+func (h *CredentialHandler) checkAPITokenEnabled(ctx context.Context, membershipID, workspaceID uuid.UUID) error {
+	if middleware.IsPrivilegedMember(ctx) {
+		return nil
+	}
+	m, err := h.membershipRepo.GetByID(ctx, membershipID, workspaceID)
+	if err != nil {
+		return huma.Error500InternalServerError("failed to load membership")
+	}
+	ws, err := h.wsRepo.GetByID(ctx, workspaceID)
+	if err != nil {
+		return huma.Error500InternalServerError("failed to load workspace")
+	}
+	if !credAPITokenEnabled(m.AuthConfig, ws.MemberAuthConfig) {
+		return huma.Error403Forbidden("API token authentication is disabled for this workspace member")
+	}
+	return nil
+}
+
+// credAPITokenEnabled returns true if API token auth is allowed for a member.
+// Per-member setting takes precedence over workspace default; default is enabled.
+func credAPITokenEnabled(memberConfig, wsConfig map[string]any) bool {
+	if v, ok := memberConfig["api_token"]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	if v, ok := wsConfig["api_token"]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return true
+}
 
 // generateAPIToken creates a new API token.
 // Returns the raw token (shown once to the user) and its SHA-256 hash (stored in DB).

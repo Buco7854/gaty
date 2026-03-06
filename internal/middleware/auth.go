@@ -46,7 +46,7 @@ func ClientIPFromContext(ctx context.Context) string {
 // Tries local member token first (has explicit "type":"local" claim), then global user token,
 // then API tokens (gatie_* prefix, SHA-256 hashed and looked up in membership_credentials).
 // Always calls next — never rejects on its own.
-func AuthExtractor(authSvc *service.AuthService, memberCredRepo repository.MembershipCredentialRepository) func(huma.Context, func(huma.Context)) {
+func AuthExtractor(authSvc *service.AuthService, memberCredRepo repository.MembershipCredentialRepository, wsRepo repository.WorkspaceRepository) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
 		if token := bearerToken(ctx); token != "" {
 			if memberID, wsID, role, err := authSvc.ValidateMemberToken(token); err == nil {
@@ -59,15 +59,36 @@ func AuthExtractor(authSvc *service.AuthService, memberCredRepo repository.Membe
 				h := sha256.Sum256([]byte(token))
 				hash := hex.EncodeToString(h[:])
 				if cred, membership, err := memberCredRepo.FindByHashedAPIToken(ctx.Context(), hash); err == nil {
-					ctx = huma.WithValue(ctx, memberIDKey, membership.ID)
-					ctx = huma.WithValue(ctx, memberWorkspaceIDKey, membership.WorkspaceID)
-					ctx = huma.WithValue(ctx, memberRoleKey, membership.Role)
-					ctx = huma.WithValue(ctx, credentialIDKey, cred.ID)
+					ws, wsErr := wsRepo.GetByID(ctx.Context(), membership.WorkspaceID)
+					if wsErr == nil && apiTokenEnabled(membership.AuthConfig, ws.MemberAuthConfig) {
+						ctx = huma.WithValue(ctx, memberIDKey, membership.ID)
+						ctx = huma.WithValue(ctx, memberWorkspaceIDKey, membership.WorkspaceID)
+						ctx = huma.WithValue(ctx, memberRoleKey, membership.Role)
+						ctx = huma.WithValue(ctx, credentialIDKey, cred.ID)
+					}
 				}
 			}
 		}
 		next(ctx)
 	}
+}
+
+// apiTokenEnabled returns true if API token authentication is allowed for a member.
+// memberConfig is the per-member auth_config override (may be nil).
+// wsConfig is the workspace-level member_auth_config default (may be nil).
+// Per-member setting takes precedence; workspace default applies otherwise; default is enabled.
+func apiTokenEnabled(memberConfig, wsConfig map[string]any) bool {
+	if v, ok := memberConfig["api_token"]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	if v, ok := wsConfig["api_token"]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return true
 }
 
 // RequireAuth is a per-operation middleware that requires a valid global (platform user) JWT.
@@ -122,6 +143,13 @@ func MemberRoleFromContext(ctx context.Context) (model.WorkspaceRole, bool) {
 func CredentialIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	id, ok := ctx.Value(credentialIDKey).(uuid.UUID)
 	return id, ok && id != uuid.Nil
+}
+
+// IsAPITokenAuth reports whether the current request was authenticated via an API token (gatie_* prefix).
+// API tokens are always fine-grained: restricted to explicit gate+permission policies regardless of role.
+func IsAPITokenAuth(ctx context.Context) bool {
+	_, ok := CredentialIDFromContext(ctx)
+	return ok
 }
 
 func bearerToken(ctx huma.Context) string {

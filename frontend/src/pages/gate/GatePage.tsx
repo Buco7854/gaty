@@ -648,11 +648,9 @@ export default function GatePage() {
               <Text fw={600}>{t('gates.tokenSection')}</Text>
             </Group>
             <Group gap="xs">
-              {!showToken && (
-                <Button size="xs" variant="subtle" onClick={() => setShowToken(true)}>
-                  {t('gates.tokenShow')}
-                </Button>
-              )}
+              <Button size="xs" variant="subtle" onClick={() => setShowToken((v) => !v)}>
+                {showToken ? t('gates.tokenHide') : t('gates.tokenShow')}
+              </Button>
               <Button
                 size="xs"
                 variant="light"
