@@ -33,7 +33,9 @@ type GateStatusPushInput struct {
 		Status string `json:"status" minLength:"1"`
 		// Meta holds arbitrary sensor/protocol metadata.
 		// Keys and their meaning are defined by the gate's meta_config.
-		// Example: {"lora.snr": -10.5, "lora.rssi": -90, "battery": 85}
+		// Supports nested objects with dot-notated keys in meta_config
+		// (e.g. key "lora.snr" resolves {"lora": {"snr": -10.5}}).
+		// Flat keys like {"battery": 85} also work.
 		Meta map[string]any `json:"meta,omitempty"`
 	}
 }

@@ -24,6 +24,7 @@ const en = {
     offline: 'Offline',
     unknown: 'Unknown',
     unresponsive: 'Unresponsive',
+    unavailable: 'Unavailable',
     details: 'Details',
     none: 'None',
     optional: 'optional',
@@ -134,6 +135,9 @@ const en = {
     statusRulesOpGte: '≥ greater or equal',
     statusRulesOpLt: '< less than',
     statusRulesOpLte: '≤ less or equal',
+    customStatuses: 'Custom statuses',
+    customStatusesDesc: 'Define additional statuses beyond the defaults (Open, Closed, Unavailable).',
+    customStatusPlaceholder: 'e.g. maintenance',
   },
   members: {
     title: 'Members',

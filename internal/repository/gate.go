@@ -18,18 +18,20 @@ type CreateGateParams struct {
 	StatusConfig      *model.ActionConfig
 	MetaConfig        []model.MetaField
 	StatusRules       []model.StatusRule
+	CustomStatuses    []string
 }
 
 // UpdateGateParams holds the fields that can be updated on a gate.
 // For action configs, Set=false = unchanged; Set=true && V=nil = clear to NULL.
 // For slices, nil = unchanged, empty slice = clear.
 type UpdateGateParams struct {
-	Name         *string
-	OpenConfig   OmittableNullable[model.ActionConfig]
-	CloseConfig  OmittableNullable[model.ActionConfig]
-	StatusConfig OmittableNullable[model.ActionConfig]
-	MetaConfig   []model.MetaField // nil = unchanged, [] = clear
-	StatusRules  []model.StatusRule
+	Name           *string
+	OpenConfig     OmittableNullable[model.ActionConfig]
+	CloseConfig    OmittableNullable[model.ActionConfig]
+	StatusConfig   OmittableNullable[model.ActionConfig]
+	MetaConfig     []model.MetaField  // nil = unchanged, [] = clear
+	StatusRules    []model.StatusRule
+	CustomStatuses []string // nil = unchanged, [] = clear
 }
 
 // GatePublicInfo holds gate + workspace context needed for the public PIN pad.
@@ -40,6 +42,9 @@ type GatePublicInfo struct {
 	WorkspaceName  string
 	HasOpenAction  bool
 	HasCloseAction bool
+	Status         model.GateStatus
+	MetaConfig     []model.MetaField
+	StatusMetadata map[string]any
 }
 
 // UnresponsiveGate holds gate + workspace IDs for TTL expiry notifications.

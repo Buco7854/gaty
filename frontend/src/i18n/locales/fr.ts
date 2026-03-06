@@ -26,6 +26,7 @@ const fr: Translations = {
     offline: 'Hors ligne',
     unknown: 'Inconnu',
     unresponsive: 'Injoignable',
+    unavailable: 'Indisponible',
     details: 'Détails',
     none: 'Aucun',
     optional: 'optionnel',
@@ -136,6 +137,9 @@ const fr: Translations = {
     statusRulesOpGte: '≥ supérieur ou égal',
     statusRulesOpLt: '< inférieur à',
     statusRulesOpLte: '≤ inférieur ou égal',
+    customStatuses: 'Statuts personnalisés',
+    customStatusesDesc: 'Définir des statuts supplémentaires en plus des défauts (Ouvert, Fermé, Indisponible).',
+    customStatusPlaceholder: 'ex. maintenance',
   },
   members: {
     title: 'Membres',

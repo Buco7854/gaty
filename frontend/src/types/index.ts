@@ -67,6 +67,8 @@ export interface Gate {
   meta_config?: MetaField[]
   /** Rules evaluated against metadata to auto-override the reported status. */
   status_rules?: StatusRule[]
+  /** User-defined statuses in addition to the defaults (open, closed, unavailable). */
+  custom_statuses?: string[]
   /** Gate authentication token — only populated on create and rotate-token responses. */
   gate_token?: string
 }
@@ -171,4 +173,7 @@ export interface DomainResolveResult {
   workspace_name: string
   has_open_action: boolean
   has_close_action: boolean
+  status: GateStatus
+  meta_config?: MetaField[]
+  status_metadata?: Record<string, unknown>
 }

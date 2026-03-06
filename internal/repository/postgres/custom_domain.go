@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -124,21 +125,28 @@ func (r *customDomainRepository) SetVerified(ctx context.Context, domainID uuid.
 
 func (r *customDomainRepository) ResolveByDomain(ctx context.Context, domain string) (*repository.DomainResolveResult, error) {
 	var res repository.DomainResolveResult
+	var rawMetaCfg, rawStatusMeta []byte
 	err := r.pool.QueryRow(ctx,
 		`SELECT g.id, g.name, w.id, w.name,
 		        COALESCE(g.open_config->>'type', 'NONE') <> 'NONE',
-		        COALESCE(g.close_config->>'type', 'NONE') <> 'NONE'
+		        COALESCE(g.close_config->>'type', 'NONE') <> 'NONE',
+		        g.status, g.meta_config, g.status_metadata
 		 FROM custom_domains cd
 		 JOIN gates g       ON g.id = cd.gate_id
 		 JOIN workspaces w  ON w.id = cd.workspace_id
 		 WHERE cd.domain = $1 AND cd.verified_at IS NOT NULL`,
 		domain,
-	).Scan(&res.GateID, &res.GateName, &res.WorkspaceID, &res.WorkspaceName, &res.HasOpenAction, &res.HasCloseAction)
+	).Scan(&res.GateID, &res.GateName, &res.WorkspaceID, &res.WorkspaceName,
+		&res.HasOpenAction, &res.HasCloseAction, &res.Status, &rawMetaCfg, &rawStatusMeta)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, repository.ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve domain: %w", err)
+	}
+	res.MetaConfig = unmarshalMetaConfig(rawMetaCfg)
+	if len(rawStatusMeta) > 0 {
+		_ = json.Unmarshal(rawStatusMeta, &res.StatusMetadata)
 	}
 	return &res, nil
 }

@@ -16,6 +16,9 @@ type DomainResolveResult struct {
 	WorkspaceName  string
 	HasOpenAction  bool
 	HasCloseAction bool
+	Status         model.GateStatus
+	MetaConfig     []model.MetaField
+	StatusMetadata map[string]any
 }
 
 // CustomDomainRepository is the data-access contract for custom domains.
