@@ -6,31 +6,27 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/Buco7854/gaty/internal/repository"
-	"github.com/Buco7854/gaty/internal/service"
+	"github.com/Buco7854/gatie/internal/repository"
+	"github.com/Buco7854/gatie/internal/service"
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
-	"strings"
 )
 
 // GateInboundHandler handles status reports pushed by gates over HTTP.
-// Authentication is performed using the gate's unique gate_token.
+// Authentication is two-step: JWT signature verification + DB rotation check.
+// The gate token alone identifies the gate — no workspace or gate ID needed in the path.
 // A successful status push also acts as a keepalive (updates last_seen_at).
 type GateInboundHandler struct {
-	gates repository.GateRepository
-	redis *redis.Client
+	gates *service.GateService
 }
 
-func NewGateInboundHandler(gates repository.GateRepository, redis *redis.Client) *GateInboundHandler {
-	return &GateInboundHandler{gates: gates, redis: redis}
+func NewGateInboundHandler(gates *service.GateService) *GateInboundHandler {
+	return &GateInboundHandler{gates: gates}
 }
 
-// --- POST /api/inbound/gates/{gate_id}/status ---
+// --- POST /api/inbound/status ---
 
 type GateStatusPushInput struct {
-	GateID        uuid.UUID `path:"gate_id"`
-	Authorization string    `header:"Authorization" required:"true"`
+	Authorization string `header:"Authorization" required:"true"`
 	Body          struct {
 		// Status is the system-level state of the gate.
 		// Well-known values: "open", "closed", "online", "offline".
@@ -42,14 +38,22 @@ type GateStatusPushInput struct {
 	}
 }
 
+func extractBearerToken(header string) string {
+	const prefix = "Bearer "
+	if len(header) <= len(prefix) || header[:len(prefix)] != prefix {
+		return ""
+	}
+	return header[len(prefix):]
+}
+
 func (h *GateInboundHandler) PushStatus(ctx context.Context, input *GateStatusPushInput) (*struct{}, error) {
-	token := strings.TrimPrefix(input.Authorization, "Bearer ")
+	token := extractBearerToken(input.Authorization)
 	if token == "" {
 		return nil, huma.Error401Unauthorized("missing gate token")
 	}
 
-	// Validate token and retrieve gate (including status_rules for rule evaluation).
-	gate, err := h.gates.GetByToken(ctx, input.GateID, token)
+	// AuthenticateToken: verifies JWT signature then checks DB (rotation detection).
+	gate, err := h.gates.AuthenticateToken(ctx, token)
 	if err != nil {
 		if errors.Is(err, repository.ErrUnauthorized) {
 			return nil, huma.Error401Unauthorized("invalid gate token")
@@ -57,11 +61,11 @@ func (h *GateInboundHandler) PushStatus(ctx context.Context, input *GateStatusPu
 		return nil, huma.Error500InternalServerError("failed to authenticate gate")
 	}
 
-	if err := service.ProcessGateStatus(ctx, h.gates, h.redis, gate, input.Body.Status, input.Body.Meta); err != nil {
+	if err := h.gates.ProcessStatus(ctx, gate, input.Body.Status, input.Body.Meta); err != nil {
 		return nil, huma.Error500InternalServerError("failed to update status")
 	}
 
-	slog.Info("inbound: gate status updated", "gate_id", input.GateID, "status", input.Body.Status)
+	slog.Info("inbound: gate status updated", "gate_id", gate.ID, "status", input.Body.Status)
 	return nil, nil
 }
 
@@ -69,11 +73,12 @@ func (h *GateInboundHandler) RegisterRoutes(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "gate-inbound-status",
 		Method:      http.MethodPost,
-		Path:        "/api/inbound/gates/{gate_id}/status",
+		Path:        "/api/inbound/status",
 		Summary:     "Gate reports its current status (authenticated by gate token)",
 		Description: "Used by HTTP-mode gates to report their state to the server. " +
-			"Each successful call also acts as a keepalive — it updates last_seen_at, " +
-			"resetting the unresponsive TTL. " +
+			"Authentication is two-step: JWT signature verification + DB rotation check. " +
+			"The gate token alone identifies the gate — no gate_id needed in the path. " +
+			"Each successful call also acts as a keepalive (updates last_seen_at). " +
 			"Authentication: Authorization: Bearer {gate_token}.",
 		Tags: []string{"Gate Inbound"},
 	}, h.PushStatus)

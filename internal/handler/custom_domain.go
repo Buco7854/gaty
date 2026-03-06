@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Buco7854/gaty/internal/model"
-	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 )
@@ -28,18 +28,6 @@ func NewCustomDomainHandler(
 	return &CustomDomainHandler{domains: domains, gates: gates}
 }
 
-// --- Path params ---
-
-type domainPathParam struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
-}
-
-type domainItemPathParam struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
-	DomainID    uuid.UUID `path:"domain_id"`
-}
 
 // --- Views ---
 
@@ -71,6 +59,7 @@ func (h *CustomDomainHandler) ensureGateInWorkspace(ctx context.Context, gateID,
 		if errors.Is(err, repository.ErrNotFound) {
 			return huma.Error404NotFound("gate not found")
 		}
+		slog.Error("ensureGateInWorkspace", "gate_id", gateID, "ws_id", wsID, "error", err)
 		return huma.Error500InternalServerError("internal error")
 	}
 	return nil
@@ -79,8 +68,9 @@ func (h *CustomDomainHandler) ensureGateInWorkspace(ctx context.Context, gateID,
 // --- POST /api/workspaces/{ws_id}/gates/{gate_id}/domains ---
 
 type addDomainInput struct {
-	domainPathParam
-	Body struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	GateID      uuid.UUID `path:"gate_id"`
+	Body        struct {
 		Domain string `json:"domain" minLength:"3" maxLength:"253"`
 	}
 }
@@ -113,7 +103,8 @@ func (h *CustomDomainHandler) addDomain(ctx context.Context, in *addDomainInput)
 // --- GET /api/workspaces/{ws_id}/gates/{gate_id}/domains ---
 
 type listDomainsInput struct {
-	domainPathParam
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	GateID      uuid.UUID `path:"gate_id"`
 }
 
 type listDomainsOutput struct {
@@ -141,7 +132,9 @@ func (h *CustomDomainHandler) listDomains(ctx context.Context, in *listDomainsIn
 // --- DELETE /api/workspaces/{ws_id}/gates/{gate_id}/domains/{domain_id} ---
 
 type deleteDomainInput struct {
-	domainItemPathParam
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	GateID      uuid.UUID `path:"gate_id"`
+	DomainID    uuid.UUID `path:"domain_id"`
 }
 
 func (h *CustomDomainHandler) deleteDomain(ctx context.Context, in *deleteDomainInput) (*struct{}, error) {
@@ -162,7 +155,9 @@ func (h *CustomDomainHandler) deleteDomain(ctx context.Context, in *deleteDomain
 // --- POST /api/workspaces/{ws_id}/gates/{gate_id}/domains/{domain_id}/verify ---
 
 type verifyDomainInput struct {
-	domainItemPathParam
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	GateID      uuid.UUID `path:"gate_id"`
+	DomainID    uuid.UUID `path:"domain_id"`
 }
 
 type verifyDomainOutput struct {
@@ -185,14 +180,14 @@ func (h *CustomDomainHandler) verifyDomain(ctx context.Context, in *verifyDomain
 		return nil, huma.Error500InternalServerError("internal error")
 	}
 
-	// DNS TXT lookup: _gaty.<domain> must contain the challenge token.
-	txtHost := fmt.Sprintf("_gaty.%s", d.Domain)
+	// DNS TXT lookup: _gatie.<domain> must contain the challenge token.
+	txtHost := fmt.Sprintf("_gatie.%s", d.Domain)
 	records, err := net.LookupTXT(txtHost)
 	if err != nil {
 		return &verifyDomainOutput{Body: struct {
 			Verified bool   `json:"verified"`
 			Message  string `json:"message,omitempty"`
-		}{false, "DNS lookup failed — ensure _gaty." + d.Domain + " TXT record is set"}}, nil
+		}{false, "DNS lookup failed — ensure _gatie." + d.Domain + " TXT record is set"}}, nil
 	}
 
 	found := false

@@ -3,7 +3,7 @@ package postgres
 import (
 	"context"
 
-	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

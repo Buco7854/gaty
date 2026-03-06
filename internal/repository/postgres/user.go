@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/Buco7854/gaty/internal/model"
-	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"

@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Buco7854/gaty/internal/model"
-	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"

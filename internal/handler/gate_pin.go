@@ -2,61 +2,24 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/Buco7854/gaty/internal/integration"
-	"github.com/Buco7854/gaty/internal/middleware"
-	"github.com/Buco7854/gaty/internal/model"
-	internalmqtt "github.com/Buco7854/gaty/internal/mqtt"
-	"github.com/Buco7854/gaty/internal/repository"
-	"github.com/Buco7854/gaty/internal/service"
+	"github.com/Buco7854/gatie/internal/middleware"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/service"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
-	"golang.org/x/crypto/bcrypt"
 )
-
-const (
-	// maxPINAttempts is the per-IP, per-gate failed-attempt ceiling within pinRateLimitTTL.
-	maxPINAttempts = 5
-	// maxGatePINAttempts is the total attempt ceiling across all IPs for a single gate.
-	// Higher than the per-IP limit to accommodate legitimate multi-user traffic,
-	// while still bounding distributed brute-force attacks.
-	maxGatePINAttempts = 50
-	pinRateLimitTTL    = 15 * time.Minute
-	minUnlockDuration  = 400 * time.Millisecond
-)
-
-// dummyPINHash is a pre-computed bcrypt hash used when a gate has no PINs,
-// ensuring the unlock response time is consistent regardless of PIN count.
-var dummyPINHash, _ = bcrypt.GenerateFromPassword([]byte("__dummy__"), bcrypt.DefaultCost)
 
 type GatePinHandler struct {
-	pins      repository.GatePinRepository
-	gates     repository.GateRepository
-	policies  repository.PolicyRepository
-	schedules repository.AccessScheduleRepository
-	mqtt      *internalmqtt.Client
-	redis     *redis.Client
-	authSvc   *service.AuthService
+	pins *service.GatePinService
 }
 
-func NewGatePinHandler(
-	pins repository.GatePinRepository,
-	gates repository.GateRepository,
-	policies repository.PolicyRepository,
-	schedules repository.AccessScheduleRepository,
-	mqtt *internalmqtt.Client,
-	redis *redis.Client,
-	authSvc *service.AuthService,
-) *GatePinHandler {
-	return &GatePinHandler{pins: pins, gates: gates, policies: policies, schedules: schedules, mqtt: mqtt, redis: redis, authSvc: authSvc}
+func NewGatePinHandler(pins *service.GatePinService) *GatePinHandler {
+	return &GatePinHandler{pins: pins}
 }
 
 // --- Admin: Create PIN ---
@@ -78,29 +41,15 @@ type GatePinOutput struct {
 }
 
 func (h *GatePinHandler) CreatePIN(ctx context.Context, input *CreatePINInput) (*GatePinOutput, error) {
-	codeType := input.Body.CodeType
-	if codeType == "" {
-		codeType = "pin"
-	}
-	if codeType == "pin" {
-		for _, ch := range input.Body.PIN {
-			if ch < '0' || ch > '9' {
-				return nil, huma.Error400BadRequest("PIN code must contain digits only")
-			}
-		}
-	}
-	hashed, err := bcrypt.GenerateFromPassword([]byte(input.Body.PIN), bcrypt.DefaultCost)
+	pin, err := h.pins.Create(ctx, input.GateID, service.CreatePINParams{
+		PIN:        input.Body.PIN,
+		CodeType:   input.Body.CodeType,
+		Label:      input.Body.Label,
+		Metadata:   input.Body.Metadata,
+		ScheduleID: input.Body.ScheduleID,
+	})
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to hash pin")
-	}
-	meta := input.Body.Metadata
-	if meta == nil {
-		meta = map[string]any{}
-	}
-	meta["code_type"] = codeType
-	pin, err := h.pins.Create(ctx, input.GateID, string(hashed), input.Body.Label, meta, input.Body.ScheduleID)
-	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to create pin")
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 	return &GatePinOutput{Body: pin}, nil
 }
@@ -116,9 +65,6 @@ func (h *GatePinHandler) ListPINs(ctx context.Context, input *GatePathParam) (*L
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list pins")
 	}
-	if pins == nil {
-		pins = []*model.GatePin{}
-	}
 	return &ListGatePinsOutput{Body: pins}, nil
 }
 
@@ -129,15 +75,17 @@ type UpdatePINInput struct {
 	GateID      uuid.UUID `path:"gate_id"`
 	PinID       uuid.UUID `path:"pin_id"`
 	Body        struct {
-		// Omit a field to leave it unchanged.
 		Label    *string        `json:"label,omitempty" minLength:"1" maxLength:"100"`
 		Metadata map[string]any `json:"metadata,omitempty"`
 	}
 }
 
 func (h *GatePinHandler) UpdatePIN(ctx context.Context, input *UpdatePINInput) (*GatePinOutput, error) {
-	pin, err := h.pins.Update(ctx, input.PinID, input.GateID, input.Body.Label, input.Body.Metadata) // Label nil=unchanged
-	if errors.Is(err, repository.ErrNotFound) {
+	pin, err := h.pins.Update(ctx, input.PinID, input.GateID, service.UpdatePINParams{
+		Label:    input.Body.Label,
+		Metadata: input.Body.Metadata,
+	})
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("pin not found")
 	}
 	if err != nil {
@@ -158,8 +106,8 @@ type SetPinScheduleInput struct {
 }
 
 func (h *GatePinHandler) SetPinSchedule(ctx context.Context, input *SetPinScheduleInput) (*GatePinOutput, error) {
-	pin, err := h.pins.SetPinSchedule(ctx, input.PinID, input.GateID, input.Body.ScheduleID)
-	if errors.Is(err, repository.ErrNotFound) {
+	pin, err := h.pins.SetSchedule(ctx, input.PinID, input.GateID, input.Body.ScheduleID)
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("pin not found")
 	}
 	if err != nil {
@@ -177,8 +125,8 @@ type PinIDPathParam struct {
 }
 
 func (h *GatePinHandler) ClearPinSchedule(ctx context.Context, input *PinIDPathParam) (*GatePinOutput, error) {
-	pin, err := h.pins.ClearPinSchedule(ctx, input.PinID, input.GateID)
-	if errors.Is(err, repository.ErrNotFound) {
+	pin, err := h.pins.ClearSchedule(ctx, input.PinID, input.GateID)
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("pin not found")
 	}
 	if err != nil {
@@ -197,127 +145,13 @@ type DeletePINInput struct {
 
 func (h *GatePinHandler) DeletePIN(ctx context.Context, input *DeletePINInput) (*struct{}, error) {
 	err := h.pins.Delete(ctx, input.PinID, input.GateID)
-	if errors.Is(err, repository.ErrNotFound) {
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("pin not found")
 	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to delete pin")
 	}
-	// Clean up the use counter for this PIN.
-	h.redis.Del(ctx, fmt.Sprintf("pin:uses:%s", input.PinID))
 	return nil, nil
-}
-
-// --- PIN metadata ---
-
-// pinMetadata holds optional business rules and session config stored in a gate pin's metadata.
-type pinMetadata struct {
-	// SessionDuration is the refresh-token TTL in seconds. 0 = infinite. Default: 7 days.
-	// Controls how long the browser session remains valid after entering the PIN.
-	SessionDuration *int64 `json:"session_duration"`
-
-	// MaxUses is the maximum number of times this PIN can be used. 0 or absent = unlimited.
-	MaxUses *int64 `json:"max_uses"`
-
-	// Permissions lists gate permission codes granted to this PIN session.
-	// Defaults to ["gate:trigger_open"] if empty. "gate:manage" is always excluded.
-	Permissions []string `json:"permissions"`
-
-	ExpiresAt *time.Time `json:"expires_at"`
-}
-
-func parsePinMetadata(raw map[string]any) pinMetadata {
-	b, _ := json.Marshal(raw)
-	var m pinMetadata
-	_ = json.Unmarshal(b, &m)
-	return m
-}
-
-func checkPINRules(meta pinMetadata, now time.Time) error {
-	if meta.ExpiresAt != nil && now.After(*meta.ExpiresAt) {
-		return fmt.Errorf("pin expired")
-	}
-	return nil
-}
-
-// validatePIN checks the rate limit, finds the matching PIN and validates its rules.
-// Returns the matched pin and parsed metadata, or a Huma error.
-func (h *GatePinHandler) validatePIN(ctx context.Context, gateID uuid.UUID, pin, ip string) (*model.GatePin, pinMetadata, error) {
-	// Dual rate limit in a single pipeline:
-	//   1. Per-IP, per-gate: blocks a single attacker (threshold: maxPINAttempts).
-	//   2. Per-gate total: blocks distributed brute-force across many IPs (threshold: maxGatePINAttempts).
-	ipKey := fmt.Sprintf("rl:unlock:%s:%s", gateID, ip)
-	gateKey := fmt.Sprintf("rl:unlock:gate:%s", gateID)
-	pipe := h.redis.TxPipeline()
-	incrIPCmd := pipe.Incr(ctx, ipKey)
-	pipe.ExpireNX(ctx, ipKey, pinRateLimitTTL)
-	incrGateCmd := pipe.Incr(ctx, gateKey)
-	pipe.ExpireNX(ctx, gateKey, pinRateLimitTTL)
-	if _, err := pipe.Exec(ctx); err != nil {
-		slog.Warn("pin validate: redis rate limit error, continuing without limiting", "error", err)
-	} else if incrIPCmd.Val() > maxPINAttempts || incrGateCmd.Val() > maxGatePINAttempts {
-		return nil, pinMetadata{}, huma.Error429TooManyRequests("too many attempts, try again later")
-	}
-
-	pins, err := h.pins.List(ctx, gateID)
-	if err != nil {
-		return nil, pinMetadata{}, huma.Error500InternalServerError("internal error")
-	}
-	if len(pins) == 0 {
-		_ = bcrypt.CompareHashAndPassword(dummyPINHash, []byte(pin))
-		return nil, pinMetadata{}, huma.Error401Unauthorized("invalid pin")
-	}
-
-	var matched *model.GatePin
-	for _, p := range pins {
-		if bcrypt.CompareHashAndPassword([]byte(p.HashedPin), []byte(pin)) == nil {
-			matched = p
-			break
-		}
-	}
-	if matched == nil {
-		return nil, pinMetadata{}, huma.Error401Unauthorized("invalid pin")
-	}
-
-	meta := parsePinMetadata(matched.Metadata)
-	now := time.Now()
-	if err := checkPINRules(meta, now); err != nil {
-		slog.Info("pin validate: business rule rejected", "pin_id", matched.ID, "reason", err)
-		return nil, pinMetadata{}, huma.Error403Forbidden("access denied")
-	}
-
-	// Check attached access schedule if present.
-	if matched.ScheduleID != nil {
-		schedule, schErr := h.schedules.GetByIDPublic(ctx, *matched.ScheduleID)
-		if schErr == nil {
-			if schErr = CheckSchedule(schedule, now); schErr != nil {
-				slog.Info("pin validate: schedule rejected", "pin_id", matched.ID, "schedule_id", matched.ScheduleID, "reason", schErr)
-				return nil, pinMetadata{}, huma.Error403Forbidden("access denied")
-			}
-		}
-	}
-
-	// Reset the per-IP counter on success (legitimate user gets a fresh slate).
-	// The per-gate counter is intentionally NOT reset: a correct guess from one IP
-	// should not grant remaining distributed attempts to other IPs.
-	h.redis.Del(ctx, ipKey)
-	return matched, meta, nil
-}
-
-// triggerGate fires the gate's open driver, logging (not failing) any driver errors.
-func (h *GatePinHandler) triggerGate(ctx context.Context, gateID uuid.UUID) {
-	gate, err := h.gates.GetByIDPublic(ctx, gateID)
-	if err != nil {
-		return
-	}
-	driver, driverErr := integration.NewOpenDriver(gate, h.mqtt)
-	if driverErr != nil {
-		slog.Warn("gate trigger: failed to build open driver", "gate_id", gateID, "error", driverErr)
-		return
-	}
-	if execErr := driver.Execute(ctx, gate); execErr != nil {
-		slog.Warn("gate trigger: open driver failed", "gate_id", gateID, "error", execErr)
-	}
 }
 
 // --- Public: Unlock (one-shot, backward-compatible) ---
@@ -332,17 +166,13 @@ type UnlockInput struct {
 func (h *GatePinHandler) Unlock(ctx context.Context, input *UnlockInput) (*struct{}, error) {
 	start := time.Now()
 	defer func() {
-		if elapsed := time.Since(start); elapsed < minUnlockDuration {
-			time.Sleep(minUnlockDuration - elapsed)
+		if elapsed := time.Since(start); elapsed < service.MinUnlockDuration {
+			time.Sleep(service.MinUnlockDuration - elapsed)
 		}
 	}()
 
 	ip := middleware.ClientIPFromContext(ctx)
-	if _, _, err := h.validatePIN(ctx, input.Body.GateID, input.Body.PIN, ip); err != nil {
-		return nil, err
-	}
-	h.triggerGate(ctx, input.Body.GateID)
-	return nil, nil
+	return nil, mapPINError(h.pins.Unlock(ctx, input.Body.GateID, input.Body.PIN, ip))
 }
 
 // --- Public: Open (smart: one-shot or session based on PIN metadata) ---
@@ -364,70 +194,18 @@ type OpenGateOutput struct {
 func (h *GatePinHandler) OpenGate(ctx context.Context, input *OpenGateInput) (*OpenGateOutput, error) {
 	start := time.Now()
 	defer func() {
-		if elapsed := time.Since(start); elapsed < minUnlockDuration {
-			time.Sleep(minUnlockDuration - elapsed)
+		if elapsed := time.Since(start); elapsed < service.MinUnlockDuration {
+			time.Sleep(service.MinUnlockDuration - elapsed)
 		}
 	}()
 
 	ip := middleware.ClientIPFromContext(ctx)
-	matched, meta, err := h.validatePIN(ctx, input.Body.GateID, input.Body.PIN, ip)
+	result, err := h.pins.Open(ctx, input.Body.GateID, input.Body.PIN, ip)
 	if err != nil {
-		return nil, err
+		return nil, mapPINError(err)
 	}
-
-	// Check max_uses via atomic Redis increment (Lua ensures check-and-increment is atomic).
-	if meta.MaxUses != nil && *meta.MaxUses > 0 {
-		usesKey := fmt.Sprintf("pin:uses:%s", matched.ID)
-		script := redis.NewScript(`
-			local count = redis.call('INCR', KEYS[1])
-			local max = tonumber(ARGV[1])
-			if count > max then
-				redis.call('DECR', KEYS[1])
-				return 0
-			end
-			return count
-		`)
-		result, scriptErr := script.Run(ctx, h.redis, []string{usesKey}, *meta.MaxUses).Int64()
-		if scriptErr != nil {
-			slog.Warn("pin max_uses: redis script error, allowing use", "error", scriptErr)
-		} else if result == 0 {
-			return nil, huma.Error403Forbidden("pin max uses exceeded")
-		}
-	}
-
-	// Always issue a session JWT. SessionDuration controls the refresh-token TTL.
-	var sessionDuration time.Duration
-	if meta.SessionDuration != nil {
-		if *meta.SessionDuration == 0 {
-			sessionDuration = 0 // infinite
-		} else {
-			sessionDuration = time.Duration(*meta.SessionDuration) * time.Second
-		}
-	} else {
-		sessionDuration = 7 * 24 * time.Hour // default: 7 days
-	}
-
-	// Resolve permissions: use metadata if set, else default to trigger_open.
-	perms := meta.Permissions
-	if len(perms) == 0 {
-		perms = []string{"gate:trigger_open"}
-	}
-	// Never grant gate:manage via PIN.
-	filtered := make([]string, 0, len(perms))
-	for _, p := range perms {
-		if p != "gate:manage" {
-			filtered = append(filtered, p)
-		}
-	}
-
-	tokens, err := h.authSvc.IssueGatePinSession(ctx, matched.ID, input.Body.GateID, sessionDuration, filtered)
-	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to issue session")
-	}
-
-	h.triggerGate(ctx, input.Body.GateID)
 	out := &OpenGateOutput{}
-	out.Body.Session = tokens
+	out.Body.Session = result.Tokens
 	return out, nil
 }
 
@@ -442,51 +220,49 @@ type PublicTriggerInput struct {
 
 func (h *GatePinHandler) PublicTrigger(ctx context.Context, input *PublicTriggerInput) (*struct{}, error) {
 	tokenStr := strings.TrimPrefix(input.Authorization, "Bearer ")
-	_, gateID, permissions, err := h.authSvc.ValidatePinSessionToken(tokenStr)
-	if err != nil {
-		return nil, huma.Error401Unauthorized("invalid or expired session")
-	}
-
 	action := input.Body.Action
 	if action == "" {
 		action = "open"
 	}
 
-	// Check that the PIN session grants the requested action.
-	requiredPerm := "gate:trigger_open"
-	if action == "close" {
-		requiredPerm = "gate:trigger_close"
+	err := h.pins.TriggerWithSession(ctx, tokenStr, action)
+	if errors.Is(err, service.ErrInvalidSession) {
+		return nil, huma.Error401Unauthorized("invalid or expired session")
 	}
-	hasPermission := false
-	for _, p := range permissions {
-		if p == requiredPerm {
-			hasPermission = true
-			break
+	if errors.Is(err, model.ErrUnauthorized) {
+		requiredPerm := "gate:trigger_open"
+		if action == "close" {
+			requiredPerm = "gate:trigger_close"
 		}
-	}
-	if !hasPermission {
 		return nil, huma.Error403Forbidden("missing " + requiredPerm + " permission")
 	}
-
-	gate, err := h.gates.GetByIDPublic(ctx, gateID)
-	if errors.Is(err, repository.ErrNotFound) {
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to get gate")
-	}
-
-	if action == "close" {
-		driver, driverErr := integration.NewCloseDriver(gate, h.mqtt)
-		if driverErr != nil {
-			slog.Warn("gate trigger: failed to build close driver", "gate_id", gateID, "error", driverErr)
-		} else if execErr := driver.Execute(ctx, gate); execErr != nil {
-			slog.Warn("gate trigger: close driver failed", "gate_id", gateID, "error", execErr)
-		}
-	} else {
-		h.triggerGate(ctx, gateID)
+		return nil, huma.Error500InternalServerError("failed to trigger gate")
 	}
 	return nil, nil
+}
+
+// mapPINError converts service-level PIN errors to Huma HTTP errors.
+func mapPINError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, service.ErrTooManyAttempts) {
+		return huma.Error429TooManyRequests("too many attempts, try again later")
+	}
+	if errors.Is(err, service.ErrInvalidPIN) {
+		return huma.Error401Unauthorized("invalid pin")
+	}
+	if errors.Is(err, service.ErrScheduleDenied) {
+		return huma.Error403Forbidden("access denied")
+	}
+	if errors.Is(err, service.ErrMaxUsesExceeded) {
+		return huma.Error403Forbidden("pin max uses exceeded")
+	}
+	return huma.Error500InternalServerError("internal error")
 }
 
 // RegisterRoutes wires gate pin endpoints onto the Huma API.

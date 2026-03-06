@@ -2,12 +2,15 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net"
 	"net/http"
 	"strings"
 
-	"github.com/Buco7854/gaty/internal/model"
-	"github.com/Buco7854/gaty/internal/service"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/repository"
+	"github.com/Buco7854/gatie/internal/service"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 )
@@ -17,6 +20,7 @@ const memberIDKey contextKey = "member_id"
 const memberWorkspaceIDKey contextKey = "member_workspace_id"
 const memberRoleKey contextKey = "member_role"
 const clientIPKey contextKey = "client_ip"
+const credentialIDKey contextKey = "credential_id"
 
 // ClientIPInjector is a chi middleware that stores the real client IP in context.
 // Must run after chimw.RealIP so that r.RemoteAddr already reflects the real IP.
@@ -39,9 +43,10 @@ func ClientIPFromContext(ctx context.Context) string {
 
 // AuthExtractor is a global Huma middleware (applied via api.UseMiddleware).
 // It silently extracts the Bearer token and injects the identity into context.
-// Tries local member token first (has explicit "type":"local" claim), then global user token.
+// Tries local member token first (has explicit "type":"local" claim), then global user token,
+// then API tokens (gatie_* prefix, SHA-256 hashed and looked up in membership_credentials).
 // Always calls next — never rejects on its own.
-func AuthExtractor(authSvc *service.AuthService) func(huma.Context, func(huma.Context)) {
+func AuthExtractor(authSvc *service.AuthService, memberCredRepo repository.MembershipCredentialRepository) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
 		if token := bearerToken(ctx); token != "" {
 			if memberID, wsID, role, err := authSvc.ValidateMemberToken(token); err == nil {
@@ -50,6 +55,15 @@ func AuthExtractor(authSvc *service.AuthService) func(huma.Context, func(huma.Co
 				ctx = huma.WithValue(ctx, memberRoleKey, role)
 			} else if userID, err := authSvc.ValidateAccessToken(token); err == nil {
 				ctx = huma.WithValue(ctx, userIDKey, userID)
+			} else if strings.HasPrefix(token, "gatie_") {
+				h := sha256.Sum256([]byte(token))
+				hash := hex.EncodeToString(h[:])
+				if cred, membership, err := memberCredRepo.FindByHashedAPIToken(ctx.Context(), hash); err == nil {
+					ctx = huma.WithValue(ctx, memberIDKey, membership.ID)
+					ctx = huma.WithValue(ctx, memberWorkspaceIDKey, membership.WorkspaceID)
+					ctx = huma.WithValue(ctx, memberRoleKey, membership.Role)
+					ctx = huma.WithValue(ctx, credentialIDKey, cred.ID)
+				}
 			}
 		}
 		next(ctx)
@@ -102,6 +116,12 @@ func MemberFromContext(ctx context.Context) (membershipID, workspaceID uuid.UUID
 func MemberRoleFromContext(ctx context.Context) (model.WorkspaceRole, bool) {
 	role, ok := ctx.Value(memberRoleKey).(model.WorkspaceRole)
 	return role, ok && role != ""
+}
+
+// CredentialIDFromContext returns the API credential ID if the request was authenticated via an API token.
+func CredentialIDFromContext(ctx context.Context) (uuid.UUID, bool) {
+	id, ok := ctx.Value(credentialIDKey).(uuid.UUID)
+	return id, ok && id != uuid.Nil
 }
 
 func bearerToken(ctx huma.Context) string {

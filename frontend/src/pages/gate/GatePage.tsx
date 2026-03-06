@@ -308,13 +308,13 @@ export default function GatePage() {
   const [editStatusRules, setEditStatusRules] = useState<StatusRule[]>([])
 
   const PIN_SESSION_PRESETS = [
-    { value: '', label: t('members.session7d') },
     { value: '0', label: t('members.sessionInfinite') },
+    { value: 'custom', label: t('members.sessionCustom') },
     { value: '3600', label: t('members.session1h') },
     { value: '28800', label: t('members.session8h') },
     { value: '86400', label: t('members.session24h') },
+    { value: '', label: t('members.session7d') },
     { value: '2592000', label: t('members.session30d') },
-    { value: 'custom', label: t('members.sessionCustom') },
   ]
 
   function resolvePinSessionDurationSeconds(): number | undefined {
@@ -1029,7 +1029,7 @@ export default function GatePage() {
                     <Text size="xs" c="dimmed" mb={4}>{t('domains.dnsInstructions')}</Text>
                     <Group gap="xs" wrap="nowrap">
                       <Code style={{ flex: 1, fontSize: 11 }}>
-                        _gaty.{d.domain} → {d.dns_challenge_token}
+                        _gatie.{d.domain} → {d.dns_challenge_token}
                       </Code>
                       <Tooltip label={clipboard.copied ? t('common.copied') : t('common.copy')}>
                         <ActionIcon

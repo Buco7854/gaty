@@ -1,6 +1,6 @@
-# GATY — IoT Gate Control SaaS
+# GATIE — IoT Gate Control SaaS
 
-GATY is a multi-tenant SaaS platform for centralized control of physical gates (barriers, doors, gates) via a web interface. IoT devices maintain persistent outbound MQTT connections to a cloud broker — no port-forwarding needed.
+GATIE is a multi-tenant SaaS platform for centralized control of physical gates (barriers, doors, gates) via a web interface. IoT devices maintain persistent outbound MQTT connections to a cloud broker — no port-forwarding needed.
 
 ## Stack
 
@@ -38,15 +38,15 @@ GATY is a multi-tenant SaaS platform for centralized control of physical gates (
 ### 1 — Clone & configure environment
 
 ```bash
-git clone https://github.com/Buco7854/gaty.git
-cd gaty
+git clone https://github.com/Buco7854/gatie.git
+cd gatie
 cp .env.example .env   # edit if needed
 ```
 
 Default `.env` values work out of the box for local dev:
 
 ```env
-DATABASE_URL=postgres://gaty:gaty@localhost:5432/gaty?sslmode=disable
+DATABASE_URL=postgres://gatie:gatie@localhost:5432/gatie?sslmode=disable
 REDIS_URL=redis://localhost:6379
 MQTT_BROKER=tcp://localhost:1883
 JWT_SECRET=dev-secret-change-in-prod
@@ -117,7 +117,7 @@ Run `task --list` to see all available tasks.
 ## Project Structure
 
 ```
-gaty/
+gatie/
 ├── cmd/server/          # Go entry point (main.go)
 ├── internal/
 │   ├── config/          # Environment config (Viper)
@@ -206,4 +206,4 @@ http://localhost:8080/api/openapi.json
 - **Backend hot-reload**: `air` watches all `.go` files and rebuilds automatically.
 - **Database reset**: `task migrate-down && task migrate-up` (or `migrate -path migrations -database "$DATABASE_URL" drop -f && task migrate-up`)
 - **MQTT testing**: Use [MQTT Explorer](https://mqtt-explorer.com/) to inspect topics on `localhost:1883`.
-- **API tokens**: Format `gaty_<64 hex chars>`, stored as SHA-256 in the DB.
+- **API tokens**: Format `gatie_<64 hex chars>`, stored as SHA-256 in the DB.

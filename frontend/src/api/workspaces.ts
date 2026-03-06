@@ -26,5 +26,5 @@ export const workspacesApi = {
     api.get<Record<string, unknown>>(`/workspaces/${wsId}/member-auth-config`).then((r) => r.data),
 
   updateMemberAuthConfig: (wsId: string, config: Record<string, unknown>) =>
-    api.patch<Record<string, unknown>>(`/workspaces/${wsId}/member-auth-config`, config).then((r) => r.data),
+    api.put<Record<string, unknown>>(`/workspaces/${wsId}/member-auth-config`, config).then((r) => r.data),
 }

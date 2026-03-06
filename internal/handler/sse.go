@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Buco7854/gaty/internal/service"
+	"github.com/Buco7854/gatie/internal/service"
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
 )

@@ -9,7 +9,7 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
 
 function sessionKey(gateId: string) {
-  return `gaty_session_${gateId}`
+  return `gatie_session_${gateId}`
 }
 
 export default function PasswordAccessPage() {

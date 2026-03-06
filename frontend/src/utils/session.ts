@@ -20,16 +20,16 @@ export function getPermissionsFromJWT(token: string): string[] {
   return []
 }
 
-/** Scans localStorage for a gaty_session that matches the given workspace ID. */
+/** Scans localStorage for a gatie_session that matches the given workspace ID. */
 export function findLocalSession(wsId: string): (GateSession & { gateId: string; role: string }) | null {
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i)
-    if (!key?.startsWith('gaty_session_')) continue
+    if (!key?.startsWith('gatie_session_')) continue
     try {
       const s = JSON.parse(localStorage.getItem(key)!) as GateSession
       if (s?.type === 'member' && s?.workspace_id === wsId && s?.access_token) {
         const role = getRoleFromJWT(s.access_token) ?? 'MEMBER'
-        return { ...s, gateId: key.slice('gaty_session_'.length), role }
+        return { ...s, gateId: key.slice('gatie_session_'.length), role }
       }
     } catch { /* ignore */ }
   }

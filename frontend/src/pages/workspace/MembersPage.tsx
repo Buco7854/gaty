@@ -173,7 +173,7 @@ function MemberSettingsDrawer({
     invalidatePolicies()
   }
 
-  const memberName = member.display_name ?? member.local_username ?? member.id.slice(0, 8)
+  const memberName = member.display_name ?? member.local_username ?? member.user_email ?? member.id.slice(0, 8)
 
   return (
     <Drawer
@@ -531,7 +531,7 @@ export default function MembersPage() {
           {members?.map((m) => {
             const isSelectable = m.role === 'MEMBER'
             const isSelected = selectedMembers.has(m.id)
-            const memberName = m.display_name ?? m.local_username ?? `User ${m.id.slice(0, 8)}`
+            const memberName = m.display_name ?? m.local_username ?? m.user_email ?? m.id.slice(0, 8)
 
             return (
               <Paper key={m.id} withBorder radius="md" p="sm">
@@ -568,16 +568,14 @@ export default function MembersPage() {
                       <Badge color={ROLE_COLOR['OWNER']} variant="light" size="sm">OWNER</Badge>
                     )}
 
-                    {m.role !== 'OWNER' && (
-                      <ActionIcon
-                        variant="subtle"
-                        size="sm"
-                        title={t('members.editMemberInfo')}
-                        onClick={() => setEditMember(m)}
-                      >
-                        <Pencil size={14} />
-                      </ActionIcon>
-                    )}
+                    <ActionIcon
+                      variant="subtle"
+                      size="sm"
+                      title={t('members.editMemberInfo')}
+                      onClick={() => setEditMember(m)}
+                    >
+                      <Pencil size={14} />
+                    </ActionIcon>
 
                     {m.role === 'MEMBER' && (
                       <ActionIcon
@@ -633,10 +631,10 @@ export default function MembersPage() {
           style={{
             position: 'fixed',
             bottom: 16,
-            left: '50%',
+            left: 'calc(50% + 120px)',
             transform: 'translateX(-50%)',
             zIndex: 100,
-            width: 'calc(100vw - 32px)',
+            width: 'calc(100vw - 240px - 32px)',
             maxWidth: 680,
           }}
         >

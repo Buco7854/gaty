@@ -5,8 +5,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/Buco7854/gaty/internal/model"
-	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

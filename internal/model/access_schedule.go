@@ -7,7 +7,6 @@ import (
 )
 
 // ScheduleRule describes a single time restriction rule.
-// A schedule passes if the current time satisfies ANY rule (OR logic).
 //
 // Rule types:
 //
@@ -50,13 +49,36 @@ type ScheduleRule struct {
 	EndMonth   *int `json:"end_month,omitempty"`   // 1..12
 }
 
-// AccessSchedule is a named, reusable set of time restriction rules attached to a workspace.
+// ExprNode is a node in a boolean expression tree used to define schedule conditions.
+//
+// Op values:
+//
+//	"and"  — all children must match (logical AND)
+//	"or"   — at least one child must match (logical OR)
+//	"not"  — inverts its single child (logical NOT)
+//	"rule" — leaf node: evaluates the embedded ScheduleRule
+//
+// Examples:
+//
+//	weekdays only:  { "op":"rule", "rule":{"type":"weekdays_range","start_day":1,"end_day":5} }
+//	business hours: { "op":"and", "children":[weekdays, time_window] }
+//	except lunch:   { "op":"and", "children":[business_hours, {"op":"not","children":[lunch]}] }
+type ExprNode struct {
+	Op       string        `json:"op"`                 // "and" | "or" | "not" | "rule"
+	Children []ExprNode    `json:"children,omitempty"` // for op = "and" | "or" | "not"
+	Rule     *ScheduleRule `json:"rule,omitempty"`     // for op = "rule" only
+}
+
+// AccessSchedule is a named, reusable boolean expression attached to a workspace.
 // It can be referenced by gate access codes (PINs) or member-gate policies.
+//
+// Expr is the root of the expression tree. nil means always allowed.
+// Access is granted when Expr evaluates to true. Use a NOT node to invert.
 type AccessSchedule struct {
-	ID          uuid.UUID      `json:"id"`
-	WorkspaceID uuid.UUID      `json:"workspace_id"`
-	Name        string         `json:"name"`
-	Description *string        `json:"description,omitempty"`
-	Rules       []ScheduleRule `json:"rules"`
-	CreatedAt   time.Time      `json:"created_at"`
+	ID          uuid.UUID `json:"id"`
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+	Name        string    `json:"name"`
+	Description *string   `json:"description,omitempty"`
+	Expr        *ExprNode `json:"expr"` // nil = no restriction (always allowed)
+	CreatedAt   time.Time `json:"created_at"`
 }

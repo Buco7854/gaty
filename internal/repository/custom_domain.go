@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/Buco7854/gaty/internal/model"
+	"github.com/Buco7854/gatie/internal/model"
 	"github.com/google/uuid"
 )
 

@@ -12,7 +12,7 @@ import { LangToggle } from '@/components/LangToggle'
 const DIGITS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫']
 
 function sessionKey(gateId: string) {
-  return `gaty_session_${gateId}`
+  return `gatie_session_${gateId}`
 }
 
 export default function PinPadPage() {

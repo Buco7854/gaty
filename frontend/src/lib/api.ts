@@ -59,7 +59,7 @@ api.interceptors.response.use(
 
     // Local member session expired → clear session and redirect to member login.
     if (_authMeta?.type === 'local') {
-      if (_authMeta.gateId) localStorage.removeItem(`gaty_session_${_authMeta.gateId}`)
+      if (_authMeta.gateId) localStorage.removeItem(`gatie_session_${_authMeta.gateId}`)
       if (_authMeta.wsId) {
         const params = new URLSearchParams()
         if (_authMeta.gateId) params.set('gate_id', _authMeta.gateId)

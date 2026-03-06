@@ -3,7 +3,7 @@ package integration
 import (
 	"context"
 
-	"github.com/Buco7854/gaty/internal/model"
+	"github.com/Buco7854/gatie/internal/model"
 )
 
 // NoopDriver is a driver that does nothing. Used when an action is not configured.

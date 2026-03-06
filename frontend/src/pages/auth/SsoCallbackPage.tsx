@@ -34,7 +34,7 @@ export default function SsoCallbackPage() {
         refresh_token: refreshToken,
         workspace_id: wsId,
       }
-      localStorage.setItem(`gaty_session_${gateId}`, JSON.stringify(session))
+      localStorage.setItem(`gatie_session_${gateId}`, JSON.stringify(session))
       // Navigate to the proper gate portal route, not the legacy /unlock path.
       navigate(`/workspaces/${wsId}/gates/${gateId}/public`, { replace: true, state: { justAuthenticated: true } })
       return

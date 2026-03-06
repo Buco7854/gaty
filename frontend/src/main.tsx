@@ -63,7 +63,7 @@ function AppRoot() {
             <Avatar size={32} color="indigo" radius="md">
               <DoorOpen size={16} />
             </Avatar>
-            <Text fw={700} size="lg" ff="mono">GATY</Text>
+            <Text fw={700} size="lg" ff="mono">GATIE</Text>
           </Group>
           <Paper p="xl" radius="lg" withBorder>
             <SetupPage />

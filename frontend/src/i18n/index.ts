@@ -20,7 +20,7 @@ i18n
     detection: {
       order: ['localStorage', 'navigator'],
       caches: ['localStorage'],
-      lookupLocalStorage: 'gaty-lang',
+      lookupLocalStorage: 'gatie-lang',
     },
   })
 

@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Buco7854/gaty/internal/middleware"
-	"github.com/Buco7854/gaty/internal/model"
-	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gatie/internal/middleware"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
@@ -22,17 +22,20 @@ type CredentialHandler struct {
 	credRepo       repository.CredentialRepository
 	memberCredRepo repository.MembershipCredentialRepository
 	membershipRepo repository.WorkspaceMembershipRepository
+	credPolicyRepo repository.CredentialPolicyRepository
 }
 
 func NewCredentialHandler(
 	credRepo repository.CredentialRepository,
 	memberCredRepo repository.MembershipCredentialRepository,
 	membershipRepo repository.WorkspaceMembershipRepository,
+	credPolicyRepo repository.CredentialPolicyRepository,
 ) *CredentialHandler {
 	return &CredentialHandler{
 		credRepo:       credRepo,
 		memberCredRepo: memberCredRepo,
 		membershipRepo: membershipRepo,
+		credPolicyRepo: credPolicyRepo,
 	}
 }
 
@@ -66,10 +69,17 @@ type credListOutput struct {
 	Body []credentialView
 }
 
+type policyInput struct {
+	GateID         uuid.UUID `json:"gate_id"`
+	PermissionCode string    `json:"permission_code" minLength:"1"`
+}
+
 type createAPITokenInput struct {
 	Body struct {
-		Label     string     `json:"label" minLength:"1" maxLength:"100"`
-		ExpiresAt *time.Time `json:"expires_at,omitempty"`
+		Label      string        `json:"label" minLength:"1" maxLength:"100"`
+		ExpiresAt  *time.Time    `json:"expires_at,omitempty"`
+		Policies   []policyInput `json:"policies,omitempty"`
+		ScheduleID *uuid.UUID    `json:"schedule_id,omitempty"`
 	}
 }
 
@@ -116,29 +126,6 @@ func (h *CredentialHandler) ListMyCredentials(ctx context.Context, _ *struct{}) 
 		views = append(views, credView(c))
 	}
 	return &credListOutput{Body: views}, nil
-}
-
-func (h *CredentialHandler) CreateMyAPIToken(ctx context.Context, input *createAPITokenInput) (*createAPITokenOutput, error) {
-	userID, ok := middleware.UserIDFromContext(ctx)
-	if !ok {
-		return nil, huma.Error401Unauthorized("not authenticated")
-	}
-
-	rawToken, hash, err := generateAPIToken()
-	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to generate token")
-	}
-
-	label := input.Body.Label
-	cred, err := h.credRepo.Create(ctx, userID, model.CredAPIToken, hash, &label, input.Body.ExpiresAt, nil)
-	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to create token")
-	}
-
-	out := &createAPITokenOutput{}
-	out.Body.credentialView = credView(cred)
-	out.Body.Token = rawToken
-	return out, nil
 }
 
 func (h *CredentialHandler) DeleteMyCredential(ctx context.Context, input *credIDPathParam) (*struct{}, error) {
@@ -199,6 +186,105 @@ func (h *CredentialHandler) ChangeMyPassword(ctx context.Context, input *changeP
 	return nil, nil
 }
 
+// ─── Workspace member self-service: /api/workspaces/{ws_id}/members/me/* ─────
+
+type workspaceSelfCredPathParam struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+}
+
+type workspaceSelfCredWithIDPathParam struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	CredID      uuid.UUID `path:"cred_id"`
+}
+
+type createWorkspaceMemberTokenInput struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	Body        struct {
+		Label      string        `json:"label" minLength:"1" maxLength:"100"`
+		ExpiresAt  *time.Time    `json:"expires_at,omitempty"`
+		Policies   []policyInput `json:"policies,omitempty"`
+		ScheduleID *uuid.UUID    `json:"schedule_id,omitempty"`
+	}
+}
+
+func (h *CredentialHandler) ListMyWorkspaceMemberCredentials(ctx context.Context, _ *workspaceSelfCredPathParam) (*credListOutput, error) {
+	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized("not authenticated as workspace member")
+	}
+
+	tokens, err := h.memberCredRepo.ListByMembershipAndType(ctx, membershipID, model.CredAPIToken)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to list credentials")
+	}
+
+	views := make([]credentialView, 0, len(tokens))
+	for _, c := range tokens {
+		views = append(views, memberCredView(c))
+	}
+	return &credListOutput{Body: views}, nil
+}
+
+func (h *CredentialHandler) CreateMyWorkspaceMemberAPIToken(ctx context.Context, input *createWorkspaceMemberTokenInput) (*createAPITokenOutput, error) {
+	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized("not authenticated as workspace member")
+	}
+
+	rawToken, hash, err := generateAPIToken()
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to generate token")
+	}
+
+	label := input.Body.Label
+	cred, err := h.memberCredRepo.Create(ctx, membershipID, model.CredAPIToken, hash, &label, input.Body.ExpiresAt, nil)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to create token")
+	}
+
+	for _, p := range input.Body.Policies {
+		if err := h.credPolicyRepo.Grant(ctx, cred.ID, p.GateID, p.PermissionCode); err != nil {
+			return nil, huma.Error500InternalServerError("failed to set token policy")
+		}
+	}
+	if input.Body.ScheduleID != nil {
+		if err := h.credPolicyRepo.SetSchedule(ctx, cred.ID, *input.Body.ScheduleID); err != nil {
+			return nil, huma.Error500InternalServerError("failed to set token schedule")
+		}
+	}
+
+	out := &createAPITokenOutput{}
+	out.Body.credentialView = memberCredView(cred)
+	out.Body.Token = rawToken
+	return out, nil
+}
+
+func (h *CredentialHandler) DeleteMyWorkspaceMemberCredential(ctx context.Context, input *workspaceSelfCredWithIDPathParam) (*struct{}, error) {
+	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized("not authenticated as workspace member")
+	}
+
+	cred, err := h.memberCredRepo.GetByID(ctx, input.CredID, membershipID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("credential not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get credential")
+	}
+	if cred.Type == model.CredPassword {
+		return nil, huma.Error400BadRequest("cannot delete a password credential")
+	}
+
+	_ = h.credPolicyRepo.RevokeAll(ctx, cred.ID)
+	_ = h.credPolicyRepo.RemoveSchedule(ctx, cred.ID)
+
+	if err := h.memberCredRepo.Delete(ctx, input.CredID, membershipID); err != nil {
+		return nil, huma.Error500InternalServerError("failed to delete credential")
+	}
+	return nil, nil
+}
+
 // ─── Local member: own credentials ───────────────────────────────────────────
 
 // requireLocalMember extracts the local membership ID from context.
@@ -253,6 +339,17 @@ func (h *CredentialHandler) CreateMyMemberAPIToken(ctx context.Context, input *c
 		return nil, huma.Error500InternalServerError("failed to create token")
 	}
 
+	for _, p := range input.Body.Policies {
+		if err := h.credPolicyRepo.Grant(ctx, cred.ID, p.GateID, p.PermissionCode); err != nil {
+			return nil, huma.Error500InternalServerError("failed to set token policy")
+		}
+	}
+	if input.Body.ScheduleID != nil {
+		if err := h.credPolicyRepo.SetSchedule(ctx, cred.ID, *input.Body.ScheduleID); err != nil {
+			return nil, huma.Error500InternalServerError("failed to set token schedule")
+		}
+	}
+
 	out := &createAPITokenOutput{}
 	out.Body.credentialView = memberCredView(cred)
 	out.Body.Token = rawToken
@@ -275,6 +372,9 @@ func (h *CredentialHandler) DeleteMyMemberCredential(ctx context.Context, input 
 	if cred.Type == model.CredPassword {
 		return nil, huma.Error400BadRequest("use PATCH /api/auth/local/me/password to change your password")
 	}
+
+	_ = h.credPolicyRepo.RevokeAll(ctx, cred.ID)
+	_ = h.credPolicyRepo.RemoveSchedule(ctx, cred.ID)
 
 	if err := h.memberCredRepo.Delete(ctx, input.CredID, membershipID); err != nil {
 		return nil, huma.Error500InternalServerError("failed to delete credential")
@@ -330,7 +430,7 @@ type memberCredWithIDPathParam struct {
 type adminCreateTokenInput struct {
 	WorkspaceID  uuid.UUID `path:"ws_id"`
 	MembershipID uuid.UUID `path:"membership_id"`
-	Body struct {
+	Body         struct {
 		Label     string     `json:"label" minLength:"1" maxLength:"100"`
 		ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	}
@@ -339,7 +439,7 @@ type adminCreateTokenInput struct {
 type adminSetPasswordInput struct {
 	WorkspaceID  uuid.UUID `path:"ws_id"`
 	MembershipID uuid.UUID `path:"membership_id"`
-	Body struct {
+	Body         struct {
 		Password string `json:"password" minLength:"8"`
 	}
 }
@@ -418,6 +518,9 @@ func (h *CredentialHandler) AdminDeleteMemberCredential(ctx context.Context, inp
 		return nil, huma.Error400BadRequest("use the set-password endpoint to manage passwords")
 	}
 
+	_ = h.credPolicyRepo.RevokeAll(ctx, cred.ID)
+	_ = h.credPolicyRepo.RemoveSchedule(ctx, cred.ID)
+
 	if err := h.memberCredRepo.Delete(ctx, input.CredID, input.MembershipID); err != nil {
 		return nil, huma.Error500InternalServerError("failed to delete credential")
 	}
@@ -451,33 +554,24 @@ func (h *CredentialHandler) RegisterRoutes(
 	api huma.API,
 	requireAuth func(huma.Context, func(huma.Context)),
 	requireMembership func(huma.Context, func(huma.Context)),
+	wsMember func(huma.Context, func(huma.Context)),
 	wsAdmin func(huma.Context, func(huma.Context)),
 ) {
-	// Platform user — own credentials
+	// Platform user — own credentials (SSO identities, password)
 	huma.Register(api, huma.Operation{
 		OperationID: "list-my-credentials",
 		Method:      http.MethodGet,
 		Path:        "/api/auth/me/credentials",
-		Summary:     "List my credentials (API tokens + SSO identities)",
+		Summary:     "List my credentials (SSO identities)",
 		Tags:        []string{"Credentials"},
 		Middlewares: huma.Middlewares{requireAuth},
 	}, h.ListMyCredentials)
 
 	huma.Register(api, huma.Operation{
-		OperationID:   "create-my-api-token",
-		Method:        http.MethodPost,
-		Path:          "/api/auth/me/api-tokens",
-		Summary:       "Create an API token",
-		Tags:          []string{"Credentials"},
-		DefaultStatus: 201,
-		Middlewares:   huma.Middlewares{requireAuth},
-	}, h.CreateMyAPIToken)
-
-	huma.Register(api, huma.Operation{
 		OperationID: "delete-my-credential",
 		Method:      http.MethodDelete,
 		Path:        "/api/auth/me/credentials/{cred_id}",
-		Summary:     "Revoke a credential (API token or SSO identity)",
+		Summary:     "Revoke a credential (SSO identity)",
 		Tags:        []string{"Credentials"},
 		Middlewares: huma.Middlewares{requireAuth},
 	}, h.DeleteMyCredential)
@@ -490,6 +584,35 @@ func (h *CredentialHandler) RegisterRoutes(
 		Tags:        []string{"Credentials"},
 		Middlewares: huma.Middlewares{requireAuth},
 	}, h.ChangeMyPassword)
+
+	// Workspace member self-service — own workspace membership API tokens
+	huma.Register(api, huma.Operation{
+		OperationID: "list-my-workspace-member-credentials",
+		Method:      http.MethodGet,
+		Path:        "/api/workspaces/{ws_id}/members/me/credentials",
+		Summary:     "List my workspace membership API tokens",
+		Tags:        []string{"Credentials"},
+		Middlewares: huma.Middlewares{wsMember},
+	}, h.ListMyWorkspaceMemberCredentials)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "create-my-workspace-member-api-token",
+		Method:        http.MethodPost,
+		Path:          "/api/workspaces/{ws_id}/members/me/api-tokens",
+		Summary:       "Create a workspace membership API token",
+		Tags:          []string{"Credentials"},
+		DefaultStatus: 201,
+		Middlewares:   huma.Middlewares{wsMember},
+	}, h.CreateMyWorkspaceMemberAPIToken)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "delete-my-workspace-member-credential",
+		Method:      http.MethodDelete,
+		Path:        "/api/workspaces/{ws_id}/members/me/credentials/{cred_id}",
+		Summary:     "Revoke a workspace membership credential",
+		Tags:        []string{"Credentials"},
+		Middlewares: huma.Middlewares{wsMember},
+	}, h.DeleteMyWorkspaceMemberCredential)
 
 	// Local member — own credentials
 	huma.Register(api, huma.Operation{
@@ -505,7 +628,7 @@ func (h *CredentialHandler) RegisterRoutes(
 		OperationID:   "create-my-member-api-token",
 		Method:        http.MethodPost,
 		Path:          "/api/auth/local/me/api-tokens",
-		Summary:       "Create a membership API token",
+		Summary:       "Create a membership API token (with optional per-gate policies and schedule)",
 		Tags:          []string{"Credentials"},
 		DefaultStatus: 201,
 		Middlewares:   huma.Middlewares{requireMembership},
@@ -578,7 +701,7 @@ func generateAPIToken() (rawToken, hash string, err error) {
 	if _, err = rand.Read(b); err != nil {
 		return
 	}
-	rawToken = "gaty_" + hex.EncodeToString(b)
+	rawToken = "gatie_" + hex.EncodeToString(b)
 	h256 := sha256.Sum256([]byte(rawToken))
 	hash = hex.EncodeToString(h256[:])
 	return

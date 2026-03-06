@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/Buco7854/gaty/internal/model"
-	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -15,6 +15,15 @@ var (
 	ErrUsernameTaken = errors.New("username already taken in this workspace")
 	ErrAlreadyMember = errors.New("user already has a membership in this workspace")
 )
+
+// UpdateMemberParams holds the optional fields for a membership PATCH.
+// AuthConfig uses model.OmittableNullable: Sent=false = unchanged, Null=true = reset to NULL (inherit from workspace).
+type UpdateMemberParams struct {
+	DisplayName   *string
+	LocalUsername *string
+	Role          *model.WorkspaceRole
+	AuthConfig    model.OmittableNullable[map[string]any]
+}
 
 type MembershipService struct {
 	memberships repository.WorkspaceMembershipRepository
@@ -42,7 +51,7 @@ func (s *MembershipService) CreateLocal(ctx context.Context, workspaceID uuid.UU
 	}
 
 	membership, err := s.memberships.CreateLocal(ctx, workspaceID, localUsername, displayName, role, invitedBy)
-	if errors.Is(err, repository.ErrAlreadyExists) {
+	if errors.Is(err, model.ErrAlreadyExists) {
 		return nil, ErrUsernameTaken
 	}
 	if err != nil {
@@ -62,11 +71,23 @@ func (s *MembershipService) GetByID(ctx context.Context, membershipID, workspace
 }
 
 func (s *MembershipService) List(ctx context.Context, workspaceID uuid.UUID) ([]*model.WorkspaceMembership, error) {
-	return s.memberships.List(ctx, workspaceID)
+	members, err := s.memberships.List(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if members == nil {
+		members = []*model.WorkspaceMembership{}
+	}
+	return members, nil
 }
 
-func (s *MembershipService) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName, localUsername *string, role *model.WorkspaceRole, authConfig repository.Optional[map[string]any]) (*model.WorkspaceMembership, error) {
-	return s.memberships.Update(ctx, membershipID, workspaceID, displayName, localUsername, role, authConfig)
+func (s *MembershipService) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, params UpdateMemberParams) (*model.WorkspaceMembership, error) {
+	return s.memberships.Update(ctx, membershipID, workspaceID,
+		params.DisplayName,
+		params.LocalUsername,
+		params.Role,
+		params.AuthConfig,
+	)
 }
 
 func (s *MembershipService) Delete(ctx context.Context, membershipID, workspaceID uuid.UUID) error {
@@ -74,7 +95,6 @@ func (s *MembershipService) Delete(ctx context.Context, membershipID, workspaceI
 }
 
 func (s *MembershipService) SetPassword(ctx context.Context, membershipID, workspaceID uuid.UUID, password string) error {
-	// Verify membership exists in this workspace.
 	if _, err := s.memberships.GetByID(ctx, membershipID, workspaceID); err != nil {
 		return err
 	}
@@ -84,9 +104,8 @@ func (s *MembershipService) SetPassword(ctx context.Context, membershipID, works
 		return fmt.Errorf("hash password: %w", err)
 	}
 
-	// Delete existing password credential (if any) then create a new one.
 	existing, err := s.memberCreds.GetByMembershipAndType(ctx, membershipID, model.CredPassword)
-	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+	if err != nil && !errors.Is(err, model.ErrNotFound) {
 		return fmt.Errorf("get existing credential: %w", err)
 	}
 	if existing != nil {
@@ -105,7 +124,7 @@ func (s *MembershipService) SetPassword(ctx context.Context, membershipID, works
 // InviteUser creates a membership for an existing platform user (no password).
 func (s *MembershipService) InviteUser(ctx context.Context, workspaceID, userID uuid.UUID, displayName *string, role model.WorkspaceRole, invitedBy *uuid.UUID) (*model.WorkspaceMembership, error) {
 	membership, err := s.memberships.CreateForUser(ctx, workspaceID, userID, displayName, role, invitedBy)
-	if errors.Is(err, repository.ErrAlreadyExists) {
+	if errors.Is(err, model.ErrAlreadyExists) {
 		return nil, ErrAlreadyMember
 	}
 	if err != nil {
@@ -114,8 +133,7 @@ func (s *MembershipService) InviteUser(ctx context.Context, workspaceID, userID 
 	return membership, nil
 }
 
-// GetEffectiveAuthConfig merges the workspace-level member_auth_config with the membership-level
-// auth_config override. Membership values take precedence; null values in auth_config inherit from workspace.
+// GetEffectiveAuthConfig merges workspace-level member_auth_config with membership-level override.
 func GetEffectiveAuthConfig(workspace *model.Workspace, membership *model.WorkspaceMembership) map[string]any {
 	result := make(map[string]any, len(workspace.MemberAuthConfig))
 	for k, v := range workspace.MemberAuthConfig {

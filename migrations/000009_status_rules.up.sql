@@ -1,2 +1,0 @@
-ALTER TABLE gates
-    ADD COLUMN status_rules JSONB NOT NULL DEFAULT '[]';

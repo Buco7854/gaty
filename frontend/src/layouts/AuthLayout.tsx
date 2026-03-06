@@ -13,7 +13,7 @@ export default function AuthLayout() {
             <Avatar size={32} color="indigo" radius="md">
               <DoorOpen size={16} />
             </Avatar>
-            <Text fw={700} size="lg" ff="mono">GATY</Text>
+            <Text fw={700} size="lg" ff="mono">GATIE</Text>
           </Group>
           <Group gap={4}>
             <LangToggle />

@@ -75,6 +75,7 @@ export interface WorkspaceMembership {
   id: string
   workspace_id: string
   user_id?: string
+  user_email?: string
   local_username?: string
   display_name?: string
   role: WorkspaceRole
@@ -84,14 +85,30 @@ export interface WorkspaceMembership {
 }
 
 export interface ScheduleRule {
-  type: 'time_range' | 'weekdays_range' | 'date_range'
-  days?: number[]
-  start_time?: string
-  end_time?: string
-  start_day?: number
-  end_day?: number
-  start_date?: string
-  end_date?: string
+  type: 'time_range' | 'weekdays_range' | 'date_range' | 'day_of_month_range' | 'month_range'
+  // time_range
+  days?: number[]       // 0=Sun…6=Sat
+  start_time?: string   // HH:MM
+  end_time?: string     // HH:MM
+  // weekdays_range
+  start_day?: number    // 0..6
+  end_day?: number      // 0..6
+  // date_range
+  start_date?: string   // YYYY-MM-DD
+  end_date?: string     // YYYY-MM-DD
+  // day_of_month_range
+  start_dom?: number    // 1..31
+  end_dom?: number      // 1..31
+  // month_range
+  start_month?: number  // 1..12
+  end_month?: number    // 1..12
+}
+
+/** A node in a boolean expression tree for schedule conditions. */
+export interface ExprNode {
+  op: 'and' | 'or' | 'not' | 'rule'
+  children?: ExprNode[]  // for op = "and" | "or" | "not"
+  rule?: ScheduleRule    // for op = "rule"
 }
 
 export interface AccessSchedule {
@@ -99,7 +116,7 @@ export interface AccessSchedule {
   workspace_id: string
   name: string
   description?: string
-  rules: ScheduleRule[]
+  expr: ExprNode | null  // null = always allowed
   created_at: string
 }
 

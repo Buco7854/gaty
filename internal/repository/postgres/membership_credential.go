@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Buco7854/gaty/internal/model"
-	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -94,6 +94,30 @@ func (r *membershipCredentialRepository) ListByMembershipAndType(ctx context.Con
 		result = append(result, c)
 	}
 	return result, rows.Err()
+}
+
+func (r *membershipCredentialRepository) FindByHashedAPIToken(ctx context.Context, hash string) (*model.MembershipCredential, *model.WorkspaceMembership, error) {
+	cred := &model.MembershipCredential{}
+	membership := &model.WorkspaceMembership{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT mc.id, mc.membership_id, mc.type, mc.hashed_value, mc.label, mc.expires_at, mc.metadata, mc.created_at,
+		        wm.id, wm.workspace_id, wm.role
+		 FROM membership_credentials mc
+		 JOIN workspace_memberships wm ON wm.id = mc.membership_id
+		 WHERE mc.hashed_value = $1 AND mc.type = 'API_TOKEN'
+		   AND (mc.expires_at IS NULL OR mc.expires_at > NOW())`,
+		hash,
+	).Scan(
+		&cred.ID, &cred.MembershipID, &cred.Type, &cred.HashedValue, &cred.Label, &cred.ExpiresAt, &cred.Metadata, &cred.CreatedAt,
+		&membership.ID, &membership.WorkspaceID, &membership.Role,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, repository.ErrNotFound
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("find membership cred by api token: %w", err)
+	}
+	return cred, membership, nil
 }
 
 func (r *membershipCredentialRepository) FindBySSOIdentity(ctx context.Context, workspaceID uuid.UUID, providerSub string) (*model.MembershipCredential, error) {

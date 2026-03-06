@@ -105,7 +105,7 @@ const fr: Translations = {
     tokenCopied: 'Token copié',
     // Status metadata
     liveData: 'Données en direct',
-    noLiveData: 'Aucune donnée reçue pour l'instant',
+    noLiveData: "Aucune donnée reçue pour l'instant",
     metaConfig: 'Mappage des métadonnées',
     metaConfigDesc: 'Définissez comment les champs du payload sont affichés dans l\'interface.',
     metaConfigAdd: 'Ajouter un champ',
@@ -181,6 +181,7 @@ const fr: Translations = {
     tokenLabelPlaceholder: 'ex. Domotique',
     tokenCreated: 'Token créé',
     tokenCreatedHint: 'Copiez ce token maintenant — il ne sera plus affiché.',
+    tokenExpiresAt: "Date d'expiration",
   },
   permissions: {
     title: 'Permissions des membres',
@@ -215,6 +216,32 @@ const fr: Translations = {
     editCode: 'Modifier le code',
     schedule: 'Plage horaire',
     scheduleDesc: 'Restreindre ce code à des fenêtres horaires spécifiques',
+  },
+  schedules: {
+    title: 'Plages horaires',
+    subtitle: "Gérer les restrictions d'accès temporelles",
+    add: 'Nouvelle plage',
+    noSchedules: 'Aucune plage horaire',
+    noSchedulesHint: "Créez une plage pour restreindre l'accès à des fenêtres temporelles",
+    description: 'Description',
+    descriptionPlaceholder: 'Description (optionnelle)',
+    editSchedule: 'Modifier la plage',
+    noRestriction: 'Aucune restriction (toujours autorisé)',
+    addExpr: 'Ajouter une condition',
+    exprHint: 'L\'accès est accordé quand l\'expression est vraie (ex. dans la fenêtre horaire), et révoqué sinon. Utilisez NOT pour inverser une sous-expression.',
+    // Opérateurs de l'arbre
+    opAnd: 'ET — tout doit correspondre',
+    opOr: 'OU — un seul suffit',
+    opNot: 'NON — inverser',
+    opRule: 'Règle',
+    addChild: 'Ajouter un enfant',
+    addRule: 'Ajouter une règle',
+    // Types de règles
+    timeRange: 'Fenêtre horaire (jours + heures)',
+    weekdaysRange: 'Plage de jours',
+    dateRange: 'Plage de dates',
+    dayOfMonthRange: 'Jours du mois',
+    monthRange: 'Plage de mois',
   },
   domains: {
     title: 'Domaines personnalisés',
@@ -279,7 +306,7 @@ const fr: Translations = {
     noSessionHint: 'Connectez-vous depuis un portail pour accéder à votre espace',
   },
   setup: {
-    title: 'Bienvenue sur GATY',
+    title: 'Bienvenue sur GATIE',
     subtitle: 'Créez votre compte administrateur pour commencer',
     createAdmin: 'Créer le compte administrateur',
     creating: 'Création du compte…',

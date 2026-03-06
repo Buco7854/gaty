@@ -8,7 +8,8 @@ function normalizeList(data: unknown): CustomDomain[] {
 
 export const domainsApi = {
   list: (wsId: string, gateId: string) =>
-    api.get(`/workspaces/${wsId}/gates/${gateId}/domains`).then((r) => normalizeList(r.data)),
+    api.get(`/workspaces/${wsId}/gates/${gateId}/domains`)
+      .then((r) => normalizeList(r.data)),
 
   create: (wsId: string, gateId: string, domain: string) =>
     api.post<CustomDomain>(`/workspaces/${wsId}/gates/${gateId}/domains`, { domain }).then((r) => r.data),

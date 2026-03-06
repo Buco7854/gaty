@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Buco7854/gaty/internal/repository"
-	repopg "github.com/Buco7854/gaty/internal/repository/postgres"
+	"github.com/Buco7854/gatie/internal/repository"
+	repopg "github.com/Buco7854/gatie/internal/repository/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )

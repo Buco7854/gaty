@@ -7,8 +7,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Buco7854/gaty/internal/model"
-	internalmqtt "github.com/Buco7854/gaty/internal/mqtt"
+	"github.com/Buco7854/gatie/internal/model"
+	internalmqtt "github.com/Buco7854/gatie/internal/mqtt"
 )
 
 // Driver can execute an action on a gate.

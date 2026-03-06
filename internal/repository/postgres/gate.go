@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Buco7854/gaty/internal/model"
-	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -176,19 +176,31 @@ func (r *gateRepository) Update(ctx context.Context, gateID, wsID uuid.UUID, p r
 		args = append(args, *p.Name)
 		n++
 	}
-	if p.OpenConfig.Set {
+	if p.OpenConfig.Sent {
 		sets = append(sets, fmt.Sprintf("open_config = $%d::jsonb", n))
-		args = append(args, marshalActionConfig(p.OpenConfig.V))
+		var cfg *model.ActionConfig
+		if !p.OpenConfig.Null {
+			cfg = &p.OpenConfig.Value
+		}
+		args = append(args, marshalActionConfig(cfg))
 		n++
 	}
-	if p.CloseConfig.Set {
+	if p.CloseConfig.Sent {
 		sets = append(sets, fmt.Sprintf("close_config = $%d::jsonb", n))
-		args = append(args, marshalActionConfig(p.CloseConfig.V))
+		var cfg *model.ActionConfig
+		if !p.CloseConfig.Null {
+			cfg = &p.CloseConfig.Value
+		}
+		args = append(args, marshalActionConfig(cfg))
 		n++
 	}
-	if p.StatusConfig.Set {
+	if p.StatusConfig.Sent {
 		sets = append(sets, fmt.Sprintf("status_config = $%d::jsonb", n))
-		args = append(args, marshalActionConfig(p.StatusConfig.V))
+		var cfg *model.ActionConfig
+		if !p.StatusConfig.Null {
+			cfg = &p.StatusConfig.Value
+		}
+		args = append(args, marshalActionConfig(cfg))
 		n++
 	}
 	if p.MetaConfig != nil {
@@ -347,22 +359,18 @@ func (r *gateRepository) GetToken(ctx context.Context, gateID, wsID uuid.UUID) (
 	return token, nil
 }
 
-func (r *gateRepository) RotateToken(ctx context.Context, gateID, wsID uuid.UUID) (string, error) {
-	var token string
-	err := r.pool.QueryRow(ctx,
-		`UPDATE gates
-		 SET gate_token = encode(gen_random_bytes(32), 'hex')
-		 WHERE id = $1 AND workspace_id = $2
-		 RETURNING gate_token`,
-		gateID, wsID,
-	).Scan(&token)
-	if err == pgx.ErrNoRows {
-		return "", repository.ErrNotFound
-	}
+func (r *gateRepository) SetToken(ctx context.Context, gateID, wsID uuid.UUID, token string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE gates SET gate_token = $3 WHERE id = $1 AND workspace_id = $2`,
+		gateID, wsID, token,
+	)
 	if err != nil {
-		return "", fmt.Errorf("rotate gate token: %w", err)
+		return fmt.Errorf("set gate token: %w", err)
 	}
-	return token, nil
+	if tag.RowsAffected() == 0 {
+		return repository.ErrNotFound
+	}
+	return nil
 }
 
 func (r *gateRepository) ListForWorkspace(ctx context.Context, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID) ([]model.Gate, error) {

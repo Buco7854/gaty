@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Buco7854/gaty/internal/model"
-	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -99,9 +99,12 @@ func (r *workspaceMembershipRepository) GetByLocalUsername(ctx context.Context, 
 
 func (r *workspaceMembershipRepository) List(ctx context.Context, workspaceID uuid.UUID) ([]*model.WorkspaceMembership, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT `+membershipColumns+` FROM workspace_memberships
-		 WHERE workspace_id = $1
-		 ORDER BY created_at DESC`,
+		`SELECT m.id, m.workspace_id, m.user_id, m.local_username, m.display_name, m.role,
+		        m.auth_config, m.invited_by, m.created_at, u.email
+		 FROM workspace_memberships m
+		 LEFT JOIN users u ON u.id = m.user_id
+		 WHERE m.workspace_id = $1
+		 ORDER BY m.created_at DESC`,
 		workspaceID,
 	)
 	if err != nil {
@@ -112,7 +115,7 @@ func (r *workspaceMembershipRepository) List(ctx context.Context, workspaceID uu
 	var result []*model.WorkspaceMembership
 	for rows.Next() {
 		m := &model.WorkspaceMembership{}
-		if err := rows.Scan(&m.ID, &m.WorkspaceID, &m.UserID, &m.LocalUsername, &m.DisplayName, &m.Role, &m.AuthConfig, &m.InvitedBy, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.WorkspaceID, &m.UserID, &m.LocalUsername, &m.DisplayName, &m.Role, &m.AuthConfig, &m.InvitedBy, &m.CreatedAt, &m.UserEmail); err != nil {
 			return nil, fmt.Errorf("scan membership row: %w", err)
 		}
 		result = append(result, m)
@@ -120,7 +123,7 @@ func (r *workspaceMembershipRepository) List(ctx context.Context, workspaceID uu
 	return result, rows.Err()
 }
 
-func (r *workspaceMembershipRepository) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName *string, localUsername *string, role *model.WorkspaceRole, authConfig repository.Optional[map[string]any]) (*model.WorkspaceMembership, error) {
+func (r *workspaceMembershipRepository) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName *string, localUsername *string, role *model.WorkspaceRole, authConfig repository.OmittableNullable[map[string]any]) (*model.WorkspaceMembership, error) {
 	sets := []string{}
 	args := []any{membershipID, workspaceID}
 	n := 3
@@ -140,12 +143,12 @@ func (r *workspaceMembershipRepository) Update(ctx context.Context, membershipID
 		args = append(args, *role)
 		n++
 	}
-	if authConfig.Set {
+	if authConfig.Sent {
 		sets = append(sets, fmt.Sprintf("auth_config = $%d::jsonb", n))
-		if authConfig.V == nil {
+		if authConfig.Null {
 			args = append(args, nil)
 		} else {
-			b, _ := json.Marshal(*authConfig.V)
+			b, _ := json.Marshal(authConfig.Value)
 			args = append(args, json.RawMessage(b))
 		}
 		n++

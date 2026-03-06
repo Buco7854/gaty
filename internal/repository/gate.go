@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/Buco7854/gaty/internal/model"
+	"github.com/Buco7854/gatie/internal/model"
 	"github.com/google/uuid"
 )
 
@@ -25,9 +25,9 @@ type CreateGateParams struct {
 // For slices, nil = unchanged, empty slice = clear.
 type UpdateGateParams struct {
 	Name         *string
-	OpenConfig   Optional[model.ActionConfig]
-	CloseConfig  Optional[model.ActionConfig]
-	StatusConfig Optional[model.ActionConfig]
+	OpenConfig   OmittableNullable[model.ActionConfig]
+	CloseConfig  OmittableNullable[model.ActionConfig]
+	StatusConfig OmittableNullable[model.ActionConfig]
 	MetaConfig   []model.MetaField // nil = unchanged, [] = clear
 	StatusRules  []model.StatusRule
 }
@@ -59,7 +59,7 @@ type GateRepository interface {
 	ListForWorkspace(ctx context.Context, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID) ([]model.Gate, error)
 	GetByToken(ctx context.Context, gateID uuid.UUID, token string) (*model.Gate, error)
 	GetToken(ctx context.Context, gateID, wsID uuid.UUID) (string, error)
-	RotateToken(ctx context.Context, gateID, wsID uuid.UUID) (string, error)
+	SetToken(ctx context.Context, gateID, wsID uuid.UUID, token string) error
 	UpdateStatus(ctx context.Context, gateID uuid.UUID, status string, meta map[string]any) error
 	MarkUnresponsiveWithIDs(ctx context.Context, ttl time.Duration) ([]UnresponsiveGate, error)
 }

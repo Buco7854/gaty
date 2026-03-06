@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/Buco7854/gaty/internal/middleware"
-	"github.com/Buco7854/gaty/internal/model"
-	"github.com/Buco7854/gaty/internal/repository"
-	"github.com/Buco7854/gaty/internal/service"
+	"github.com/Buco7854/gatie/internal/middleware"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/repository"
+	"github.com/Buco7854/gatie/internal/service"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 )

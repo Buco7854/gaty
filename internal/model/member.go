@@ -10,6 +10,7 @@ type WorkspaceMembership struct {
 	ID            uuid.UUID      `json:"id"`
 	WorkspaceID   uuid.UUID      `json:"workspace_id"`
 	UserID        *uuid.UUID     `json:"user_id,omitempty"`
+	UserEmail     *string        `json:"user_email,omitempty"` // populated on list, only for platform users
 	LocalUsername *string        `json:"local_username,omitempty"`
 	DisplayName   *string        `json:"display_name,omitempty"`
 	Role          WorkspaceRole  `json:"role"`

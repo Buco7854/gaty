@@ -8,6 +8,7 @@ import WorkspacesPage from '@/pages/workspaces/WorkspacesPage'
 import WorkspacePage from '@/pages/workspace/WorkspacePage'
 import GatePage from '@/pages/gate/GatePage'
 import MembersPage from '@/pages/workspace/MembersPage'
+import SchedulesPage from '@/pages/workspace/SchedulesPage'
 import SettingsPage from '@/pages/workspace/SettingsPage'
 import GatePortalPage from '@/pages/guest/GatePortalPage'
 import PinPadPage from '@/pages/guest/PinPadPage'
@@ -18,7 +19,7 @@ import SsoCallbackPage from '@/pages/auth/SsoCallbackPage'
 function hasLocalMemberSession(wsId: string): boolean {
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i)
-    if (!key?.startsWith('gaty_session_')) continue
+    if (!key?.startsWith('gatie_session_')) continue
     try {
       const s = JSON.parse(localStorage.getItem(key)!)
       if (s?.type === 'member' && s?.workspace_id === wsId && s?.access_token) return true
@@ -79,6 +80,7 @@ export const router = createBrowserRouter([
           { path: '/workspaces', element: <WorkspacesPage /> },
           { path: '/workspaces/:wsId', element: <WorkspacePage /> },
           { path: '/workspaces/:wsId/members', element: <MembersPage /> },
+          { path: '/workspaces/:wsId/schedules', element: <SchedulesPage /> },
           { path: '/workspaces/:wsId/settings', element: <SettingsPage /> },
           { path: '/workspaces/:wsId/gates/:gateId', element: <GatePage /> },
         ],

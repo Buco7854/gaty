@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/Buco7854/gaty/internal/model"
-	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,40 +21,49 @@ func NewAccessScheduleRepository(pool *pgxpool.Pool) repository.AccessScheduleRe
 	return &accessScheduleRepository{pool: pool}
 }
 
-const scheduleColumns = `id, workspace_id, name, description, rules, created_at`
+const scheduleColumns = `id, workspace_id, name, description, expr, created_at`
 
 func scanSchedule(row pgx.Row) (*model.AccessSchedule, error) {
 	s := &model.AccessSchedule{}
-	var rulesRaw []byte
-	err := row.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Description, &rulesRaw, &s.CreatedAt)
+	var exprRaw []byte
+	err := row.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Description, &exprRaw, &s.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, repository.ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("scan access schedule: %w", err)
 	}
-	if err := json.Unmarshal(rulesRaw, &s.Rules); err != nil {
-		return nil, fmt.Errorf("unmarshal schedule rules: %w", err)
-	}
-	if s.Rules == nil {
-		s.Rules = []model.ScheduleRule{}
+	if exprRaw != nil {
+		var node model.ExprNode
+		if err := json.Unmarshal(exprRaw, &node); err != nil {
+			return nil, fmt.Errorf("unmarshal schedule expr: %w", err)
+		}
+		s.Expr = &node
 	}
 	return s, nil
 }
 
-func (r *accessScheduleRepository) Create(ctx context.Context, workspaceID uuid.UUID, name string, description *string, rules []model.ScheduleRule) (*model.AccessSchedule, error) {
-	if rules == nil {
-		rules = []model.ScheduleRule{}
+func marshalExpr(expr *model.ExprNode) ([]byte, error) {
+	if expr == nil {
+		return nil, nil
 	}
-	rulesJSON, err := json.Marshal(rules)
+	b, err := json.Marshal(expr)
 	if err != nil {
-		return nil, fmt.Errorf("marshal rules: %w", err)
+		return nil, fmt.Errorf("marshal expr: %w", err)
+	}
+	return b, nil
+}
+
+func (r *accessScheduleRepository) Create(ctx context.Context, workspaceID uuid.UUID, name string, description *string, expr *model.ExprNode) (*model.AccessSchedule, error) {
+	exprJSON, err := marshalExpr(expr)
+	if err != nil {
+		return nil, err
 	}
 	return scanSchedule(r.pool.QueryRow(ctx,
-		`INSERT INTO access_schedules (workspace_id, name, description, rules)
+		`INSERT INTO access_schedules (workspace_id, name, description, expr)
 		 VALUES ($1, $2, $3, $4)
 		 RETURNING `+scheduleColumns,
-		workspaceID, name, description, rulesJSON,
+		workspaceID, name, description, exprJSON,
 	))
 }
 
@@ -85,35 +94,33 @@ func (r *accessScheduleRepository) List(ctx context.Context, workspaceID uuid.UU
 	var result []*model.AccessSchedule
 	for rows.Next() {
 		s := &model.AccessSchedule{}
-		var rulesRaw []byte
-		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Description, &rulesRaw, &s.CreatedAt); err != nil {
+		var exprRaw []byte
+		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Description, &exprRaw, &s.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan schedule row: %w", err)
 		}
-		if err := json.Unmarshal(rulesRaw, &s.Rules); err != nil {
-			return nil, fmt.Errorf("unmarshal schedule rules: %w", err)
-		}
-		if s.Rules == nil {
-			s.Rules = []model.ScheduleRule{}
+		if exprRaw != nil {
+			var node model.ExprNode
+			if err := json.Unmarshal(exprRaw, &node); err != nil {
+				return nil, fmt.Errorf("unmarshal schedule expr: %w", err)
+			}
+			s.Expr = &node
 		}
 		result = append(result, s)
 	}
 	return result, rows.Err()
 }
 
-func (r *accessScheduleRepository) Update(ctx context.Context, scheduleID, workspaceID uuid.UUID, name string, description *string, rules []model.ScheduleRule) (*model.AccessSchedule, error) {
-	if rules == nil {
-		rules = []model.ScheduleRule{}
-	}
-	rulesJSON, err := json.Marshal(rules)
+func (r *accessScheduleRepository) Update(ctx context.Context, scheduleID, workspaceID uuid.UUID, name string, description *string, expr *model.ExprNode) (*model.AccessSchedule, error) {
+	exprJSON, err := marshalExpr(expr)
 	if err != nil {
-		return nil, fmt.Errorf("marshal rules: %w", err)
+		return nil, err
 	}
 	s, err := scanSchedule(r.pool.QueryRow(ctx,
 		`UPDATE access_schedules
-		 SET name = $3, description = $4, rules = $5
+		 SET name = $3, description = $4, expr = $5
 		 WHERE id = $1 AND workspace_id = $2
 		 RETURNING `+scheduleColumns,
-		scheduleID, workspaceID, name, description, rulesJSON,
+		scheduleID, workspaceID, name, description, exprJSON,
 	))
 	if err != nil {
 		return nil, fmt.Errorf("update access schedule: %w", err)

@@ -5,48 +5,65 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/Buco7854/gaty/internal/middleware"
-	"github.com/Buco7854/gaty/internal/model"
-	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gatie/internal/middleware"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/service"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 )
 
 type PolicyHandler struct {
-	policies  repository.PolicyRepository
-	schedules repository.AccessScheduleRepository
+	policies *service.PolicyService
 }
 
-func NewPolicyHandler(policies repository.PolicyRepository, schedules repository.AccessScheduleRepository) *PolicyHandler {
-	return &PolicyHandler{policies: policies, schedules: schedules}
+func NewPolicyHandler(policies *service.PolicyService) *PolicyHandler {
+	return &PolicyHandler{policies: policies}
 }
-
-// --- Path param types ---
-
-type PolicyMembershipPathParam struct {
-	WorkspaceID  uuid.UUID `path:"ws_id"`
-	GateID       uuid.UUID `path:"gate_id"`
-	MembershipID uuid.UUID `path:"membership_id"`
-}
-
-// --- List policies for a gate ---
 
 type ListPoliciesOutput struct {
 	Body []model.MembershipPolicy
 }
+
+// --- List for gate ---
 
 func (h *PolicyHandler) List(ctx context.Context, input *GatePathParam) (*ListPoliciesOutput, error) {
 	policies, err := h.policies.List(ctx, input.GateID)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list policies")
 	}
-	if policies == nil {
-		policies = []model.MembershipPolicy{}
+	return &ListPoliciesOutput{Body: policies}, nil
+}
+
+// --- List for membership ---
+
+type MembershipPoliciesPathParam struct {
+	WorkspaceID  uuid.UUID `path:"ws_id"`
+	MembershipID uuid.UUID `path:"membership_id"`
+}
+
+func (h *PolicyHandler) ListByMembership(ctx context.Context, input *MembershipPoliciesPathParam) (*ListPoliciesOutput, error) {
+	policies, err := h.policies.ListForMembership(ctx, input.MembershipID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to list membership policies")
 	}
 	return &ListPoliciesOutput{Body: policies}, nil
 }
 
-// --- Grant policy ---
+// --- List mine (authenticated member's own policies) ---
+
+func (h *PolicyHandler) ListMine(ctx context.Context, input *WorkspacePathParam) (*ListPoliciesOutput, error) {
+	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized("not authenticated")
+	}
+	policies, err := h.policies.ListForMembership(ctx, membershipID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to list policies")
+	}
+	return &ListPoliciesOutput{Body: policies}, nil
+}
+
+// --- Grant ---
 
 type GrantPolicyInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
@@ -64,7 +81,13 @@ func (h *PolicyHandler) Grant(ctx context.Context, input *GrantPolicyInput) (*st
 	return nil, nil
 }
 
-// --- Revoke all policies for a membership on a gate ---
+// --- Revoke all for a membership ---
+
+type PolicyMembershipPathParam struct {
+	WorkspaceID  uuid.UUID `path:"ws_id"`
+	GateID       uuid.UUID `path:"gate_id"`
+	MembershipID uuid.UUID `path:"membership_id"`
+}
 
 func (h *PolicyHandler) Revoke(ctx context.Context, input *PolicyMembershipPathParam) (*struct{}, error) {
 	if err := h.policies.Revoke(ctx, input.MembershipID, input.GateID); err != nil {
@@ -73,7 +96,7 @@ func (h *PolicyHandler) Revoke(ctx context.Context, input *PolicyMembershipPathP
 	return nil, nil
 }
 
-// --- Revoke a single permission for a membership on a gate ---
+// --- Revoke a specific permission ---
 
 type RevokePermissionPathParam struct {
 	WorkspaceID    uuid.UUID `path:"ws_id"`
@@ -84,7 +107,7 @@ type RevokePermissionPathParam struct {
 
 func (h *PolicyHandler) RevokePermission(ctx context.Context, input *RevokePermissionPathParam) (*struct{}, error) {
 	err := h.policies.RevokePermission(ctx, input.MembershipID, input.GateID, input.PermissionCode)
-	if errors.Is(err, repository.ErrNotFound) {
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("policy not found")
 	}
 	if err != nil {
@@ -93,42 +116,22 @@ func (h *PolicyHandler) RevokePermission(ctx context.Context, input *RevokePermi
 	return nil, nil
 }
 
-// --- List policies for a membership ---
+// --- Schedule on a member-gate pair ---
 
-type MembershipPoliciesPathParam struct {
-	WorkspaceID  uuid.UUID `path:"ws_id"`
-	MembershipID uuid.UUID `path:"membership_id"`
+type MemberGateScheduleOutput struct {
+	Body *model.AccessSchedule
 }
 
-func (h *PolicyHandler) ListByMembership(ctx context.Context, input *MembershipPoliciesPathParam) (*ListPoliciesOutput, error) {
-	policies, err := h.policies.ListForMembership(ctx, input.MembershipID)
+func (h *PolicyHandler) GetMemberGateSchedule(ctx context.Context, input *PolicyMembershipPathParam) (*MemberGateScheduleOutput, error) {
+	schedule, err := h.policies.GetMemberGateSchedule(ctx, input.MembershipID, input.GateID)
+	if errors.Is(err, model.ErrNotFound) {
+		return &MemberGateScheduleOutput{Body: nil}, nil
+	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to list membership policies")
+		return nil, huma.Error500InternalServerError("failed to get schedule")
 	}
-	if policies == nil {
-		policies = []model.MembershipPolicy{}
-	}
-	return &ListPoliciesOutput{Body: policies}, nil
+	return &MemberGateScheduleOutput{Body: schedule}, nil
 }
-
-// --- List policies for the authenticated member (used by PIN pad gate portal) ---
-
-func (h *PolicyHandler) ListMine(ctx context.Context, input *WorkspacePathParam) (*ListPoliciesOutput, error) {
-	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
-	if !ok {
-		return nil, huma.Error401Unauthorized("not authenticated")
-	}
-	policies, err := h.policies.ListForMembership(ctx, membershipID)
-	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to list policies")
-	}
-	if policies == nil {
-		policies = []model.MembershipPolicy{}
-	}
-	return &ListPoliciesOutput{Body: policies}, nil
-}
-
-// --- Set schedule for a member-gate pair ---
 
 type SetMemberGateScheduleInput struct {
 	WorkspaceID  uuid.UUID `path:"ws_id"`
@@ -146,8 +149,6 @@ func (h *PolicyHandler) SetMemberGateSchedule(ctx context.Context, input *SetMem
 	return nil, nil
 }
 
-// --- Remove schedule from a member-gate pair ---
-
 func (h *PolicyHandler) RemoveMemberGateSchedule(ctx context.Context, input *PolicyMembershipPathParam) (*struct{}, error) {
 	if err := h.policies.RemoveMemberGateSchedule(ctx, input.MembershipID, input.GateID); err != nil {
 		return nil, huma.Error500InternalServerError("failed to remove schedule")
@@ -155,31 +156,8 @@ func (h *PolicyHandler) RemoveMemberGateSchedule(ctx context.Context, input *Pol
 	return nil, nil
 }
 
-// --- Get schedule for a member-gate pair ---
+// --- Routes ---
 
-type MemberGateScheduleOutput struct {
-	Body *model.AccessSchedule
-}
-
-func (h *PolicyHandler) GetMemberGateSchedule(ctx context.Context, input *PolicyMembershipPathParam) (*MemberGateScheduleOutput, error) {
-	scheduleID, err := h.policies.GetMemberGateScheduleID(ctx, input.MembershipID, input.GateID)
-	if errors.Is(err, repository.ErrNotFound) {
-		return nil, huma.Error404NotFound("no schedule attached to this member-gate pair")
-	}
-	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to get schedule")
-	}
-	schedule, err := h.schedules.GetByIDPublic(ctx, scheduleID)
-	if errors.Is(err, repository.ErrNotFound) {
-		return nil, huma.Error404NotFound("schedule not found")
-	}
-	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to get schedule details")
-	}
-	return &MemberGateScheduleOutput{Body: schedule}, nil
-}
-
-// RegisterRoutes wires policy endpoints onto the Huma API.
 func (h *PolicyHandler) RegisterRoutes(
 	api huma.API,
 	wsMember func(huma.Context, func(huma.Context)),

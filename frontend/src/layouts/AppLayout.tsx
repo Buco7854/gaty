@@ -2,7 +2,7 @@ import { NavLink as RouterNavLink, Outlet, useNavigate, useParams } from 'react-
 import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '@/store/auth'
 import type { WorkspaceWithRole } from '@/types'
-import { workspacesApi, memberCredApi } from '@/api'
+import { workspacesApi, memberCredApi, workspaceCredApi } from '@/api'
 import type { MemberCredential, CreatedToken } from '@/api'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
@@ -28,6 +28,7 @@ import {
   CopyButton,
   Alert,
   Skeleton,
+  Drawer,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import {
@@ -42,6 +43,8 @@ import {
   Copy,
   Check,
   Trash2,
+  CalendarClock,
+  User,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { findLocalSession } from '@/utils/session'
@@ -59,6 +62,7 @@ export default function AppLayout() {
   const [tokens, setTokens] = useState<MemberCredential[]>([])
   const [tokensLoading, setTokensLoading] = useState(false)
   const [tokenLabel, setTokenLabel] = useState('')
+  const [tokenExpiresAt, setTokenExpiresAt] = useState('')
   const [newToken, setNewToken] = useState<CreatedToken | null>(null)
 
   const isAdmin = isAuthenticated()
@@ -84,7 +88,7 @@ export default function AppLayout() {
   function handleMemberLogout() {
     const gateId = localSession?.gateId
     if (gateId) {
-      localStorage.removeItem(`gaty_session_${gateId}`)
+      localStorage.removeItem(`gatie_session_${gateId}`)
       navigate(wsId ? `/workspaces/${wsId}/gates/${gateId}/public` : '/')
     } else {
       navigate('/')
@@ -99,40 +103,234 @@ export default function AppLayout() {
     }
   }
 
-  // Load member tokens when modal opens
+  // Load tokens when modal opens
   useEffect(() => {
-    if (!tokenModalOpened || !localSession?.access_token) return
+    if (!tokenModalOpened) return
     setTokensLoading(true)
-    memberCredApi.listTokens(localSession.access_token)
-      .then(setTokens)
-      .finally(() => setTokensLoading(false))
-  }, [tokenModalOpened, localSession?.access_token])
+    if (isAdmin && wsId) {
+      workspaceCredApi.listTokens(wsId)
+        .then(setTokens)
+        .finally(() => setTokensLoading(false))
+    } else if (localSession?.access_token) {
+      memberCredApi.listTokens(localSession.access_token)
+        .then(setTokens)
+        .finally(() => setTokensLoading(false))
+    } else {
+      setTokensLoading(false)
+    }
+  }, [tokenModalOpened, isAdmin, wsId, localSession?.access_token])
 
   async function handleCreateToken(e: React.FormEvent) {
     e.preventDefault()
-    if (!localSession?.access_token || !tokenLabel.trim()) return
-    const created = await memberCredApi.createToken(localSession.access_token, tokenLabel)
+    if (!tokenLabel.trim()) return
+    let created: CreatedToken
+    if (isAdmin && wsId) {
+      created = await workspaceCredApi.createToken(wsId, tokenLabel, tokenExpiresAt || undefined)
+      const updated = await workspaceCredApi.listTokens(wsId)
+      setTokens(updated)
+    } else if (localSession?.access_token) {
+      created = await memberCredApi.createToken(localSession.access_token, tokenLabel, tokenExpiresAt || undefined)
+      const updated = await memberCredApi.listTokens(localSession.access_token)
+      setTokens(updated)
+    } else {
+      return
+    }
     setNewToken(created)
     setTokenLabel('')
-    setTokens((prev) => [...prev, created])
+    setTokenExpiresAt('')
   }
 
   async function handleDeleteToken(credId: string) {
-    if (!localSession?.access_token) return
-    await memberCredApi.deleteToken(localSession.access_token, credId)
+    if (isAdmin && wsId) {
+      await workspaceCredApi.deleteToken(wsId, credId)
+    } else if (localSession?.access_token) {
+      await memberCredApi.deleteToken(localSession.access_token, credId)
+    } else {
+      return
+    }
     setTokens((prev) => prev.filter((t) => t.id !== credId))
     if (newToken?.id === credId) setNewToken(null)
   }
 
   const initials = user?.email?.slice(0, 2).toUpperCase() ?? 'U'
 
+  // Shared nav body: workspace selector + nav links + footer
+  const renderNavBody = () => (
+    <>
+      {/* Workspace section */}
+      <div style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}>
+        {isAdmin ? (
+          currentWs ? (
+            <Menu opened={wsMenuOpen} onChange={setWsMenuOpen} width={220} shadow="md" styles={{ dropdown: { padding: 4 }, item: { borderRadius: 'var(--mantine-radius-sm)', marginBottom: 2 } }}>
+              <Menu.Target>
+                <UnstyledButton
+                  px="md"
+                  py="sm"
+                  style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                >
+                  <Group gap="xs">
+                    <Avatar size={22} color="indigo" radius="sm">
+                      {currentWs.name[0].toUpperCase()}
+                    </Avatar>
+                    <Text size="sm" fw={500} style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {currentWs.name}
+                    </Text>
+                  </Group>
+                  <ChevronDown size={14} />
+                </UnstyledButton>
+              </Menu.Target>
+              <Menu.Dropdown>
+                {workspaces?.map((w) => (
+                  <Menu.Item
+                    key={w.id}
+                    leftSection={<Avatar size={16} color="indigo" radius="xs">{w.name[0].toUpperCase()}</Avatar>}
+                    onClick={() => { navigate(`/workspaces/${w.id}`); setWsMenuOpen(false); setNavOpened(false) }}
+                  >
+                    <Text size="sm" truncate>{w.name}</Text>
+                  </Menu.Item>
+                ))}
+                <Divider my={4} />
+                <Menu.Item
+                  leftSection={<Home size={14} />}
+                  onClick={() => { navigate('/workspaces'); setWsMenuOpen(false); setNavOpened(false) }}
+                >
+                  <Text size="sm">{t('workspaces.title')}</Text>
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+          ) : (
+            <NavLink
+              component={RouterNavLink as React.FC}
+              to="/workspaces"
+              label={t('workspaces.title')}
+              leftSection={<Home size={16} />}
+              px="md"
+              py="sm"
+              onClick={() => setNavOpened(false)}
+            />
+          )
+        ) : (
+          // Local member: static workspace indicator
+          <Group px="md" py="sm" gap="xs">
+            <Avatar size={22} color="indigo" radius="sm">
+              <DoorOpen size={12} />
+            </Avatar>
+            <Text size="sm" fw={500} c="dimmed" style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {t('portal.myGates')}
+            </Text>
+          </Group>
+        )}
+      </div>
+
+      {/* Navigation */}
+      <ScrollArea style={{ flex: 1 }}>
+        {wsId && (
+          <Stack gap={4} p="xs">
+            <NavLink
+              component={RouterNavLink as React.FC}
+              to={`/workspaces/${wsId}`}
+              end
+              label={t('gates.title')}
+              leftSection={<LayoutGrid size={16} />}
+              onClick={() => setNavOpened(false)}
+              styles={{ root: { borderRadius: 'var(--mantine-radius-md)' } }}
+            />
+            {(isAdmin || localSession?.role === 'ADMIN' || localSession?.role === 'OWNER') && (
+              <>
+                <NavLink
+                  component={RouterNavLink as React.FC}
+                  to={`/workspaces/${wsId}/members`}
+                  label={t('members.title')}
+                  leftSection={<Users size={16} />}
+                  onClick={() => setNavOpened(false)}
+                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)' } }}
+                />
+                <NavLink
+                  component={RouterNavLink as React.FC}
+                  to={`/workspaces/${wsId}/schedules`}
+                  label={t('schedules.title')}
+                  leftSection={<CalendarClock size={16} />}
+                  onClick={() => setNavOpened(false)}
+                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)' } }}
+                />
+                <NavLink
+                  component={RouterNavLink as React.FC}
+                  to={`/workspaces/${wsId}/settings`}
+                  label={t('settings.title')}
+                  leftSection={<Settings size={16} />}
+                  onClick={() => setNavOpened(false)}
+                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)' } }}
+                />
+              </>
+            )}
+          </Stack>
+        )}
+      </ScrollArea>
+
+      {/* Footer */}
+      <div style={{ borderTop: '1px solid var(--mantine-color-default-border)', padding: '8px 12px', flexShrink: 0 }}>
+        {isAdmin ? (
+          <Group justify="space-between" wrap="nowrap">
+            <Group gap={4} wrap="nowrap">
+              <LangToggle />
+              <ThemeToggle />
+            </Group>
+            <Menu position="top-end" width={190} styles={{ dropdown: { padding: 4 }, item: { borderRadius: 'var(--mantine-radius-sm)', marginBottom: 2 } }}>
+              <Menu.Target>
+                <UnstyledButton style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Avatar size={24} color="indigo" radius="xl">{initials}</Avatar>
+                  <ChevronDown size={11} style={{ color: 'var(--mantine-color-dimmed)' }} />
+                </UnstyledButton>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Label style={{ fontSize: 10 }}>{user?.email}</Menu.Label>
+                {wsId && (
+                  <Menu.Item leftSection={<KeyRound size={14} />} onClick={openTokenModal}>
+                    {t('members.apiTokens')}
+                  </Menu.Item>
+                )}
+                <Divider my={4} />
+                <Menu.Item leftSection={<LogOut size={14} />} color="red" onClick={handleLogout}>
+                  {t('auth.signOut')}
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+          </Group>
+        ) : (
+          <Group justify="space-between" wrap="nowrap">
+            <Group gap={4} wrap="nowrap">
+              <LangToggle />
+              <ThemeToggle />
+            </Group>
+            <Menu position="top-end" width={160} styles={{ dropdown: { padding: 4 }, item: { borderRadius: 'var(--mantine-radius-sm)', marginBottom: 2 } }}>
+              <Menu.Target>
+                <ActionIcon variant="subtle" color="gray" size="sm">
+                  <User size={14} />
+                </ActionIcon>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Item leftSection={<KeyRound size={14} />} onClick={openTokenModal}>
+                  {t('members.apiTokens')}
+                </Menu.Item>
+                <Divider my={4} />
+                <Menu.Item leftSection={<LogOut size={14} />} color="red" onClick={handleMemberLogout}>
+                  {t('auth.signOut')}
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+          </Group>
+        )}
+      </div>
+    </>
+  )
+
   return (
     <AppShell
-      navbar={{ width: 240, breakpoint: 'sm', collapsed: { mobile: !navOpened } }}
-      header={{ height: 56, collapsed: false }}
+      navbar={{ width: 240, breakpoint: 'sm', collapsed: { mobile: true } }}
+      header={{ height: { base: 56, sm: 0 } }}
       padding={0}
     >
-      {/* Mobile header — burger + logo, hidden on desktop */}
+      {/* Mobile header — burger + logo (hidden on desktop via height:0 + hiddenFrom) */}
       <AppShell.Header hiddenFrom="sm" style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
         <Group h="100%" px="md" justify="space-between">
           <Group gap="xs">
@@ -144,7 +342,7 @@ export default function AppLayout() {
               <Avatar size={24} color="indigo" radius="md">
                 <DoorOpen size={12} />
               </Avatar>
-              <Text fw={700} size="md" ff="mono">GATY</Text>
+              <Text fw={700} size="md" ff="mono">GATIE</Text>
             </UnstyledButton>
           </Group>
           <Group gap={4}>
@@ -154,6 +352,36 @@ export default function AppLayout() {
         </Group>
       </AppShell.Header>
 
+      {/* Mobile nav — Drawer rendered in portal, reliable z-index */}
+      <Drawer
+        opened={navOpened}
+        onClose={() => setNavOpened(false)}
+        size={240}
+        padding={0}
+        withCloseButton={false}
+        styles={{ body: { padding: 0, height: '100%', display: 'flex', flexDirection: 'column' } }}
+      >
+        <Stack gap={0} style={{ flex: 1 }}>
+          <Group
+            px="md"
+            h={56}
+            style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}
+          >
+            <UnstyledButton
+              onClick={() => { handleLogoClick(); setNavOpened(false) }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+            >
+              <Avatar size={28} color="indigo" radius="md">
+                <DoorOpen size={14} />
+              </Avatar>
+              <Text fw={700} size="md" ff="mono">GATIE</Text>
+            </UnstyledButton>
+          </Group>
+          {renderNavBody()}
+        </Stack>
+      </Drawer>
+
+      {/* Desktop sidebar */}
       <AppShell.Navbar>
         <Stack gap={0} h="100%">
           {/* Logo — desktop only */}
@@ -170,150 +398,10 @@ export default function AppLayout() {
               <Avatar size={28} color="indigo" radius="md">
                 <DoorOpen size={14} />
               </Avatar>
-              <Text fw={700} size="md" ff="mono">GATY</Text>
+              <Text fw={700} size="md" ff="mono">GATIE</Text>
             </UnstyledButton>
           </Group>
-
-          {/* Workspace section */}
-          <div style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}>
-            {isAdmin ? (
-              currentWs ? (
-                <Menu opened={wsMenuOpen} onChange={setWsMenuOpen} width={220} shadow="md">
-                  <Menu.Target>
-                    <UnstyledButton
-                      px="md"
-                      py="sm"
-                      style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
-                    >
-                      <Group gap="xs">
-                        <Avatar size={22} color="indigo" radius="sm">
-                          {currentWs.name[0].toUpperCase()}
-                        </Avatar>
-                        <Text size="sm" fw={500} style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {currentWs.name}
-                        </Text>
-                      </Group>
-                      <ChevronDown size={14} />
-                    </UnstyledButton>
-                  </Menu.Target>
-                  <Menu.Dropdown>
-                    {workspaces?.map((w) => (
-                      <Menu.Item
-                        key={w.id}
-                        leftSection={<Avatar size={16} color="indigo" radius="xs">{w.name[0].toUpperCase()}</Avatar>}
-                        onClick={() => { navigate(`/workspaces/${w.id}`); setWsMenuOpen(false); setNavOpened(false) }}
-                      >
-                        <Text size="sm" truncate>{w.name}</Text>
-                      </Menu.Item>
-                    ))}
-                    <Divider />
-                    <Menu.Item
-                      leftSection={<Home size={14} />}
-                      onClick={() => { navigate('/workspaces'); setWsMenuOpen(false); setNavOpened(false) }}
-                    >
-                      <Text size="sm">{t('workspaces.title')}</Text>
-                    </Menu.Item>
-                  </Menu.Dropdown>
-                </Menu>
-              ) : (
-                <NavLink
-                  component={RouterNavLink as React.FC}
-                  to="/workspaces"
-                  label={t('workspaces.title')}
-                  leftSection={<Home size={16} />}
-                  px="md"
-                  py="sm"
-                  onClick={() => setNavOpened(false)}
-                />
-              )
-            ) : (
-              // Local member: static workspace indicator
-              <Group px="md" py="sm" gap="xs">
-                <Avatar size={22} color="indigo" radius="sm">
-                  <DoorOpen size={12} />
-                </Avatar>
-                <Text size="sm" fw={500} c="dimmed" style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {t('portal.myGates')}
-                </Text>
-              </Group>
-            )}
-          </div>
-
-          {/* Navigation */}
-          <ScrollArea style={{ flex: 1 }}>
-            {wsId && (
-              <Stack gap={2} p="xs">
-                <NavLink
-                  component={RouterNavLink as React.FC}
-                  to={`/workspaces/${wsId}`}
-                  end
-                  label={t('gates.title')}
-                  leftSection={<LayoutGrid size={16} />}
-                  onClick={() => setNavOpened(false)}
-                />
-                {(isAdmin || localSession?.role === 'ADMIN' || localSession?.role === 'OWNER') && (
-                  <>
-                    <NavLink
-                      component={RouterNavLink as React.FC}
-                      to={`/workspaces/${wsId}/members`}
-                      label={t('members.title')}
-                      leftSection={<Users size={16} />}
-                      onClick={() => setNavOpened(false)}
-                    />
-                    <NavLink
-                      component={RouterNavLink as React.FC}
-                      to={`/workspaces/${wsId}/settings`}
-                      label={t('settings.title')}
-                      leftSection={<Settings size={16} />}
-                      onClick={() => setNavOpened(false)}
-                    />
-                  </>
-                )}
-              </Stack>
-            )}
-          </ScrollArea>
-
-          {/* Footer */}
-          <div style={{ borderTop: '1px solid var(--mantine-color-default-border)', padding: '8px 12px', flexShrink: 0 }}>
-            {isAdmin ? (
-              <Group justify="space-between" wrap="nowrap">
-                <Group gap="xs" style={{ minWidth: 0 }}>
-                  <Avatar size={26} color="indigo" radius="xl">{initials}</Avatar>
-                  <Text size="xs" c="dimmed" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {user?.email}
-                  </Text>
-                </Group>
-                <Group gap={4} wrap="nowrap">
-                  <LangToggle />
-                  <ThemeToggle />
-                  <Tooltip label={t('auth.signOut')}>
-                    <ActionIcon variant="subtle" color="gray" size="sm" onClick={handleLogout}>
-                      <LogOut size={14} />
-                    </ActionIcon>
-                  </Tooltip>
-                </Group>
-              </Group>
-            ) : (
-              <Group justify="space-between" wrap="nowrap">
-                <Group gap="xs" style={{ minWidth: 0 }}>
-                  <LangToggle />
-                  <ThemeToggle />
-                </Group>
-                <Group gap={4} wrap="nowrap">
-                  <Tooltip label={t('members.apiTokens')}>
-                    <ActionIcon variant="subtle" color="gray" size="sm" onClick={openTokenModal}>
-                      <KeyRound size={14} />
-                    </ActionIcon>
-                  </Tooltip>
-                  <Tooltip label={t('auth.signOut')}>
-                    <ActionIcon variant="subtle" color="gray" size="sm" onClick={handleMemberLogout}>
-                      <LogOut size={14} />
-                    </ActionIcon>
-                  </Tooltip>
-                </Group>
-              </Group>
-            )}
-          </div>
+          {renderNavBody()}
         </Stack>
       </AppShell.Navbar>
 
@@ -321,10 +409,10 @@ export default function AppLayout() {
         <Outlet />
       </AppShell.Main>
 
-      {/* Member API token management modal */}
+      {/* API token management modal */}
       <Modal
         opened={tokenModalOpened}
-        onClose={() => { closeTokenModal(); setNewToken(null); setTokenLabel('') }}
+        onClose={() => { closeTokenModal(); setNewToken(null); setTokenLabel(''); setTokenExpiresAt('') }}
         title={t('members.apiTokens')}
         size="sm"
       >
@@ -354,19 +442,25 @@ export default function AppLayout() {
           )}
 
           <form onSubmit={handleCreateToken}>
-            <Group gap="xs" align="flex-end">
+            <Stack gap="xs">
               <TextInput
                 label={t('members.tokenLabel')}
                 placeholder={t('members.tokenLabelPlaceholder')}
                 value={tokenLabel}
                 onChange={(e) => setTokenLabel(e.target.value)}
                 size="xs"
-                style={{ flex: 1 }}
               />
-              <Button type="submit" size="xs" disabled={!tokenLabel.trim()}>
+              <TextInput
+                label={`${t('members.tokenExpiresAt')} (${t('common.optional')})`}
+                type="date"
+                value={tokenExpiresAt}
+                onChange={(e) => setTokenExpiresAt(e.target.value)}
+                size="xs"
+              />
+              <Button type="submit" size="xs" disabled={!tokenLabel.trim()} fullWidth>
                 {t('common.add')}
               </Button>
-            </Group>
+            </Stack>
           </form>
 
           {tokensLoading ? (
@@ -379,8 +473,11 @@ export default function AppLayout() {
                 <Group key={cred.id} justify="space-between" wrap="nowrap" p={6}
                   style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 6 }}>
                   <Stack gap={0} style={{ minWidth: 0 }}>
-                    <Text size="xs" fw={500} truncate>{cred.label}</Text>
-                    <Text size="xs" c="dimmed">{new Date(cred.created_at).toLocaleDateString()}</Text>
+                    <Text size="xs" fw={500} truncate>{cred.label || '—'}</Text>
+                    <Text size="xs" c="dimmed">
+                      {cred.created_at ? new Date(cred.created_at).toLocaleDateString() : '—'}
+                      {cred.expires_at && ` → ${new Date(cred.expires_at).toLocaleDateString()}`}
+                    </Text>
                   </Stack>
                   <ActionIcon size="sm" color="red" variant="subtle" onClick={() => handleDeleteToken(cred.id)}>
                     <Trash2 size={13} />

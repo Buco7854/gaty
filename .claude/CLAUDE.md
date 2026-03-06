@@ -1,4 +1,4 @@
-# GATY
+# GATIE
 
 IoT gate control SaaS. Go backend, React frontend. Multi-tenant (workspaces).
 
@@ -9,7 +9,7 @@ IoT gate control SaaS. Go backend, React frontend. Multi-tenant (workspaces).
 - **Commits et pushes uniquement si explicitement demandé**
 
 ## Stack
-- Backend: Go + Huma v2 + chi router (`github.com/Buco7854/gaty`, entry: `cmd/server/main.go`)
+- Backend: Go + Huma v2 + chi router (`github.com/Buco7854/gatie`, entry: `cmd/server/main.go`)
 - DB: PostgreSQL + Valkey/Redis + golang-migrate (SQL dans `migrations/`)
 - IoT: Eclipse Mosquitto (MQTT)
 - Proxy: Caddy (On-Demand TLS)
@@ -22,7 +22,7 @@ task dev-api     # air (hot-reload Go)
 task dev-frontend # vite dev
 task migrate-up/down
 ```
-Credentials: `postgres://gaty:gaty@localhost:5432/gaty` · `redis://localhost:6379` · `tcp://localhost:1883`
+Credentials: `postgres://gatie:gatie@localhost:5432/gatie` · `redis://localhost:6379` · `tcp://localhost:1883`
 
 Avancement: voir **plan.md**
 

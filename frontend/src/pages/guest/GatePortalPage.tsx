@@ -15,7 +15,7 @@ import { useAuthStore } from '@/store/auth'
 import { useState } from 'react'
 
 function sessionKey(gateId: string) {
-  return `gaty_session_${gateId}`
+  return `gatie_session_${gateId}`
 }
 
 export default function GatePortalPage() {

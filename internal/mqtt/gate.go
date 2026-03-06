@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Buco7854/gaty/internal/repository"
-	"github.com/Buco7854/gaty/internal/service"
+	"github.com/Buco7854/gatie/internal/repository"
+	"github.com/Buco7854/gatie/internal/service"
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -31,7 +31,7 @@ func CommandTopic(wsID, gateID uuid.UUID) string {
 // statusPayload is the message a gate publishes on its status topic.
 //
 // Required fields:
-//   - token  — the gate's authentication secret (gate_token column)
+//   - token  — the gate's JWT token (gate_token column)
 //   - status — system-level state string (e.g. "open", "closed", "online", "offline")
 //
 // Optional field:
@@ -46,9 +46,13 @@ type statusPayload struct {
 // and delegates status processing to service.ProcessGateStatus (rule evaluation,
 // DB persistence, SSE pub/sub).
 // Topic wildcard: +/gates/+/status
-func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redisClient *redis.Client) error {
+//
+// Authentication is two-step:
+//  1. Verify JWT signature with jwtSecret (prevents forgery).
+//  2. DB lookup by gateID + token (detects rotation — old JWTs are invalid after SetToken).
+func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redisClient *redis.Client, jwtSecret []byte) error {
 	return c.Subscribe("+/gates/+/status", func(_ pahomqtt.Client, msg pahomqtt.Message) {
-		_, gateID, err := parseTopicIDs(msg.Topic())
+		_, topicGateID, err := parseTopicIDs(msg.Topic())
 		if err != nil {
 			slog.Warn("mqtt: cannot parse ids from topic", "topic", msg.Topic())
 			return
@@ -60,26 +64,38 @@ func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redis
 			return
 		}
 		if p.Token == "" {
-			slog.Warn("mqtt: status payload missing token", "gate_id", gateID)
+			slog.Warn("mqtt: status payload missing token", "gate_id", topicGateID)
+			return
+		}
+
+		// Step 1: verify JWT signature and extract claimed gate identity.
+		claimedGateID, _, err := service.ParseGateToken(p.Token, jwtSecret)
+		if err != nil {
+			slog.Warn("mqtt: invalid gate token signature, rejected", "gate_id", topicGateID)
+			return
+		}
+		// Claimed gateID must match the MQTT topic to prevent cross-gate attacks.
+		if claimedGateID != topicGateID {
+			slog.Warn("mqtt: token gate_id mismatch with topic", "topic_gate_id", topicGateID, "token_gate_id", claimedGateID)
 			return
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		// Validate token and retrieve the gate (with status_rules).
-		gate, err := gateRepo.GetByToken(ctx, gateID, p.Token)
+		// Step 2: DB lookup by gateID — confirms token is current (not rotated).
+		gate, err := gateRepo.GetByToken(ctx, topicGateID, p.Token)
 		if err != nil {
 			if errors.Is(err, repository.ErrUnauthorized) {
-				slog.Warn("mqtt: invalid gate token, status update rejected", "gate_id", gateID)
+				slog.Warn("mqtt: gate token rotated or invalid, rejected", "gate_id", topicGateID)
 			} else {
-				slog.Error("mqtt: failed to authenticate gate", "gate_id", gateID, "error", err)
+				slog.Error("mqtt: failed to authenticate gate", "gate_id", topicGateID, "error", err)
 			}
 			return
 		}
 
 		if err := service.ProcessGateStatus(ctx, gateRepo, redisClient, gate, p.Status, p.Meta); err != nil {
-			slog.Error("mqtt: failed to process gate status", "gate_id", gateID, "error", err)
+			slog.Error("mqtt: failed to process gate status", "gate_id", topicGateID, "error", err)
 		}
 	})
 }

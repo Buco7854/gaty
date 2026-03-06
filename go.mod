@@ -1,4 +1,4 @@
-module github.com/Buco7854/gaty
+module github.com/Buco7854/gatie
 
 go 1.25.0
 

@@ -1,7 +1,7 @@
-# GATY - Mosquitto ACL rules
+# GATIE - Mosquitto ACL rules
 #
 # Authentication strategy:
-#   - Backend server : username=gaty-server, password=MQTT_PASSWORD env var
+#   - Backend server : username=gatie-server, password=MQTT_PASSWORD env var
 #   - Gate devices  : username={gate_uuid}, password=API_TOKEN from credentials table
 #                     (target_type=GATE, credential_type=API_TOKEN)
 #
@@ -10,7 +10,7 @@
 #   Command : workspace_{ws_id}/gates/{gate_id}/command
 
 # Backend server has full read/write access to all topics
-user gaty-server
+user gatie-server
 topic readwrite #
 
 # Gate devices can only publish status and subscribe to commands on their own topics.

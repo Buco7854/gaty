@@ -3,35 +3,21 @@ package handler
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/http"
-	"time"
 
-	"github.com/Buco7854/gaty/internal/integration"
-	"github.com/Buco7854/gaty/internal/middleware"
-	"github.com/Buco7854/gaty/internal/model"
-	internalmqtt "github.com/Buco7854/gaty/internal/mqtt"
-	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gatie/internal/middleware"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/service"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 )
 
 type GateHandler struct {
-	gates     repository.GateRepository
-	policies  repository.PolicyRepository
-	schedules repository.AccessScheduleRepository
-	audit     repository.AuditRepository
-	mqtt      *internalmqtt.Client // nil if broker unavailable
+	gates *service.GateService
 }
 
-func NewGateHandler(
-	gates repository.GateRepository,
-	policies repository.PolicyRepository,
-	schedules repository.AccessScheduleRepository,
-	audit repository.AuditRepository,
-	mqtt *internalmqtt.Client,
-) *GateHandler {
-	return &GateHandler{gates: gates, policies: policies, schedules: schedules, audit: audit, mqtt: mqtt}
+func NewGateHandler(gates *service.GateService) *GateHandler {
+	return &GateHandler{gates: gates}
 }
 
 // --- Shared path params (used by policy.go too) ---
@@ -39,10 +25,6 @@ func NewGateHandler(
 type GatePathParam struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	GateID      uuid.UUID `path:"gate_id"`
-}
-
-func applyEffectiveStatus(g *model.Gate) {
-	g.Status = g.EffectiveStatus()
 }
 
 // --- List gates ---
@@ -55,15 +37,9 @@ func (h *GateHandler) List(ctx context.Context, input *WorkspacePathParam) (*Lis
 	role, _ := middleware.WorkspaceRoleFromContext(ctx)
 	membershipID, _ := middleware.WorkspaceMembershipIDFromContext(ctx)
 
-	gates, err := h.gates.ListForWorkspace(ctx, input.WorkspaceID, role, membershipID)
+	gates, err := h.gates.List(ctx, input.WorkspaceID, role, membershipID)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list gates")
-	}
-	if gates == nil {
-		gates = []model.Gate{}
-	}
-	for i := range gates {
-		applyEffectiveStatus(&gates[i])
 	}
 	return &ListGatesOutput{Body: gates}, nil
 }
@@ -93,13 +69,9 @@ type GateOutput struct {
 }
 
 func (h *GateHandler) Create(ctx context.Context, input *CreateGateInput) (*GateOutput, error) {
-	intType := input.Body.IntegrationType
-	if intType == "" {
-		intType = model.IntegrationTypeMQTT
-	}
-	gate, err := h.gates.Create(ctx, input.WorkspaceID, repository.CreateGateParams{
+	gate, err := h.gates.Create(ctx, input.WorkspaceID, service.CreateGateParams{
 		Name:              input.Body.Name,
-		IntegrationType:   intType,
+		IntegrationType:   input.Body.IntegrationType,
 		IntegrationConfig: input.Body.IntegrationConfig,
 		OpenConfig:        input.Body.OpenConfig,
 		CloseConfig:       input.Body.CloseConfig,
@@ -110,7 +82,6 @@ func (h *GateHandler) Create(ctx context.Context, input *CreateGateInput) (*Gate
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create gate")
 	}
-	applyEffectiveStatus(gate)
 	// GateToken is already populated by Create (returned once, on creation).
 	return &GateOutput{Body: gate}, nil
 }
@@ -119,33 +90,18 @@ func (h *GateHandler) Create(ctx context.Context, input *CreateGateInput) (*Gate
 
 func (h *GateHandler) Get(ctx context.Context, input *GatePathParam) (*GateOutput, error) {
 	role, _ := middleware.WorkspaceRoleFromContext(ctx)
+	membershipID, _ := middleware.WorkspaceMembershipIDFromContext(ctx)
 
-	gate, err := h.gates.GetByID(ctx, input.GateID, input.WorkspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
+	gate, err := h.gates.Get(ctx, input.GateID, input.WorkspaceID, role, membershipID)
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")
+	}
+	if errors.Is(err, model.ErrUnauthorized) {
+		return nil, huma.Error403Forbidden("access denied")
 	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to get gate")
 	}
-
-	// MEMBER role: verify they have at least one policy on this gate.
-	if role == model.RoleMember {
-		membershipID, _ := middleware.WorkspaceMembershipIDFromContext(ctx)
-		ok, err := h.policies.HasAnyPermission(ctx, membershipID, gate.ID)
-		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to check permissions")
-		}
-		if !ok {
-			return nil, huma.Error403Forbidden("access denied")
-		}
-		// MEMBERs without gate:read_status don't see metadata.
-		hasStatus, _ := h.policies.HasPermission(ctx, membershipID, gate.ID, "gate:read_status")
-		if !hasStatus {
-			gate.StatusMetadata = nil
-		}
-	}
-
-	applyEffectiveStatus(gate)
 	return &GateOutput{Body: gate}, nil
 }
 
@@ -158,31 +114,30 @@ type UpdateGateInput struct {
 		// All fields are optional: omit a field to leave it unchanged.
 		// Action configs: null = clear to NULL in DB, omit = unchanged.
 		// For meta_config and status_rules, send an empty array [] to clear.
-		Name         *string                                  `json:"name,omitempty" minLength:"1"`
-		OpenConfig   repository.Optional[model.ActionConfig] `json:"open_config,omitempty"`
-		CloseConfig  repository.Optional[model.ActionConfig] `json:"close_config,omitempty"`
-		StatusConfig repository.Optional[model.ActionConfig] `json:"status_config,omitempty"`
-		MetaConfig   []model.MetaField                      `json:"meta_config,omitempty"`
-		StatusRules  []model.StatusRule                     `json:"status_rules,omitempty"`
+		Name         *string                        `json:"name,omitempty" minLength:"1"`
+		OpenConfig   OmittableNullable[model.ActionConfig] `json:"open_config,omitempty"`
+		CloseConfig  OmittableNullable[model.ActionConfig] `json:"close_config,omitempty"`
+		StatusConfig OmittableNullable[model.ActionConfig] `json:"status_config,omitempty"`
+		MetaConfig   []model.MetaField              `json:"meta_config,omitempty"`
+		StatusRules  []model.StatusRule             `json:"status_rules,omitempty"`
 	}
 }
 
 func (h *GateHandler) Update(ctx context.Context, input *UpdateGateInput) (*GateOutput, error) {
-	gate, err := h.gates.Update(ctx, input.GateID, input.WorkspaceID, repository.UpdateGateParams{
+	gate, err := h.gates.Update(ctx, input.GateID, input.WorkspaceID, service.UpdateGateParams{
 		Name:         input.Body.Name,
-		OpenConfig:   input.Body.OpenConfig,
-		CloseConfig:  input.Body.CloseConfig,
-		StatusConfig: input.Body.StatusConfig,
+		OpenConfig:   input.Body.OpenConfig.ToModel(),
+		CloseConfig:  input.Body.CloseConfig.ToModel(),
+		StatusConfig: input.Body.StatusConfig.ToModel(),
 		MetaConfig:   input.Body.MetaConfig,
 		StatusRules:  input.Body.StatusRules,
 	})
-	if errors.Is(err, repository.ErrNotFound) {
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")
 	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to update gate")
 	}
-	applyEffectiveStatus(gate)
 	return &GateOutput{Body: gate}, nil
 }
 
@@ -195,7 +150,7 @@ type DeleteGateInput struct {
 
 func (h *GateHandler) Delete(ctx context.Context, input *DeleteGateInput) (*struct{}, error) {
 	err := h.gates.Delete(ctx, input.GateID, input.WorkspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")
 	}
 	if err != nil {
@@ -220,65 +175,27 @@ func (h *GateHandler) Trigger(ctx context.Context, input *TriggerInput) (*struct
 	if action == "" {
 		action = "open"
 	}
-
 	role, _ := middleware.WorkspaceRoleFromContext(ctx)
-	if role == model.RoleMember {
-		membershipID, _ := middleware.WorkspaceMembershipIDFromContext(ctx)
+	membershipID, _ := middleware.WorkspaceMembershipIDFromContext(ctx)
+	credentialID, _ := middleware.CredentialIDFromContext(ctx)
+
+	err := h.gates.Trigger(ctx, input.GateID, input.WorkspaceID, role, membershipID, credentialID, action)
+	if errors.Is(err, model.ErrNotFound) {
+		return nil, huma.Error404NotFound("gate not found")
+	}
+	if errors.Is(err, model.ErrUnauthorized) {
 		permCode := "gate:trigger_open"
 		if action == "close" {
 			permCode = "gate:trigger_close"
 		}
-		ok, err := h.policies.HasPermission(ctx, membershipID, input.GateID, permCode)
-		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to check permissions")
-		}
-		if !ok {
-			return nil, huma.Error403Forbidden("missing " + permCode + " permission")
-		}
-		// Check time-restriction schedule attached to this member-gate pair (if any).
-		if scheduleID, schErr := h.policies.GetMemberGateScheduleID(ctx, membershipID, input.GateID); schErr == nil {
-			schedule, schErr := h.schedules.GetByIDPublic(ctx, scheduleID)
-			if schErr == nil {
-				if schErr = CheckSchedule(schedule, time.Now()); schErr != nil {
-					slog.Info("gate trigger: schedule rejected", "membership_id", membershipID, "gate_id", input.GateID, "schedule_id", scheduleID)
-					return nil, huma.Error403Forbidden("access not allowed at this time")
-				}
-			}
-		}
+		return nil, huma.Error403Forbidden("missing " + permCode + " permission")
 	}
-
-	gate, err := h.gates.GetByID(ctx, input.GateID, input.WorkspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
-		return nil, huma.Error404NotFound("gate not found")
+	if errors.Is(err, service.ErrScheduleDenied) {
+		return nil, huma.Error403Forbidden("access not allowed at this time")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to get gate")
+		return nil, huma.Error500InternalServerError("failed to trigger gate")
 	}
-
-	var driver integration.Driver
-	var driverErr error
-	if action == "close" {
-		driver, driverErr = integration.NewCloseDriver(gate, h.mqtt)
-	} else {
-		driver, driverErr = integration.NewOpenDriver(gate, h.mqtt)
-	}
-	if driverErr != nil {
-		slog.Warn("gate: failed to build driver", "gate_id", gate.ID, "action", action, "error", driverErr)
-	} else if execErr := driver.Execute(ctx, gate); execErr != nil {
-		slog.Warn("gate: driver execution failed", "gate_id", gate.ID, "action", action, "error", execErr)
-	}
-
-	auditAction := "gate:trigger_open"
-	if action == "close" {
-		auditAction = "gate:trigger_close"
-	}
-	gateID := gate.ID
-	_ = h.audit.Insert(ctx, repository.AuditEntry{
-		WorkspaceID: input.WorkspaceID,
-		GateID:      &gateID,
-		Action:      auditAction,
-	})
-
 	return nil, nil
 }
 
@@ -294,7 +211,7 @@ type GateTokenOutput struct {
 // GetToken returns the current gate authentication token.
 func (h *GateHandler) GetToken(ctx context.Context, input *GatePathParam) (*GateTokenOutput, error) {
 	token, err := h.gates.GetToken(ctx, input.GateID, input.WorkspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")
 	}
 	if err != nil {
@@ -309,7 +226,7 @@ func (h *GateHandler) GetToken(ctx context.Context, input *GatePathParam) (*Gate
 // RotateToken generates a new gate authentication token, invalidating the old one.
 func (h *GateHandler) RotateToken(ctx context.Context, input *GatePathParam) (*GateTokenOutput, error) {
 	token, err := h.gates.RotateToken(ctx, input.GateID, input.WorkspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")
 	}
 	if err != nil {

@@ -17,7 +17,7 @@ type Client struct {
 func New(brokerURL, username, password string) (*Client, error) {
 	opts := pahomqtt.NewClientOptions().
 		AddBroker(brokerURL).
-		SetClientID("gaty-server").
+		SetClientID("gatie-server").
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
 		SetConnectRetryInterval(5 * time.Second).

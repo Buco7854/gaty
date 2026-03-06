@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/Buco7854/gaty/internal/model"
-	internalmqtt "github.com/Buco7854/gaty/internal/mqtt"
+	"github.com/Buco7854/gatie/internal/model"
+	internalmqtt "github.com/Buco7854/gatie/internal/mqtt"
 )
 
 // MQTTDriver publishes a command to the gate's MQTT command topic.

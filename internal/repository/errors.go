@@ -1,9 +1,11 @@
 package repository
 
-import "errors"
+import "github.com/Buco7854/gatie/internal/model"
 
+// Sentinel errors — aliases to the canonical model-layer errors.
+// Repository implementations return these; callers check model.ErrXxx.
 var (
-	ErrNotFound      = errors.New("not found")
-	ErrAlreadyExists = errors.New("already exists")
-	ErrUnauthorized  = errors.New("unauthorized")
+	ErrNotFound      = model.ErrNotFound
+	ErrAlreadyExists = model.ErrAlreadyExists
+	ErrUnauthorized  = model.ErrUnauthorized
 )

@@ -1,4 +1,4 @@
-# GATY - IoT Gate Control SaaS - Plan de Développement
+# GATIE - IoT Gate Control SaaS - Plan de Développement
 
 ## Stack validée
 - **Backend** : Go (Huma + chi router)
@@ -152,7 +152,7 @@ Voir CLAUDE.md pour le schéma complet.
 ### 5.3 - Configuration Mosquitto
 - [x] Configuration Mosquitto pour le dev (listener 1883, anonymous access)
 - [x] Stratégie d'authentification MQTT : backend s'authentifie via `MQTT_USERNAME`/`MQTT_PASSWORD` env (optionnel, anonyme en dev) ; chaque gate device utilise son `gate_id` comme username + `API_TOKEN` de la table `credentials`
-- [x] ACL MQTT : fichier `configs/mosquitto.acl` — `gaty-server` accès total, gate devices limités à leurs propres topics via pattern `%u`
+- [x] ACL MQTT : fichier `configs/mosquitto.acl` — `gatie-server` accès total, gate devices limités à leurs propres topics via pattern `%u`
 
 ---
 
@@ -251,7 +251,7 @@ Voir CLAUDE.md pour le schéma complet.
   - Platform users : `GET/POST /api/auth/me/credentials`, `POST /api/auth/me/api-tokens`, `DELETE /api/auth/me/credentials/{id}`, `PATCH /api/auth/me/password`
   - Local members (self) : mêmes 4 endpoints sur `/api/auth/local/me/…`
   - Admin : `GET/POST/DELETE /api/workspaces/{ws_id}/members/{membership_id}/credentials`, `POST …/password`
-  - API tokens : format `gaty_<64hex>`, stockés en SHA-256 (lookup O(1) possible)
+  - API tokens : format `gatie_<64hex>`, stockés en SHA-256 (lookup O(1) possible)
 
 ---
 
@@ -321,7 +321,7 @@ Voir CLAUDE.md pour le schéma complet.
 - [x] `GET    /api/workspaces/{ws_id}/gates/{gate_id}/domains` — lister les domaines d'une gate (wsAdmin)
 - [x] `DELETE /api/workspaces/{ws_id}/gates/{gate_id}/domains/{domain_id}` — supprimer (wsAdmin)
 - [x] `POST   /api/workspaces/{ws_id}/gates/{gate_id}/domains/{domain_id}/verify` — déclenche la vérification DNS TXT (wsAdmin)
-  - Résout `_gaty.<domain>` TXT → compare au `dns_challenge_token`
+  - Résout `_gatie.<domain>` TXT → compare au `dns_challenge_token`
   - Si OK : `verified_at=now()`
 - [x] `GET /api/public/verify-domain?domain=xxx` — endpoint ACME (Caddy `ask`) ; 200 si vérifié, 403 sinon
 - [x] `GET /api/public/domains/list` — liste de tous les domaines vérifiés (scripts d'automatisation proxy externe)

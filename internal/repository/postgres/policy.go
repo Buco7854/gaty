@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/Buco7854/gaty/internal/model"
-	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -22,9 +22,9 @@ func NewPolicyRepository(pool *pgxpool.Pool) repository.PolicyRepository {
 
 func (r *policyRepository) List(ctx context.Context, gateID uuid.UUID) ([]model.MembershipPolicy, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT membership_id, gate_id, permission_code FROM membership_policies
-		 WHERE gate_id = $1
-		 ORDER BY membership_id, permission_code`,
+		`SELECT subject_id, gate_id, permission_code FROM access_policies
+		 WHERE subject_type = 'membership' AND gate_id = $1
+		 ORDER BY subject_id, permission_code`,
 		gateID,
 	)
 	if err != nil {
@@ -45,8 +45,8 @@ func (r *policyRepository) List(ctx context.Context, gateID uuid.UUID) ([]model.
 
 func (r *policyRepository) ListForMembership(ctx context.Context, membershipID uuid.UUID) ([]model.MembershipPolicy, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT membership_id, gate_id, permission_code FROM membership_policies
-		 WHERE membership_id = $1
+		`SELECT subject_id, gate_id, permission_code FROM access_policies
+		 WHERE subject_type = 'membership' AND subject_id = $1
 		 ORDER BY gate_id, permission_code`,
 		membershipID,
 	)
@@ -68,8 +68,8 @@ func (r *policyRepository) ListForMembership(ctx context.Context, membershipID u
 
 func (r *policyRepository) Grant(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO membership_policies (membership_id, gate_id, permission_code)
-		 VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+		`INSERT INTO access_policies (subject_type, subject_id, gate_id, permission_code)
+		 VALUES ('membership', $1, $2, $3) ON CONFLICT DO NOTHING`,
 		membershipID, gateID, permCode,
 	)
 	if err != nil {
@@ -81,8 +81,8 @@ func (r *policyRepository) Grant(ctx context.Context, membershipID, gateID uuid.
 func (r *policyRepository) HasPermission(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) (bool, error) {
 	var exists bool
 	err := r.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM membership_policies
-		  WHERE membership_id = $1 AND gate_id = $2 AND permission_code = $3)`,
+		`SELECT EXISTS(SELECT 1 FROM access_policies
+		  WHERE subject_type = 'membership' AND subject_id = $1 AND gate_id = $2 AND permission_code = $3)`,
 		membershipID, gateID, permCode,
 	).Scan(&exists)
 	if err != nil {
@@ -94,8 +94,8 @@ func (r *policyRepository) HasPermission(ctx context.Context, membershipID, gate
 func (r *policyRepository) HasAnyPermission(ctx context.Context, membershipID, gateID uuid.UUID) (bool, error) {
 	var exists bool
 	err := r.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM membership_policies
-		  WHERE membership_id = $1 AND gate_id = $2)`,
+		`SELECT EXISTS(SELECT 1 FROM access_policies
+		  WHERE subject_type = 'membership' AND subject_id = $1 AND gate_id = $2)`,
 		membershipID, gateID,
 	).Scan(&exists)
 	if err != nil {
@@ -106,7 +106,7 @@ func (r *policyRepository) HasAnyPermission(ctx context.Context, membershipID, g
 
 func (r *policyRepository) Revoke(ctx context.Context, membershipID, gateID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx,
-		`DELETE FROM membership_policies WHERE membership_id = $1 AND gate_id = $2`,
+		`DELETE FROM access_policies WHERE subject_type = 'membership' AND subject_id = $1 AND gate_id = $2`,
 		membershipID, gateID,
 	)
 	if err != nil {
@@ -117,8 +117,8 @@ func (r *policyRepository) Revoke(ctx context.Context, membershipID, gateID uuid
 
 func (r *policyRepository) RevokePermission(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) error {
 	tag, err := r.pool.Exec(ctx,
-		`DELETE FROM membership_policies
-		 WHERE membership_id = $1 AND gate_id = $2 AND permission_code = $3`,
+		`DELETE FROM access_policies
+		 WHERE subject_type = 'membership' AND subject_id = $1 AND gate_id = $2 AND permission_code = $3`,
 		membershipID, gateID, permCode,
 	)
 	if err != nil {
@@ -132,9 +132,10 @@ func (r *policyRepository) RevokePermission(ctx context.Context, membershipID, g
 
 func (r *policyRepository) SetMemberGateSchedule(ctx context.Context, membershipID, gateID, scheduleID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO membership_gate_schedules (membership_id, gate_id, schedule_id)
-		 VALUES ($1, $2, $3)
-		 ON CONFLICT (membership_id, gate_id) DO UPDATE SET schedule_id = EXCLUDED.schedule_id`,
+		`INSERT INTO schedule_links (subject_type, subject_id, gate_id, schedule_id)
+		 VALUES ('membership', $1, $2, $3)
+		 ON CONFLICT (subject_type, subject_id, gate_id) WHERE gate_id IS NOT NULL
+		 DO UPDATE SET schedule_id = EXCLUDED.schedule_id`,
 		membershipID, gateID, scheduleID,
 	)
 	if err != nil {
@@ -145,7 +146,7 @@ func (r *policyRepository) SetMemberGateSchedule(ctx context.Context, membership
 
 func (r *policyRepository) RemoveMemberGateSchedule(ctx context.Context, membershipID, gateID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx,
-		`DELETE FROM membership_gate_schedules WHERE membership_id = $1 AND gate_id = $2`,
+		`DELETE FROM schedule_links WHERE subject_type = 'membership' AND subject_id = $1 AND gate_id = $2`,
 		membershipID, gateID,
 	)
 	if err != nil {
@@ -157,7 +158,8 @@ func (r *policyRepository) RemoveMemberGateSchedule(ctx context.Context, members
 func (r *policyRepository) GetMemberGateScheduleID(ctx context.Context, membershipID, gateID uuid.UUID) (uuid.UUID, error) {
 	var scheduleID uuid.UUID
 	err := r.pool.QueryRow(ctx,
-		`SELECT schedule_id FROM membership_gate_schedules WHERE membership_id = $1 AND gate_id = $2`,
+		`SELECT schedule_id FROM schedule_links
+		 WHERE subject_type = 'membership' AND subject_id = $1 AND gate_id = $2`,
 		membershipID, gateID,
 	).Scan(&scheduleID)
 	if errors.Is(err, pgx.ErrNoRows) {

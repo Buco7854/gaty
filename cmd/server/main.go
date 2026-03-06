@@ -10,14 +10,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Buco7854/gaty/internal/cache"
-	"github.com/Buco7854/gaty/internal/config"
-	"github.com/Buco7854/gaty/internal/db"
-	"github.com/Buco7854/gaty/internal/handler"
-	"github.com/Buco7854/gaty/internal/middleware"
-	internalmqtt "github.com/Buco7854/gaty/internal/mqtt"
-	repopg "github.com/Buco7854/gaty/internal/repository/postgres"
-	"github.com/Buco7854/gaty/internal/service"
+	"github.com/Buco7854/gatie/internal/cache"
+	"github.com/Buco7854/gatie/internal/config"
+	"github.com/Buco7854/gatie/internal/db"
+	"github.com/Buco7854/gatie/internal/handler"
+	"github.com/Buco7854/gatie/internal/integration"
+	"github.com/Buco7854/gatie/internal/middleware"
+	"github.com/Buco7854/gatie/internal/model"
+	internalmqtt "github.com/Buco7854/gatie/internal/mqtt"
+	repopg "github.com/Buco7854/gatie/internal/repository/postgres"
+	"github.com/Buco7854/gatie/internal/service"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
@@ -83,13 +85,14 @@ func main() {
 	gateRepo := repopg.NewGateRepository(pool)
 	gatePinRepo := repopg.NewGatePinRepository(pool)
 	policyRepo := repopg.NewPolicyRepository(pool)
+	credPolicyRepo := repopg.NewCredentialPolicyRepository(pool)
 	scheduleRepo := repopg.NewAccessScheduleRepository(pool)
 	auditRepo := repopg.NewAuditRepository(pool)
 	domainRepo := repopg.NewCustomDomainRepository(pool)
 
 	// Subscribe to gate status updates from MQTT (bridge to Redis Pub/Sub for SSE)
 	if mqttClient != nil {
-		if err := mqttClient.SubscribeGateStatuses(gateRepo, redisClient); err != nil {
+		if err := mqttClient.SubscribeGateStatuses(gateRepo, redisClient, []byte(cfg.JWTSecret)); err != nil {
 			slog.Warn("mqtt: failed to subscribe to gate statuses", "error", err)
 		}
 	}
@@ -98,16 +101,39 @@ func main() {
 	authSvc := service.NewAuthService(userRepo, credRepo, membershipRepo, memberCredRepo, wsRepo, redisClient, cfg.JWTSecret, cfg.GlobalSessionDuration)
 	membershipSvc := service.NewMembershipService(membershipRepo, memberCredRepo, wsRepo)
 	ssoSvc := service.NewSSOService(wsRepo, membershipRepo, memberCredRepo, redisClient, cfg.BaseURL)
+	workspaceSvc := service.NewWorkspaceService(wsRepo)
+	scheduleSvc := service.NewScheduleService(scheduleRepo)
+	policySvc := service.NewPolicyService(policyRepo, scheduleRepo)
+	// gateTrigger fires open/close drivers; defined here to avoid an import cycle
+	// (service -> integration -> mqtt -> service).
+	gateTrigger := service.GateTriggerFn(func(ctx context.Context, gate *model.Gate, action string) {
+		var driver integration.Driver
+		var err error
+		if action == "close" {
+			driver, err = integration.NewCloseDriver(gate, mqttClient)
+		} else {
+			driver, err = integration.NewOpenDriver(gate, mqttClient)
+		}
+		if err != nil {
+			slog.Warn("gate: failed to build driver", "gate_id", gate.ID, "action", action, "error", err)
+			return
+		}
+		if err := driver.Execute(ctx, gate); err != nil {
+			slog.Warn("gate: driver execution failed", "gate_id", gate.ID, "action", action, "error", err)
+		}
+	})
+	gateSvc := service.NewGateService(gateRepo, policySvc, credPolicyRepo, scheduleSvc, auditRepo, gateTrigger, []byte(cfg.JWTSecret), redisClient)
+	gatePinSvc := service.NewGatePinService(gatePinRepo, gateRepo, scheduleSvc, authSvc, gateTrigger, redisClient)
 
 	// Gate TTL worker: marks gates unresponsive when last_seen_at > DefaultGateTTL ago.
 	ttlCtx, ttlCancel := context.WithCancel(ctx)
 	defer ttlCancel()
 	go service.NewGateTTLWorker(gateRepo, redisClient, service.DefaultGateTTL).Run(ttlCtx)
 
-	api := humachi.New(router, huma.DefaultConfig("GATY API", "0.1.0"))
+	api := humachi.New(router, huma.DefaultConfig("GATIE API", "0.1.0"))
 
 	// Global soft auth middleware: silently extracts Bearer token and injects identity into context.
-	api.UseMiddleware(middleware.AuthExtractor(authSvc))
+	api.UseMiddleware(middleware.AuthExtractor(authSvc, memberCredRepo))
 
 	// Per-operation middlewares
 	requireAuth := middleware.RequireAuth(api)
@@ -151,18 +177,18 @@ func main() {
 
 	// Register route groups
 	handler.NewAuthHandler(authSvc, userRepo).RegisterRoutes(api, requireAuth)
-	handler.NewWorkspaceHandler(wsRepo).RegisterRoutes(api, requireAuth, wsAdmin)
-	handler.NewGateHandler(gateRepo, policyRepo, scheduleRepo, auditRepo, mqttClient).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
-	handler.NewPolicyHandler(policyRepo, scheduleRepo).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
+	handler.NewWorkspaceHandler(workspaceSvc).RegisterRoutes(api, requireAuth, wsAdmin)
+	handler.NewGateHandler(gateSvc).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
+	handler.NewPolicyHandler(policySvc).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
 	handler.NewMemberHandler(membershipSvc).RegisterRoutes(api, wsAdmin)
-	handler.NewGatePinHandler(gatePinRepo, gateRepo, policyRepo, scheduleRepo, mqttClient, redisClient, authSvc).RegisterRoutes(api, wsMember, wsGateManager)
-	handler.NewAccessScheduleHandler(scheduleRepo).RegisterRoutes(api, wsAdmin)
+	handler.NewGatePinHandler(gatePinSvc).RegisterRoutes(api, wsMember, wsGateManager)
+	handler.NewAccessScheduleHandler(scheduleSvc).RegisterRoutes(api, wsAdmin)
 	handler.NewSSOHandler(ssoSvc, authSvc, wsRepo, cfg.FrontendURL).RegisterRoutes(api, wsAdmin)
-	handler.NewCredentialHandler(credRepo, memberCredRepo, membershipRepo).RegisterRoutes(api, requireAuth, requireMembership, wsAdmin)
+	handler.NewCredentialHandler(credRepo, memberCredRepo, membershipRepo, credPolicyRepo).RegisterRoutes(api, requireAuth, requireMembership, wsMember, wsAdmin)
 	handler.NewCustomDomainHandler(domainRepo, gateRepo).RegisterRoutes(api, wsMember, wsGateManager)
 
 	// Inbound: gate-to-server status push (gate token auth, no workspace middleware).
-	handler.NewGateInboundHandler(gateRepo, redisClient).RegisterRoutes(api)
+	handler.NewGateInboundHandler(gateSvc).RegisterRoutes(api)
 
 	// SSE: raw chi route (long-lived, not Huma)
 	handler.NewSSEHandler(authSvc, redisClient).RegisterRoutes(router)

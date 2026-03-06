@@ -5,10 +5,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/Buco7854/gaty/internal/middleware"
-	"github.com/Buco7854/gaty/internal/model"
-	"github.com/Buco7854/gaty/internal/repository"
-	"github.com/Buco7854/gaty/internal/service"
+	"github.com/Buco7854/gatie/internal/middleware"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/service"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 )
@@ -38,6 +37,7 @@ type membershipBody struct {
 	ID            uuid.UUID           `json:"id"`
 	WorkspaceID   uuid.UUID           `json:"workspace_id"`
 	UserID        *uuid.UUID          `json:"user_id,omitempty"`
+	UserEmail     *string             `json:"user_email,omitempty"`
 	LocalUsername *string             `json:"local_username,omitempty"`
 	DisplayName   *string             `json:"display_name,omitempty"`
 	Role          model.WorkspaceRole `json:"role"`
@@ -49,6 +49,7 @@ func toMembershipBody(m *model.WorkspaceMembership) *membershipBody {
 		ID:            m.ID,
 		WorkspaceID:   m.WorkspaceID,
 		UserID:        m.UserID,
+		UserEmail:     m.UserEmail,
 		LocalUsername: m.LocalUsername,
 		DisplayName:   m.DisplayName,
 		Role:          m.Role,
@@ -153,7 +154,7 @@ func (h *MemberHandler) List(ctx context.Context, input *MemberWorkspacePathPara
 
 func (h *MemberHandler) Get(ctx context.Context, input *MemberIDPathParam) (*MemberOutput, error) {
 	membership, err := h.memberships.GetByID(ctx, input.MemberID, input.WorkspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("member not found")
 	}
 	if err != nil {
@@ -170,10 +171,10 @@ type UpdateMemberInput struct {
 	Body        struct {
 		// Omit a field to leave it unchanged.
 		// auth_config: null = reset to NULL (inherit from workspace), omit = unchanged.
-		DisplayName   *string                              `json:"display_name,omitempty" maxLength:"100"`
-		LocalUsername *string                              `json:"local_username,omitempty" minLength:"1" maxLength:"50"`
-		Role          *model.WorkspaceRole                 `json:"role,omitempty"`
-		AuthConfig    repository.Optional[map[string]any]  `json:"auth_config,omitempty"`
+		DisplayName   *string                      `json:"display_name,omitempty" maxLength:"100"`
+		LocalUsername *string                      `json:"local_username,omitempty" minLength:"1" maxLength:"50"`
+		Role          *model.WorkspaceRole         `json:"role,omitempty"`
+		AuthConfig    OmittableNullable[map[string]any] `json:"auth_config,omitempty"`
 	}
 }
 
@@ -181,11 +182,16 @@ func (h *MemberHandler) Update(ctx context.Context, input *UpdateMemberInput) (*
 	if input.Body.Role != nil && *input.Body.Role == model.RoleOwner {
 		return nil, huma.Error400BadRequest("cannot assign OWNER role")
 	}
-	membership, err := h.memberships.Update(ctx, input.MemberID, input.WorkspaceID, input.Body.DisplayName, input.Body.LocalUsername, input.Body.Role, input.Body.AuthConfig)
-	if errors.Is(err, repository.ErrNotFound) {
+	membership, err := h.memberships.Update(ctx, input.MemberID, input.WorkspaceID, service.UpdateMemberParams{
+		DisplayName:   input.Body.DisplayName,
+		LocalUsername: input.Body.LocalUsername,
+		Role:          input.Body.Role,
+		AuthConfig:    input.Body.AuthConfig.ToModel(),
+	})
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("member not found")
 	}
-	if errors.Is(err, repository.ErrAlreadyExists) {
+	if errors.Is(err, model.ErrAlreadyExists) {
 		return nil, huma.Error409Conflict("local_username already taken in this workspace")
 	}
 	if err != nil {
@@ -198,7 +204,7 @@ func (h *MemberHandler) Update(ctx context.Context, input *UpdateMemberInput) (*
 
 func (h *MemberHandler) Delete(ctx context.Context, input *MemberIDPathParam) (*struct{}, error) {
 	err := h.memberships.Delete(ctx, input.MemberID, input.WorkspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("member not found")
 	}
 	if err != nil {

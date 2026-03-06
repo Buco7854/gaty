@@ -5,28 +5,27 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/Buco7854/gaty/internal/middleware"
-	"github.com/Buco7854/gaty/internal/model"
-	"github.com/Buco7854/gaty/internal/repository"
+	"github.com/Buco7854/gatie/internal/middleware"
+	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/service"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 )
 
 type WorkspaceHandler struct {
-	workspaces repository.WorkspaceRepository
+	workspaces *service.WorkspaceService
 }
 
-func NewWorkspaceHandler(workspaces repository.WorkspaceRepository) *WorkspaceHandler {
+func NewWorkspaceHandler(workspaces *service.WorkspaceService) *WorkspaceHandler {
 	return &WorkspaceHandler{workspaces: workspaces}
 }
 
-// --- Shared path params (used by gate.go and member.go too) ---
-
+// WorkspacePathParam is shared with gate, member, policy, and schedule handlers.
 type WorkspacePathParam struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 }
 
-// --- Create workspace ---
+// --- Create ---
 
 type CreateWorkspaceInput struct {
 	Body struct {
@@ -47,10 +46,10 @@ func (h *WorkspaceHandler) Create(ctx context.Context, input *CreateWorkspaceInp
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create workspace")
 	}
-	return &WorkspaceOutput{Body: model.WorkspaceWithRole{Workspace: *ws, Role: model.RoleOwner}}, nil
+	return &WorkspaceOutput{Body: *ws}, nil
 }
 
-// --- List workspaces ---
+// --- List ---
 
 type ListWorkspacesOutput struct {
 	Body []model.WorkspaceWithRole
@@ -61,65 +60,49 @@ func (h *WorkspaceHandler) List(ctx context.Context, _ *struct{}) (*ListWorkspac
 	if !ok {
 		return nil, huma.Error401Unauthorized("unauthorized")
 	}
-	list, err := h.workspaces.ListForUser(ctx, userID)
+	list, err := h.workspaces.List(ctx, userID)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list workspaces")
-	}
-	if list == nil {
-		list = []model.WorkspaceWithRole{}
 	}
 	return &ListWorkspacesOutput{Body: list}, nil
 }
 
-// --- Get workspace ---
+// --- Get ---
 
 func (h *WorkspaceHandler) Get(ctx context.Context, input *WorkspacePathParam) (*WorkspaceOutput, error) {
 	userID, ok := middleware.UserIDFromContext(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized("unauthorized")
 	}
-
-	ws, err := h.workspaces.GetByID(ctx, input.WorkspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
+	ws, err := h.workspaces.Get(ctx, input.WorkspaceID, userID)
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("workspace not found")
+	}
+	if errors.Is(err, model.ErrUnauthorized) {
+		return nil, huma.Error403Forbidden("access denied")
 	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to get workspace")
 	}
-
-	role, err := h.workspaces.GetMemberRole(ctx, ws.ID, userID)
-	if errors.Is(err, repository.ErrNotFound) {
-		return nil, huma.Error403Forbidden("access denied")
-	}
-	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to verify access")
-	}
-
-	return &WorkspaceOutput{Body: model.WorkspaceWithRole{Workspace: *ws, Role: role}}, nil
+	return &WorkspaceOutput{Body: *ws}, nil
 }
 
-// --- Get member auth config ---
+// --- Member auth config ---
 
 type MemberAuthConfigOutput struct {
 	Body map[string]any
 }
 
 func (h *WorkspaceHandler) GetMemberAuthConfig(ctx context.Context, input *WorkspacePathParam) (*MemberAuthConfigOutput, error) {
-	ws, err := h.workspaces.GetByID(ctx, input.WorkspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
+	cfg, err := h.workspaces.GetMemberAuthConfig(ctx, input.WorkspaceID)
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("workspace not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to get workspace")
-	}
-	cfg := ws.MemberAuthConfig
-	if cfg == nil {
-		cfg = map[string]any{}
+		return nil, huma.Error500InternalServerError("failed to get member auth config")
 	}
 	return &MemberAuthConfigOutput{Body: cfg}, nil
 }
-
-// --- Update member auth config ---
 
 type UpdateMemberAuthConfigInput struct {
 	WorkspaceID uuid.UUID      `path:"ws_id"`
@@ -127,21 +110,18 @@ type UpdateMemberAuthConfigInput struct {
 }
 
 func (h *WorkspaceHandler) UpdateMemberAuthConfig(ctx context.Context, input *UpdateMemberAuthConfigInput) (*MemberAuthConfigOutput, error) {
-	ws, err := h.workspaces.UpdateMemberAuthConfig(ctx, input.WorkspaceID, input.Body)
-	if errors.Is(err, repository.ErrNotFound) {
+	cfg, err := h.workspaces.UpdateMemberAuthConfig(ctx, input.WorkspaceID, input.Body)
+	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("workspace not found")
 	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to update member auth config")
 	}
-	cfg := ws.MemberAuthConfig
-	if cfg == nil {
-		cfg = map[string]any{}
-	}
 	return &MemberAuthConfigOutput{Body: cfg}, nil
 }
 
-// RegisterRoutes wires workspace endpoints onto the Huma API.
+// --- Routes ---
+
 func (h *WorkspaceHandler) RegisterRoutes(
 	api huma.API,
 	requireAuth func(huma.Context, func(huma.Context)),
