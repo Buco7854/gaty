@@ -401,6 +401,33 @@ export default function SettingsPage() {
         <Text c="dimmed" size="sm">{t('settings.subtitle')}</Text>
       </Stack>
 
+      {/* Rename workspace */}
+      <Paper withBorder p="lg" radius="md" mb="md">
+        <Text fw={600} mb={4}>{t('settings.renameWorkspace')}</Text>
+        <Text size="xs" c="dimmed" mb="xs">{t('settings.renameWorkspaceHint')}</Text>
+        <Group gap="xs" align="flex-end">
+          <TextInput
+            placeholder={wsData?.name ?? ''}
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            size="sm"
+            style={{ flex: 1 }}
+            label={t('settings.newWorkspaceName')}
+          />
+          <Button
+            size="sm"
+            variant="light"
+            leftSection={<Save size={14} />}
+            loading={renameWorkspace.isPending}
+            disabled={!newName.trim() || newName.trim() === wsData?.name}
+            onClick={() => renameWorkspace.mutate(newName.trim())}
+            mb={1}
+          >
+            {t('common.save')}
+          </Button>
+        </Group>
+      </Paper>
+
       {/* SSO Providers */}
       <Paper withBorder p="lg" radius="md" mb="md">
         <Group justify="space-between" mb="md">
@@ -517,50 +544,18 @@ export default function SettingsPage() {
           <Text fw={600} c="red">{t('settings.dangerZone')}</Text>
         </Group>
 
-        <Stack gap="lg">
-          {/* Rename */}
-          <div>
-            <Text size="sm" fw={500} mb={4}>{t('settings.renameWorkspace')}</Text>
-            <Text size="xs" c="dimmed" mb="xs">{t('settings.renameWorkspaceHint')}</Text>
-            <Group gap="xs" align="flex-end">
-              <TextInput
-                placeholder={wsData?.name ?? ''}
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                size="sm"
-                style={{ flex: 1 }}
-                label={t('settings.newWorkspaceName')}
-              />
-              <Button
-                size="sm"
-                variant="light"
-                leftSection={<Save size={14} />}
-                loading={renameWorkspace.isPending}
-                disabled={!newName.trim() || newName.trim() === wsData?.name}
-                onClick={() => renameWorkspace.mutate(newName.trim())}
-                mb={1}
-              >
-                {t('common.save')}
-              </Button>
-            </Group>
-          </div>
-
-          <Divider />
-
-          {/* Delete */}
-          <div>
-            <Text size="sm" fw={500} mb={4}>{t('settings.deleteWorkspace')}</Text>
-            <Text size="xs" c="dimmed" mb="xs">{t('settings.deleteWorkspaceHint')}</Text>
-            <Button
-              color="red"
-              variant="light"
-              leftSection={<Trash2 size={14} />}
-              onClick={openDeleteModal}
-            >
-              {t('settings.deleteWorkspace')}
-            </Button>
-          </div>
-        </Stack>
+        <div>
+          <Text size="sm" fw={500} mb={4}>{t('settings.deleteWorkspace')}</Text>
+          <Text size="xs" c="dimmed" mb="xs">{t('settings.deleteWorkspaceHint')}</Text>
+          <Button
+            color="red"
+            variant="light"
+            leftSection={<Trash2 size={14} />}
+            onClick={openDeleteModal}
+          >
+            {t('settings.deleteWorkspace')}
+          </Button>
+        </div>
       </Paper>
 
       <ProviderModal
