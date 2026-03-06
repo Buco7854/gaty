@@ -594,14 +594,16 @@ export default function GatePage() {
               </ActionIcon>
             </Tooltip>
           )}
-          <Button
-            leftSection={<DoorClosed size={16} />}
-            variant="default"
-            loading={trigger.isPending}
-            onClick={() => trigger.mutate('close')}
-          >
-            {t('gates.close')}
-          </Button>
+          {gate?.close_config && (
+            <Button
+              leftSection={<DoorClosed size={16} />}
+              variant="default"
+              loading={trigger.isPending}
+              onClick={() => trigger.mutate('close')}
+            >
+              {t('gates.close')}
+            </Button>
+          )}
           <Button
             leftSection={<DoorOpen size={16} />}
             loading={trigger.isPending}
@@ -927,16 +929,14 @@ export default function GatePage() {
               value={pinExpiresAt}
               onChange={(e) => setPinExpiresAt(e.target.value)}
             />
-            {schedules.length > 0 && (
-              <Select
-                label={t('pins.schedule')}
-                description={t('pins.scheduleDesc')}
-                value={pinScheduleId}
-                onChange={(v) => setPinScheduleId(v ?? '')}
-                data={scheduleSelectData}
-                clearable
-              />
-            )}
+            <Select
+              label={t('pins.schedule')}
+              description={t('pins.scheduleDesc')}
+              value={pinScheduleId}
+              onChange={(v) => setPinScheduleId(v ?? '')}
+              data={scheduleSelectData}
+              clearable
+            />
             <Group justify="flex-end">
               <Button variant="default" onClick={() => { closePinModal(); resetPinForm() }}>
                 {t('common.cancel')}

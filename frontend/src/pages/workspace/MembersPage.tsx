@@ -7,8 +7,9 @@ import { useTranslation } from 'react-i18next'
 import {
   Container, Title, Text, Group, Button, Modal, Stack, Alert, Tabs,
   TextInput, PasswordInput, Select, Badge, Avatar, ActionIcon, Center, Skeleton,
-  Table, Checkbox, Paper, SegmentedControl, Drawer,
+  Checkbox, Paper, SegmentedControl, Drawer,
 } from '@mantine/core'
+import { GatePermissionsGrid, useGatePermissions } from '@/components/GatePermissionsGrid'
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { UserPlus, Trash2, Users, AlertCircle, Settings2, X, Pencil } from 'lucide-react'
 import { notifySuccess, notifyError, extractApiError } from '@/lib/notify'
@@ -19,14 +20,7 @@ const ROLE_COLOR: Record<string, string> = {
   MEMBER: 'gray',
 }
 
-const PERMISSIONS = [
-  { code: 'gate:read_status', labelKey: 'permissions.viewStatus' },
-  { code: 'gate:trigger_open', labelKey: 'permissions.triggerOpen' },
-  { code: 'gate:trigger_close', labelKey: 'permissions.triggerClose' },
-  { code: 'gate:manage', labelKey: 'permissions.manage' },
-] as const
-
-type PermCode = typeof PERMISSIONS[number]['code']
+type PermCode = 'gate:read_status' | 'gate:trigger_open' | 'gate:trigger_close' | 'gate:manage'
 
 const AUTH_METHODS = [
   { key: 'password', labelKey: 'settings.passwordAuth' },
@@ -130,6 +124,7 @@ function MemberSettingsDrawer({
   onClose: () => void
 }) {
   const { t } = useTranslation()
+  const gatePermissions = useGatePermissions()
   const qc = useQueryClient()
 
   const { data: schedules = [] } = useQuery<AccessSchedule[]>({
@@ -205,39 +200,17 @@ function MemberSettingsDrawer({
         </Tabs.List>
 
         <Tabs.Panel value="permissions" p="md">
+          <Text size="xs" c="dimmed" mb="sm">{t('members.gatePermissionsHint')}</Text>
           {gates.length === 0 ? (
             <Text size="sm" c="dimmed">{t('gates.noGates')}</Text>
           ) : (
-            <Stack gap="md">
-              <Table withColumnBorders withRowBorders={false} horizontalSpacing="xs" verticalSpacing={4} fz="xs">
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th style={{ minWidth: 90 }}>{t('common.name')}</Table.Th>
-                    {PERMISSIONS.map(({ code, labelKey }) => (
-                      <Table.Th key={code} ta="center" style={{ width: 62 }}>
-                        {t(labelKey as Parameters<typeof t>[0])}
-                      </Table.Th>
-                    ))}
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {gates.map((gate) => (
-                    <Table.Tr key={gate.id}>
-                      <Table.Td><Text size="xs" truncate maw={110}>{gate.name}</Text></Table.Td>
-                      {PERMISSIONS.map(({ code }) => (
-                        <Table.Td key={code} ta="center">
-                          <Checkbox
-                            size="xs"
-                            checked={hasPermission(gate.id, code)}
-                            onChange={() => toggle(gate.id, code, hasPermission(gate.id, code))}
-                          />
-                        </Table.Td>
-                      ))}
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </Stack>
+            <GatePermissionsGrid
+              gates={gates}
+              permissions={gatePermissions}
+              isChecked={hasPermission}
+              onToggle={(gateId, code) => toggle(gateId, code, hasPermission(gateId, code))}
+              withColumnSelect
+            />
           )}
         </Tabs.Panel>
 
@@ -288,6 +261,7 @@ function EditMemberModal({
   const qc = useQueryClient()
   const [displayName, setDisplayName] = useState(member.display_name ?? '')
   const [localUsername, setLocalUsername] = useState(member.local_username ?? '')
+  const [role, setRole] = useState(member.role)
   const [error, setError] = useState<string | null>(null)
 
   const update = useMutation({
@@ -295,6 +269,7 @@ function EditMemberModal({
       membersApi.update(wsId, member.id, {
         display_name: displayName || undefined,
         local_username: member.local_username != null ? (localUsername || undefined) : undefined,
+        role: role !== member.role ? role : undefined,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['members', wsId] })
@@ -321,6 +296,17 @@ function EditMemberModal({
               value={localUsername}
               onChange={(e) => setLocalUsername(e.target.value)}
               placeholder={t('members.usernamePlaceholder')}
+            />
+          )}
+          {member.role !== 'OWNER' && (
+            <Select
+              label={t('common.role')}
+              value={role}
+              onChange={(v) => v && setRole(v as WorkspaceMembership['role'])}
+              data={[
+                { value: 'MEMBER', label: 'Member' },
+                { value: 'ADMIN', label: 'Admin' },
+              ]}
             />
           )}
           {error && <Alert icon={<AlertCircle size={16} />} color="red" variant="light">{error}</Alert>}
@@ -397,12 +383,6 @@ export default function MembersPage() {
     onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
-  const updateRole = useMutation({
-    mutationFn: ({ memberId, newRole }: { memberId: string; newRole: string }) =>
-      membersApi.update(wsId!, memberId, { role: newRole }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members', wsId] }); notifySuccess(t('common.saved')) },
-    onError: (err: unknown) => notifyError(err, t('common.error')),
-  })
 
   function resetAndClose() {
     closeAdd()
@@ -550,39 +530,20 @@ export default function MembersPage() {
 
             return (
               <Paper key={m.id} withBorder radius="md" p="sm">
-                <Group justify="space-between" align="flex-start" wrap="wrap" gap="xs">
-                  <Group gap="sm" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
-                    {isSelectable ? (
-                      <Checkbox size="xs" checked={isSelected} onChange={() => toggleSelected(m.id)} style={{ flexShrink: 0, marginTop: 2 }} />
-                    ) : (
-                      <div style={{ width: 16, flexShrink: 0 }} />
+                <Group wrap="nowrap" gap="xs" align="center">
+                  {isSelectable && (
+                    <Checkbox size="xs" checked={isSelected} onChange={() => toggleSelected(m.id)} style={{ flexShrink: 0 }} />
+                  )}
+                  <Avatar color="indigo" radius="xl" size={32} style={{ flexShrink: 0 }}>{memberName[0].toUpperCase()}</Avatar>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <Text size="sm" fw={500} truncate>{memberName}</Text>
+                    {m.local_username && m.display_name && (
+                      <Text size="xs" c="dimmed" ff="mono" truncate>{m.local_username}</Text>
                     )}
-                    <Avatar color="indigo" radius="xl" size={32} style={{ flexShrink: 0 }}>{memberName[0].toUpperCase()}</Avatar>
-                    <div style={{ minWidth: 0 }}>
-                      <Text size="sm" fw={500} truncate>{memberName}</Text>
-                      {m.local_username && m.display_name && (
-                        <Text size="xs" c="dimmed" ff="mono" truncate>{m.local_username}</Text>
-                      )}
-                    </div>
-                  </Group>
-
-                  <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
-                    {m.role !== 'OWNER' ? (
-                      <Select
-                        size="xs"
-                        value={m.role}
-                        onChange={(v) => v && updateRole.mutate({ memberId: m.id, newRole: v })}
-                        data={[
-                          { value: 'MEMBER', label: 'Member' },
-                          { value: 'ADMIN', label: 'Admin' },
-                        ]}
-                        styles={{ input: { minWidth: 82 } }}
-                        comboboxProps={{ withinPortal: true }}
-                      />
-                    ) : (
-                      <Badge color={ROLE_COLOR['OWNER']} variant="light" size="sm">OWNER</Badge>
-                    )}
-
+                  </div>
+                  <Badge visibleFrom="xs" color={ROLE_COLOR[m.role]} variant="light" size="sm" style={{ flexShrink: 0 }}>{m.role}</Badge>
+                  <Badge hiddenFrom="xs" color={ROLE_COLOR[m.role]} variant="light" size="sm" style={{ flexShrink: 0 }}>{m.role[0]}</Badge>
+                  <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
                     <ActionIcon
                       variant="subtle"
                       size="sm"
@@ -591,7 +552,6 @@ export default function MembersPage() {
                     >
                       <Pencil size={14} />
                     </ActionIcon>
-
                     {m.role === 'MEMBER' && (
                       <ActionIcon
                         variant="subtle"
@@ -602,7 +562,6 @@ export default function MembersPage() {
                         <Settings2 size={14} />
                       </ActionIcon>
                     )}
-
                     {m.role !== 'OWNER' && (
                       <ActionIcon variant="subtle" color="red" size="sm" onClick={() => deleteMember.mutate(m.id)}>
                         <Trash2 size={14} />
@@ -661,26 +620,32 @@ export default function MembersPage() {
         >
           <Stack gap="xs">
             <Group justify="space-between" align="center" wrap="nowrap">
-              <Group gap="xs" align="center" wrap="nowrap">
-                <Text size="sm" fw={600}>{selectedMembers.size} / {selectableMembers.length}</Text>
-                <SegmentedControl
-                  size="xs"
-                  value={bulkMode}
-                  onChange={(v) => setBulkMode(v as 'permissions' | 'auth')}
-                  data={[
-                    { value: 'permissions', label: t('members.gatePermissions') },
-                    { value: 'auth', label: t('members.authOverrides') },
-                  ]}
-                />
-              </Group>
+              <Text size="sm" fw={600}>{selectedMembers.size} / {selectableMembers.length}</Text>
               <ActionIcon variant="subtle" color="gray" size="sm" onClick={() => setSelectedMembers(new Set())}>
                 <X size={14} />
               </ActionIcon>
             </Group>
+            <SegmentedControl
+              size="xs"
+              fullWidth
+              value={bulkMode}
+              onChange={(v) => setBulkMode(v as 'permissions' | 'auth')}
+              data={[
+                { value: 'permissions', label: t('members.expandPermissions') },
+                { value: 'auth', label: t('members.bulkAuth') },
+              ]}
+            />
 
             {bulkMode === 'permissions' ? (
               <Stack gap={4}>
-                {PERMISSIONS.map(({ code, labelKey }) => (
+                {(
+                  [
+                    { code: 'gate:read_status' as PermCode, labelKey: 'permissions.viewStatus' },
+                    { code: 'gate:trigger_open' as PermCode, labelKey: 'permissions.triggerOpen' },
+                    { code: 'gate:trigger_close' as PermCode, labelKey: 'permissions.triggerClose' },
+                    { code: 'gate:manage' as PermCode, labelKey: 'permissions.manage' },
+                  ] as const
+                ).map(({ code, labelKey }) => (
                   <Group key={code} justify="space-between" align="center" wrap="nowrap">
                     <Text size="xs" fw={500}>{t(labelKey as Parameters<typeof t>[0])}</Text>
                     <Group gap={4} wrap="nowrap">

@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { workspacesApi } from '@/api'
+import { workspacesApi, gatesApi } from '@/api'
+import type { Gate } from '@/types'
 import { useTranslation } from 'react-i18next'
 import {
   Container, Title, Text, Stack, Paper, Group, Button, TextInput, PasswordInput, Select, Alert,
   Switch, Divider, ActionIcon, Badge, Modal, NumberInput, Loader, Center, Collapse, Anchor,
 } from '@mantine/core'
+import { GatePermissionsGrid, useGatePermissions } from '@/components/GatePermissionsGrid'
 import { useDisclosure } from '@mantine/hooks'
 import { KeyRound, Save, CheckCircle2, Plus, Trash2, Pencil, AlertTriangle } from 'lucide-react'
 import { notifySuccess, notifyError } from '@/lib/notify'
@@ -264,6 +266,7 @@ export default function SettingsPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { t } = useTranslation()
+  const gatePermissions = useGatePermissions()
   const [saved, setSaved] = useState(false)
   const [macSaved, setMacSaved] = useState(false)
   const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false)
@@ -315,6 +318,13 @@ export default function SettingsPage() {
     enabled: !!wsId,
   })
 
+  const { data: gatesData } = useQuery({
+    queryKey: ['gates', wsId],
+    queryFn: () => gatesApi.list(wsId!),
+    enabled: !!wsId,
+  })
+  const gates = (gatesData ?? []) as Gate[]
+
   const providers: SSOProvider[] = (ssoData?.providers ?? []) as SSOProvider[]
 
   const [passwordAuth, setPasswordAuth] = useState<boolean>(true)
@@ -322,6 +332,8 @@ export default function SettingsPage() {
   const [apiTokenAuth, setApiTokenAuth] = useState<boolean>(false)
   const [apiTokenMax, setApiTokenMax] = useState<number>(5)
   const [sessionDuration, setSessionDuration] = useState<number | string>('')
+  // defaultGatePerms: { gate_id -> Set<permCode> }
+  const [defaultGatePerms, setDefaultGatePerms] = useState<Record<string, Set<string>>>({})
 
   // Sync MAC state once data is loaded (only on first load)
   const [macInitialized, setMacInitialized] = useState(false)
@@ -331,6 +343,14 @@ export default function SettingsPage() {
     setApiTokenAuth((macData.api_token as boolean) ?? false)
     setApiTokenMax((macData.api_token_max as number) ?? 5)
     if (macData.session_duration != null) setSessionDuration(macData.session_duration as number)
+    const dgp = macData.default_gate_permissions
+    if (Array.isArray(dgp)) {
+      const map: Record<string, Set<string>> = {}
+      for (const entry of dgp as { gate_id: string; permissions: string[] }[]) {
+        if (entry.gate_id) map[entry.gate_id] = new Set(entry.permissions ?? [])
+      }
+      setDefaultGatePerms(map)
+    }
     setMacInitialized(true)
   }
 
@@ -377,12 +397,16 @@ export default function SettingsPage() {
 
   function handleSaveMemberAuth() {
     const dur = typeof sessionDuration === 'number' ? sessionDuration : (sessionDuration === '' ? null : parseInt(String(sessionDuration), 10))
+    const defaultGatePermsList = Object.entries(defaultGatePerms)
+      .filter(([, perms]) => perms.size > 0)
+      .map(([gate_id, perms]) => ({ gate_id, permissions: Array.from(perms) }))
     updateMAC.mutate({
       password: passwordAuth,
       sso: ssoAuth,
       api_token: apiTokenAuth,
       api_token_max: apiTokenMax,
       session_duration: dur,
+      default_gate_permissions: defaultGatePermsList,
     })
   }
 
@@ -403,8 +427,8 @@ export default function SettingsPage() {
 
       {/* Rename workspace */}
       <Paper withBorder p="lg" radius="md" mb="md">
-        <Text fw={600} mb={4}>{t('settings.renameWorkspace')}</Text>
-        <Text size="xs" c="dimmed" mb="xs">{t('settings.renameWorkspaceHint')}</Text>
+        <Text fw={600} mb="xs">{t('settings.renameWorkspace')}</Text>
+        <Text size="xs" c="dimmed" mb="md">{t('settings.renameWorkspaceHint')}</Text>
         <Group gap="xs" align="flex-end">
           <TextInput
             placeholder={wsData?.name ?? ''}
@@ -476,13 +500,11 @@ export default function SettingsPage() {
       </Paper>
 
       {/* Member auth defaults */}
-      <Paper withBorder p="lg" radius="md">
-        <Stack gap="xs" mb="md">
-          <Text fw={600}>{t('settings.memberAuthDefaults')}</Text>
-          <Text size="xs" c="dimmed">{t('settings.memberAuthDefaultsHint')}</Text>
-        </Stack>
+      <Paper withBorder p="lg" radius="md" mb="md">
+        <Text fw={600} mb="xs">{t('settings.memberAuthDefaults')}</Text>
+        <Text size="xs" c="dimmed" mb="lg">{t('settings.memberAuthDefaultsHint')}</Text>
 
-        <Stack gap="md">
+        <Stack gap="lg">
           <Switch
             label={t('settings.passwordAuth')}
             checked={passwordAuth}
@@ -519,6 +541,33 @@ export default function SettingsPage() {
             w={200}
           />
         </Stack>
+      </Paper>
+
+      {/* Default member permissions */}
+      <Paper withBorder p="lg" radius="md">
+        <Text fw={600} mb="xs">{t('settings.defaultMemberPermissions')}</Text>
+        <Text size="xs" c="dimmed" mb="md">{t('settings.defaultMemberPermissionsHint')}</Text>
+
+        {gates.length === 0 ? (
+          <Text size="xs" c="dimmed" fs="italic">{t('settings.noGatesForDefaults')}</Text>
+        ) : (
+          <GatePermissionsGrid
+            gates={gates}
+            permissions={gatePermissions}
+            isChecked={(gateId, code) => (defaultGatePerms[gateId] ?? new Set()).has(code)}
+            onToggle={(gateId, code) => {
+              setDefaultGatePerms((prev) => {
+                const next = { ...prev }
+                const set = new Set(next[gateId] ?? [])
+                if (set.has(code)) set.delete(code)
+                else set.add(code)
+                next[gateId] = set
+                return next
+              })
+            }}
+            withColumnSelect
+          />
+        )}
 
         {macSaved && (
           <Alert icon={<CheckCircle2 size={16} />} color="green" variant="light" mt="md">
@@ -552,6 +601,7 @@ export default function SettingsPage() {
             variant="light"
             leftSection={<Trash2 size={14} />}
             onClick={openDeleteModal}
+            style={{ maxWidth: '100%' }}
           >
             {t('settings.deleteWorkspace')}
           </Button>

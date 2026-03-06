@@ -32,6 +32,8 @@ const en = {
     saved: 'Saved',
     created: 'Created',
     deleted: 'Deleted',
+    selectAll: 'Select all',
+    deselectAll: 'Deselect all',
   },
   theme: {
     light: 'Light',
@@ -162,6 +164,7 @@ const en = {
     authOverridesHint: 'Override workspace defaults for this member (null = inherit)',
     authInherit: 'Inherit',
     gatePermissions: 'Gate permissions',
+    gatePermissionsHint: 'Control which gates this member can access and what they can do',
     bulkNone: 'None',
     bulkRead: 'Read',
     bulkOperator: 'Operator',
@@ -171,6 +174,7 @@ const en = {
     editMember: 'Member settings',
     editMemberInfo: 'Edit member',
     bulkResetAuth: 'Reset auth',
+    bulkAuth: 'Auth',
     changeRole: 'Change role',
     schedules: 'Schedules',
     schedulesHint: 'Restrict gate access to specific time windows for this member',
@@ -183,6 +187,10 @@ const en = {
     tokenExpiresAt: 'Expiry date',
     tokenDisabled: 'API tokens disabled',
     tokenDisabledHint: 'API token authentication is currently disabled for this workspace. Your existing tokens are locked — they will not work until the setting is re-enabled. You can still view and delete them.',
+    tokenSchedule: 'Schedule restriction',
+    tokenScheduleHint: 'Token only works when the selected schedule is active',
+    tokenRestrictPerms: 'Restrict permissions',
+    tokenRestrictPermsHint: 'By default the token inherits all your member permissions, including admin ones. Enable to select specific gates and actions.',
   },
   permissions: {
     title: 'Member permissions',
@@ -300,6 +308,9 @@ const en = {
     addRoleMapping: 'Add mapping',
     claimValue: 'Claim value',
     mappedRole: 'Mapped role',
+    defaultMemberPermissions: 'Default permissions for new members',
+    defaultMemberPermissionsHint: 'Permissions automatically granted per gate when a new member is created',
+    noGatesForDefaults: 'No gates yet — add gates first to configure default permissions',
     dangerZone: 'Danger zone',
     renameWorkspace: 'Rename workspace',
     renameWorkspaceHint: 'Change the display name of this workspace.',
@@ -354,4 +365,5 @@ const en = {
 } as const
 
 export default en
-export type Translations = typeof en
+type StringValues<T> = { [K in keyof T]: T[K] extends string ? string : StringValues<T[K]> }
+export type Translations = StringValues<typeof en>

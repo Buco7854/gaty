@@ -2,8 +2,10 @@ import { NavLink as RouterNavLink, Outlet, useNavigate, useParams } from 'react-
 import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '@/store/auth'
 import type { WorkspaceWithRole } from '@/types'
-import { workspacesApi, memberCredApi, workspaceCredApi } from '@/api'
+import { workspacesApi, memberCredApi, workspaceCredApi, gatesApi, schedulesApi } from '@/api'
 import type { MemberCredential, CreatedToken, MyEffectiveAuthConfig } from '@/api'
+import type { Gate, AccessSchedule } from '@/types'
+import { GatePermissionsGrid, useGatePermissions } from '@/components/GatePermissionsGrid'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
 import { useTranslation } from 'react-i18next'
@@ -29,6 +31,8 @@ import {
   Alert,
   Skeleton,
   Drawer,
+  Switch,
+  Select,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import {
@@ -52,6 +56,7 @@ import { findLocalSession } from '@/utils/session'
 export default function AppLayout() {
   const { wsId } = useParams<{ wsId?: string }>()
   const { t } = useTranslation()
+  const tokenPermissions = useGatePermissions()
   const user = useAuthStore((s) => s.user)
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const logout = useAuthStore((s) => s.logout)
@@ -65,6 +70,11 @@ export default function AppLayout() {
   const [tokenExpiresAt, setTokenExpiresAt] = useState('')
   const [newToken, setNewToken] = useState<CreatedToken | null>(null)
   const [memberAuthConfig, setMemberAuthConfig] = useState<MyEffectiveAuthConfig | null>(null)
+  const [tokenGates, setTokenGates] = useState<Gate[]>([])
+  const [tokenSchedules, setTokenSchedules] = useState<AccessSchedule[]>([])
+  const [tokenScheduleId, setTokenScheduleId] = useState('')
+  const [tokenRestrictPerms, setTokenRestrictPerms] = useState(false)
+  const [tokenPolicies, setTokenPolicies] = useState<{ gate_id: string; permission_code: string }[]>([])
 
   const isAdmin = isAuthenticated()
 
@@ -104,7 +114,7 @@ export default function AppLayout() {
     }
   }
 
-  // Load tokens and effective auth config when modal opens
+  // Load tokens, auth config, gates and schedules when modal opens
   useEffect(() => {
     if (!tokenModalOpened) return
     setTokensLoading(true)
@@ -113,9 +123,13 @@ export default function AppLayout() {
       Promise.all([
         workspaceCredApi.listTokens(wsId),
         workspaceCredApi.getMyAuthConfig(wsId).catch(() => null),
-      ]).then(([tks, cfg]) => {
+        gatesApi.list(wsId).catch(() => []),
+        schedulesApi.list(wsId).catch(() => []),
+      ]).then(([tks, cfg, gates, schedules]) => {
         setTokens(tks)
         setMemberAuthConfig(cfg)
+        setTokenGates(gates as Gate[])
+        setTokenSchedules(schedules as AccessSchedule[])
       }).finally(() => setTokensLoading(false))
     } else if (localSession?.access_token && wsId) {
       Promise.all([
@@ -130,12 +144,29 @@ export default function AppLayout() {
     }
   }, [tokenModalOpened, isAdmin, wsId, localSession?.access_token])
 
+  function resetTokenForm() {
+    setTokenLabel('')
+    setTokenExpiresAt('')
+    setTokenScheduleId('')
+    setTokenRestrictPerms(false)
+    setTokenPolicies([])
+  }
+
+  function togglePolicy(gateId: string, permCode: string) {
+    setTokenPolicies((prev) => {
+      const exists = prev.some((p) => p.gate_id === gateId && p.permission_code === permCode)
+      if (exists) return prev.filter((p) => !(p.gate_id === gateId && p.permission_code === permCode))
+      return [...prev, { gate_id: gateId, permission_code: permCode }]
+    })
+  }
+
   async function handleCreateToken(e: React.FormEvent) {
     e.preventDefault()
     if (!tokenLabel.trim()) return
     let created: CreatedToken
     if (isAdmin && wsId) {
-      created = await workspaceCredApi.createToken(wsId, tokenLabel, tokenExpiresAt || undefined)
+      const policies = tokenRestrictPerms && tokenPolicies.length > 0 ? tokenPolicies : undefined
+      created = await workspaceCredApi.createToken(wsId, tokenLabel, tokenExpiresAt || undefined, policies, tokenScheduleId || undefined)
       const updated = await workspaceCredApi.listTokens(wsId)
       setTokens(updated)
     } else if (localSession?.access_token) {
@@ -146,8 +177,7 @@ export default function AppLayout() {
       return
     }
     setNewToken(created)
-    setTokenLabel('')
-    setTokenExpiresAt('')
+    resetTokenForm()
   }
 
   async function handleDeleteToken(credId: string) {
@@ -422,9 +452,9 @@ export default function AppLayout() {
       {/* API token management modal */}
       <Modal
         opened={tokenModalOpened}
-        onClose={() => { closeTokenModal(); setNewToken(null); setTokenLabel(''); setTokenExpiresAt(''); setMemberAuthConfig(null) }}
+        onClose={() => { closeTokenModal(); setNewToken(null); resetTokenForm(); setMemberAuthConfig(null) }}
         title={t('members.apiTokens')}
-        size="sm"
+        size={isAdmin && tokenGates.length > 0 ? 'md' : 'sm'}
       >
         <Stack gap="md">
           {memberAuthConfig?.api_token === false && (
@@ -474,6 +504,54 @@ export default function AppLayout() {
                   onChange={(e) => setTokenExpiresAt(e.target.value)}
                   size="xs"
                 />
+
+                {/* Fine-grained options — admin only */}
+                {isAdmin && (
+                  <>
+                    <Select
+                      label={t('members.tokenSchedule')}
+                      description={t('members.tokenScheduleHint')}
+                      value={tokenScheduleId}
+                      onChange={(v) => setTokenScheduleId(v ?? '')}
+                      data={[
+                        { value: '', label: t('common.none') },
+                        ...tokenSchedules.map((s) => ({ value: s.id, label: s.name })),
+                      ]}
+                      size="xs"
+                      clearable
+                    />
+
+                    {tokenGates.length > 0 && (
+                      <Switch
+                        label={t('members.tokenRestrictPerms')}
+                        description={t('members.tokenRestrictPermsHint')}
+                        checked={tokenRestrictPerms}
+                        onChange={(e) => {
+                          setTokenRestrictPerms(e.currentTarget.checked)
+                          if (!e.currentTarget.checked) setTokenPolicies([])
+                        }}
+                        size="xs"
+                      />
+                    )}
+
+                    {tokenRestrictPerms && tokenGates.length > 0 && (
+                      <div>
+                        <Text size="xs" fw={600} mb={6}>{t('members.gatePermissions')}</Text>
+                        <GatePermissionsGrid
+                          gates={tokenGates}
+                          permissions={tokenPermissions}
+                          isChecked={(gateId, code) =>
+                            tokenPolicies.some((p) => p.gate_id === gateId && p.permission_code === code)
+                          }
+                          onToggle={togglePolicy}
+                          withColumnSelect
+                          maxHeight={200}
+                        />
+                      </div>
+                    )}
+                  </>
+                )}
+
                 <Button type="submit" size="xs" disabled={!tokenLabel.trim()} fullWidth>
                   {t('common.add')}
                 </Button>

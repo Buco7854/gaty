@@ -375,6 +375,23 @@ func (r *gateRepository) SetToken(ctx context.Context, gateID, wsID uuid.UUID, t
 	return nil
 }
 
+func (r *gateRepository) ListIDsForWorkspace(ctx context.Context, wsID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id FROM gates WHERE workspace_id = $1`, wsID)
+	if err != nil {
+		return nil, fmt.Errorf("list gate ids: %w", err)
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan gate id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (r *gateRepository) ListForWorkspace(ctx context.Context, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID) ([]model.Gate, error) {
 	isAdmin := role == model.RoleOwner || role == model.RoleAdmin
 

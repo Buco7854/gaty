@@ -99,7 +99,7 @@ func main() {
 
 	// Services
 	authSvc := service.NewAuthService(userRepo, credRepo, membershipRepo, memberCredRepo, wsRepo, redisClient, cfg.JWTSecret, cfg.GlobalSessionDuration)
-	membershipSvc := service.NewMembershipService(membershipRepo, memberCredRepo, wsRepo)
+	membershipSvc := service.NewMembershipService(membershipRepo, memberCredRepo, wsRepo, gateRepo, policyRepo)
 	ssoSvc := service.NewSSOService(wsRepo, membershipRepo, memberCredRepo, redisClient, cfg.BaseURL)
 	workspaceSvc := service.NewWorkspaceService(wsRepo)
 	scheduleSvc := service.NewScheduleService(scheduleRepo)

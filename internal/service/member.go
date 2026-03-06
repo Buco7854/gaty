@@ -29,17 +29,23 @@ type MembershipService struct {
 	memberships repository.WorkspaceMembershipRepository
 	memberCreds repository.MembershipCredentialRepository
 	workspaces  repository.WorkspaceRepository
+	gates       repository.GateRepository
+	policies    repository.PolicyRepository
 }
 
 func NewMembershipService(
 	memberships repository.WorkspaceMembershipRepository,
 	memberCreds repository.MembershipCredentialRepository,
 	workspaces repository.WorkspaceRepository,
+	gates repository.GateRepository,
+	policies repository.PolicyRepository,
 ) *MembershipService {
 	return &MembershipService{
 		memberships: memberships,
 		memberCreds: memberCreds,
 		workspaces:  workspaces,
+		gates:       gates,
+		policies:    policies,
 	}
 }
 
@@ -61,6 +67,10 @@ func (s *MembershipService) CreateLocal(ctx context.Context, workspaceID uuid.UU
 	_, err = s.memberCreds.Create(ctx, membership.ID, model.CredPassword, string(hashed), nil, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create password credential: %w", err)
+	}
+
+	if err := s.applyDefaultPermissions(ctx, workspaceID, membership.ID); err != nil {
+		fmt.Printf("warn: apply default permissions for membership %s: %v\n", membership.ID, err)
 	}
 
 	return membership, nil
@@ -130,7 +140,58 @@ func (s *MembershipService) InviteUser(ctx context.Context, workspaceID, userID 
 	if err != nil {
 		return nil, fmt.Errorf("invite user: %w", err)
 	}
+	if err := s.applyDefaultPermissions(ctx, workspaceID, membership.ID); err != nil {
+		// Non-fatal: membership is created, permissions can be set manually.
+		fmt.Printf("warn: apply default permissions for membership %s: %v\n", membership.ID, err)
+	}
 	return membership, nil
+}
+
+// applyDefaultPermissions grants workspace-default per-gate permissions to a newly created membership.
+// member_auth_config["default_gate_permissions"] is expected to be:
+//
+//	[{"gate_id": "<uuid>", "permissions": ["gate:read_status", ...]}, ...]
+func (s *MembershipService) applyDefaultPermissions(ctx context.Context, workspaceID, membershipID uuid.UUID) error {
+	ws, err := s.workspaces.GetByID(ctx, workspaceID)
+	if err != nil {
+		return fmt.Errorf("get workspace: %w", err)
+	}
+	raw, ok := ws.MemberAuthConfig["default_gate_permissions"]
+	if !ok || raw == nil {
+		return nil
+	}
+	entries, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	for _, entry := range entries {
+		m, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		gateIDStr, ok := m["gate_id"].(string)
+		if !ok {
+			continue
+		}
+		gateID, err := uuid.Parse(gateIDStr)
+		if err != nil {
+			continue
+		}
+		permsAny, ok := m["permissions"].([]any)
+		if !ok {
+			continue
+		}
+		for _, p := range permsAny {
+			perm, ok := p.(string)
+			if !ok {
+				continue
+			}
+			if err := s.policies.Grant(ctx, membershipID, gateID, perm); err != nil {
+				return fmt.Errorf("grant %s on gate %s: %w", perm, gateID, err)
+			}
+		}
+	}
+	return nil
 }
 
 // GetEffectiveAuthConfig merges workspace-level member_auth_config with membership-level override.
