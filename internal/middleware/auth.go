@@ -60,7 +60,7 @@ func AuthExtractor(authSvc *service.AuthService, memberCredRepo repository.Membe
 				hash := hex.EncodeToString(h[:])
 				if cred, membership, err := memberCredRepo.FindByHashedAPIToken(ctx.Context(), hash); err == nil {
 					ws, wsErr := wsRepo.GetByID(ctx.Context(), membership.WorkspaceID)
-					if wsErr == nil && (membership.Role == model.RoleAdmin || membership.Role == model.RoleOwner || apiTokenEnabled(membership.AuthConfig, ws.MemberAuthConfig)) {
+					if wsErr == nil && apiTokenEnabled(membership.AuthConfig, ws.MemberAuthConfig) {
 						ctx = huma.WithValue(ctx, memberIDKey, membership.ID)
 						ctx = huma.WithValue(ctx, memberWorkspaceIDKey, membership.WorkspaceID)
 						ctx = huma.WithValue(ctx, memberRoleKey, membership.Role)
@@ -143,6 +143,13 @@ func MemberRoleFromContext(ctx context.Context) (model.WorkspaceRole, bool) {
 func CredentialIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	id, ok := ctx.Value(credentialIDKey).(uuid.UUID)
 	return id, ok && id != uuid.Nil
+}
+
+// IsAPITokenAuth reports whether the current request was authenticated via an API token (gatie_* prefix).
+// API tokens are always fine-grained: restricted to explicit gate+permission policies regardless of role.
+func IsAPITokenAuth(ctx context.Context) bool {
+	_, ok := CredentialIDFromContext(ctx)
+	return ok
 }
 
 func bearerToken(ctx huma.Context) string {
