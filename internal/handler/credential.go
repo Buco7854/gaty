@@ -195,6 +195,39 @@ type workspaceSelfCredPathParam struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 }
 
+type myEffectiveAuthConfigOutput struct {
+	Body struct {
+		APIToken bool `json:"api_token"`
+	}
+}
+
+// GetMyEffectiveAuthConfig returns the effective API token auth setting for the current member.
+// Considers per-member override first, falls back to workspace default, defaults to true.
+// Accessible to any workspace member (not admin-only).
+func (h *CredentialHandler) GetMyEffectiveAuthConfig(ctx context.Context, input *workspaceSelfCredPathParam) (*myEffectiveAuthConfigOutput, error) {
+	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized("not authenticated as workspace member")
+	}
+	m, err := h.membershipRepo.GetByID(ctx, membershipID, input.WorkspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("membership not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to load membership")
+	}
+	ws, err := h.wsRepo.GetByID(ctx, input.WorkspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("workspace not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to load workspace")
+	}
+	out := &myEffectiveAuthConfigOutput{}
+	out.Body.APIToken = credAPITokenEnabled(m.AuthConfig, ws.MemberAuthConfig)
+	return out, nil
+}
+
 type workspaceSelfCredWithIDPathParam struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	CredID      uuid.UUID `path:"cred_id"`
@@ -597,6 +630,15 @@ func (h *CredentialHandler) RegisterRoutes(
 	}, h.ChangeMyPassword)
 
 	// Workspace member self-service — own workspace membership API tokens
+	huma.Register(api, huma.Operation{
+		OperationID: "get-my-effective-auth-config",
+		Method:      http.MethodGet,
+		Path:        "/api/workspaces/{ws_id}/members/me/auth-config",
+		Summary:     "Get effective auth config for current member",
+		Tags:        []string{"Credentials"},
+		Middlewares: huma.Middlewares{wsMember},
+	}, h.GetMyEffectiveAuthConfig)
+
 	huma.Register(api, huma.Operation{
 		OperationID: "list-my-workspace-member-credentials",
 		Method:      http.MethodGet,

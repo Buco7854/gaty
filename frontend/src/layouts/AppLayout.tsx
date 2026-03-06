@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '@/store/auth'
 import type { WorkspaceWithRole } from '@/types'
 import { workspacesApi, memberCredApi, workspaceCredApi } from '@/api'
-import type { MemberCredential, CreatedToken } from '@/api'
+import type { MemberCredential, CreatedToken, MyEffectiveAuthConfig } from '@/api'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
 import { useTranslation } from 'react-i18next'
@@ -64,7 +64,7 @@ export default function AppLayout() {
   const [tokenLabel, setTokenLabel] = useState('')
   const [tokenExpiresAt, setTokenExpiresAt] = useState('')
   const [newToken, setNewToken] = useState<CreatedToken | null>(null)
-  const [memberAuthConfig, setMemberAuthConfig] = useState<Record<string, unknown> | null>(null)
+  const [memberAuthConfig, setMemberAuthConfig] = useState<MyEffectiveAuthConfig | null>(null)
 
   const isAdmin = isAuthenticated()
 
@@ -104,7 +104,7 @@ export default function AppLayout() {
     }
   }
 
-  // Load tokens (and member auth config for admin) when modal opens
+  // Load tokens and effective auth config when modal opens
   useEffect(() => {
     if (!tokenModalOpened) return
     setTokensLoading(true)
@@ -112,15 +112,19 @@ export default function AppLayout() {
     if (isAdmin && wsId) {
       Promise.all([
         workspaceCredApi.listTokens(wsId),
-        workspacesApi.getMemberAuthConfig(wsId).catch(() => null),
+        workspaceCredApi.getMyAuthConfig(wsId).catch(() => null),
       ]).then(([tks, cfg]) => {
         setTokens(tks)
-        setMemberAuthConfig(cfg as Record<string, unknown> | null)
+        setMemberAuthConfig(cfg)
       }).finally(() => setTokensLoading(false))
-    } else if (localSession?.access_token) {
-      memberCredApi.listTokens(localSession.access_token)
-        .then(setTokens)
-        .finally(() => setTokensLoading(false))
+    } else if (localSession?.access_token && wsId) {
+      Promise.all([
+        memberCredApi.listTokens(localSession.access_token),
+        workspaceCredApi.getMyAuthConfig(wsId, localSession.access_token).catch(() => null),
+      ]).then(([tks, cfg]) => {
+        setTokens(tks)
+        setMemberAuthConfig(cfg)
+      }).finally(() => setTokensLoading(false))
     } else {
       setTokensLoading(false)
     }
