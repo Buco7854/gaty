@@ -60,7 +60,8 @@ func AuthExtractor(authSvc *service.AuthService, memberCredRepo repository.Membe
 				hash := hex.EncodeToString(h[:])
 				if cred, membership, err := memberCredRepo.FindByHashedAPIToken(ctx.Context(), hash); err == nil {
 					ws, wsErr := wsRepo.GetByID(ctx.Context(), membership.WorkspaceID)
-					if wsErr == nil && apiTokenEnabled(membership.AuthConfig, ws.MemberAuthConfig) {
+					isPrivileged := membership.Role == model.RoleAdmin || membership.Role == model.RoleOwner
+					if wsErr == nil && (isPrivileged || apiTokenEnabled(membership.AuthConfig, ws.MemberAuthConfig)) {
 						ctx = huma.WithValue(ctx, memberIDKey, membership.ID)
 						ctx = huma.WithValue(ctx, memberWorkspaceIDKey, membership.WorkspaceID)
 						ctx = huma.WithValue(ctx, memberRoleKey, membership.Role)
