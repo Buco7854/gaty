@@ -71,13 +71,14 @@ type rowScanner interface {
 // scanGate fills g from a row that yields colsFull columns.
 // Callers handle ErrNoRows themselves (pgx.Row.Scan returns it directly).
 func scanGate(s rowScanner, g *model.Gate) error {
-	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules []byte
+	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses []byte
 	err := s.Scan(
 		&g.ID, &g.WorkspaceID, &g.Name,
 		&g.IntegrationType, &g.IntegrationConfig,
 		&rawOpen, &rawClose, &rawStatus,
 		&g.Status, &g.LastSeenAt,
 		&rawMeta, &rawMetaCfg, &rawStatusRules,
+		&rawCustomStatuses,
 		&g.CreatedAt,
 	)
 	if err != nil {
@@ -91,12 +92,16 @@ func scanGate(s rowScanner, g *model.Gate) error {
 	}
 	g.MetaConfig = unmarshalMetaConfig(rawMetaCfg)
 	g.StatusRules = unmarshalStatusRules(rawStatusRules)
+	if len(rawCustomStatuses) > 0 {
+		_ = json.Unmarshal(rawCustomStatuses, &g.CustomStatuses)
+	}
 	return nil
 }
 
 const colsFull = `id, workspace_id, name, integration_type, integration_config,
                   open_config, close_config, status_config,
-                  status, last_seen_at, status_metadata, meta_config, status_rules, created_at`
+                  status, last_seen_at, status_metadata, meta_config, status_rules,
+                  custom_statuses, created_at`
 
 func marshalJSONSlice[T any](v []T, fallback string) json.RawMessage {
 	if len(v) == 0 {
@@ -115,11 +120,11 @@ func (r *gateRepository) Create(ctx context.Context, wsID uuid.UUID, p repositor
 	// Single round-trip: INSERT + RETURNING gate_token + all gate columns.
 	var g model.Gate
 	var token string
-	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules []byte
+	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses []byte
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO gates (workspace_id, name, integration_type, integration_config,
-		                    open_config, close_config, status_config, meta_config, status_rules)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		                    open_config, close_config, status_config, meta_config, status_rules, custom_statuses)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 RETURNING gate_token, `+colsFull,
 		wsID, p.Name, p.IntegrationType, p.IntegrationConfig,
 		marshalActionConfig(p.OpenConfig),
@@ -127,6 +132,7 @@ func (r *gateRepository) Create(ctx context.Context, wsID uuid.UUID, p repositor
 		marshalActionConfig(p.StatusConfig),
 		marshalJSONSlice(p.MetaConfig, "[]"),
 		marshalJSONSlice(p.StatusRules, "[]"),
+		marshalJSONSlice(p.CustomStatuses, "[]"),
 	).Scan(
 		&token,
 		&g.ID, &g.WorkspaceID, &g.Name,
@@ -134,6 +140,7 @@ func (r *gateRepository) Create(ctx context.Context, wsID uuid.UUID, p repositor
 		&rawOpen, &rawClose, &rawStatus,
 		&g.Status, &g.LastSeenAt,
 		&rawMeta, &rawMetaCfg, &rawStatusRules,
+		&rawCustomStatuses,
 		&g.CreatedAt,
 	)
 	if err != nil {
@@ -147,6 +154,9 @@ func (r *gateRepository) Create(ctx context.Context, wsID uuid.UUID, p repositor
 	}
 	g.MetaConfig = unmarshalMetaConfig(rawMetaCfg)
 	g.StatusRules = unmarshalStatusRules(rawStatusRules)
+	if len(rawCustomStatuses) > 0 {
+		_ = json.Unmarshal(rawCustomStatuses, &g.CustomStatuses)
+	}
 	g.GateToken = &token
 	return &g, nil
 }
@@ -213,6 +223,11 @@ func (r *gateRepository) Update(ctx context.Context, gateID, wsID uuid.UUID, p r
 		args = append(args, marshalJSONSlice(p.StatusRules, "[]"))
 		n++
 	}
+	if p.CustomStatuses != nil {
+		sets = append(sets, fmt.Sprintf("custom_statuses = $%d::jsonb", n))
+		args = append(args, marshalJSONSlice(p.CustomStatuses, "[]"))
+		n++
+	}
 
 	if len(sets) == 0 {
 		return r.GetByID(ctx, gateID, wsID)
@@ -268,13 +283,13 @@ func (r *gateRepository) GetPublicInfo(ctx context.Context, gateID uuid.UUID) (*
 		`SELECT g.id, g.name, w.id, w.name,
 		        COALESCE(g.open_config->>'type', 'NONE') <> 'NONE',
 		        COALESCE(g.close_config->>'type', 'NONE') <> 'NONE',
-		        g.meta_config, g.status_metadata
+		        g.status, g.meta_config, g.status_metadata
 		 FROM gates g
 		 JOIN workspaces w ON w.id = g.workspace_id
 		 WHERE g.id = $1`,
 		gateID,
 	).Scan(&info.GateID, &info.GateName, &info.WorkspaceID, &info.WorkspaceName,
-		&info.HasOpenAction, &info.HasCloseAction, &rawMetaCfg, &rawStatusMeta)
+		&info.HasOpenAction, &info.HasCloseAction, &info.Status, &rawMetaCfg, &rawStatusMeta)
 	if err == pgx.ErrNoRows {
 		return nil, repository.ErrNotFound
 	}

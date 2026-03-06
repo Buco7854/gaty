@@ -183,6 +183,9 @@ type MetaField struct {
 	Unit string `json:"unit,omitempty"`
 }
 
+// DefaultGateStatuses are the built-in statuses that cannot be removed by users.
+var DefaultGateStatuses = []string{"open", "closed", "unavailable"}
+
 type Gate struct {
 	ID                uuid.UUID           `json:"id"`
 	WorkspaceID       uuid.UUID           `json:"workspace_id"`
@@ -210,6 +213,9 @@ type Gate struct {
 	// StatusRules are evaluated against incoming metadata to override the reported status.
 	// Rules are evaluated in order; the first match wins.
 	StatusRules []StatusRule `json:"status_rules,omitempty"`
+
+	// CustomStatuses are user-defined statuses in addition to DefaultGateStatuses.
+	CustomStatuses []string `json:"custom_statuses,omitempty"`
 
 	// GateToken is the gate's authentication secret.
 	// Only populated in create and rotate-token responses (never in list/get).

@@ -28,7 +28,8 @@ function getStatusColor(status: GateStatus | undefined): string {
     case 'open': return 'green'
     case 'offline':
     case 'closed': return 'red'
-    case 'unresponsive': return 'orange'
+    case 'unresponsive':
+    case 'unavailable': return 'orange'
     default: return 'gray'
   }
 }

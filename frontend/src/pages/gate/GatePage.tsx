@@ -62,13 +62,17 @@ function flattenKeys(obj: Record<string, unknown>, prefix = ''): string[] {
   return keys
 }
 
+/** Default gate statuses that cannot be removed. */
+const DEFAULT_STATUSES = ['open', 'closed', 'unavailable']
+
 function getStatusColor(status: GateStatus | undefined): string {
   switch (status) {
     case 'online':
     case 'open': return 'green'
     case 'offline':
     case 'closed': return 'red'
-    case 'unresponsive': return 'orange'
+    case 'unresponsive':
+    case 'unavailable': return 'orange'
     default: return 'gray'
   }
 }
@@ -197,15 +201,84 @@ function MetaConfigEditor({
   )
 }
 
+/** Editor for user-defined custom statuses (in addition to defaults). */
+function CustomStatusesEditor({
+  value,
+  onChange,
+}: {
+  value: string[]
+  onChange: (v: string[]) => void
+}) {
+  const { t } = useTranslation()
+  const [newStatus, setNewStatus] = useState('')
+
+  function addStatus() {
+    const trimmed = newStatus.trim().toLowerCase().replace(/\s+/g, '_')
+    if (!trimmed || DEFAULT_STATUSES.includes(trimmed) || value.includes(trimmed)) return
+    onChange([...value, trimmed])
+    setNewStatus('')
+  }
+
+  return (
+    <Stack gap="sm">
+      <div>
+        <Text size="sm" fw={500}>{t('gates.customStatuses')}</Text>
+        <Text size="xs" c="dimmed">{t('gates.customStatusesDesc')}</Text>
+      </div>
+      <Group gap="xs" wrap="wrap">
+        {DEFAULT_STATUSES.map((s) => (
+          <Badge key={s} variant="light" color={getStatusColor(s)}>
+            {t(`common.${s}`, { defaultValue: s })}
+          </Badge>
+        ))}
+        {value.map((s, idx) => (
+          <Badge
+            key={s}
+            variant="light"
+            color="gray"
+            rightSection={
+              <ActionIcon
+                size="xs"
+                variant="transparent"
+                color="red"
+                onClick={() => onChange(value.filter((_, i) => i !== idx))}
+              >
+                <Trash2 size={10} />
+              </ActionIcon>
+            }
+          >
+            {s}
+          </Badge>
+        ))}
+      </Group>
+      <Group gap="xs">
+        <TextInput
+          placeholder={t('gates.customStatusPlaceholder')}
+          value={newStatus}
+          onChange={(e) => setNewStatus(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addStatus() } }}
+          style={{ flex: 1 }}
+          styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+        />
+        <Button size="xs" variant="subtle" leftSection={<Plus size={12} />} onClick={addStatus}>
+          {t('common.add')}
+        </Button>
+      </Group>
+    </Stack>
+  )
+}
+
 const STATUS_RULE_OPS = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte'] as const
 
 /** Inline editor for a list of StatusRule entries. */
 function StatusRulesEditor({
   value,
   onChange,
+  allStatuses,
 }: {
   value: StatusRule[]
   onChange: (v: StatusRule[]) => void
+  allStatuses: string[]
 }) {
   const { t } = useTranslation()
 
@@ -216,6 +289,11 @@ function StatusRulesEditor({
   const opData = STATUS_RULE_OPS.map((op) => ({
     value: op,
     label: t(`gates.statusRulesOp${op.charAt(0).toUpperCase()}${op.slice(1)}`),
+  }))
+
+  const statusData = allStatuses.map((s) => ({
+    value: s,
+    label: t(`common.${s}`, { defaultValue: s }),
   }))
 
   return (
@@ -229,7 +307,7 @@ function StatusRulesEditor({
           size="xs"
           variant="subtle"
           leftSection={<Plus size={12} />}
-          onClick={() => onChange([...value, { key: '', op: 'lt', value: '', set_status: '' }])}
+          onClick={() => onChange([...value, { key: '', op: 'lt', value: '', set_status: allStatuses[0] ?? '' }])}
         >
           {t('gates.statusRulesAdd')}
         </Button>
@@ -259,13 +337,12 @@ function StatusRulesEditor({
             style={{ flex: 1 }}
             styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
           />
-          <TextInput
+          <Select
             label={idx === 0 ? t('gates.statusRulesSetStatus') : undefined}
-            placeholder={t('gates.statusRulesSetStatusPlaceholder')}
             value={rule.set_status}
-            onChange={(e) => updateRule(idx, { set_status: e.target.value })}
+            onChange={(v) => updateRule(idx, { set_status: v ?? '' })}
+            data={statusData}
             style={{ flex: 2 }}
-            styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
           />
           <ActionIcon
             variant="subtle"
@@ -344,6 +421,7 @@ export default function GatePage() {
   const [editStatusConfig, setEditStatusConfig] = useState<ActionConfig | null>(null)
   const [editMetaConfig, setEditMetaConfig] = useState<MetaField[]>([])
   const [editStatusRules, setEditStatusRules] = useState<StatusRule[]>([])
+  const [editCustomStatuses, setEditCustomStatuses] = useState<string[]>([])
 
   const PIN_SESSION_PRESETS = [
     { value: '0', label: t('members.sessionInfinite') },
@@ -437,6 +515,7 @@ export default function GatePage() {
         status_config: editStatusConfig,
         meta_config: editMetaConfig,
         status_rules: editStatusRules,
+        custom_statuses: editCustomStatuses,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['gate', wsId, gateId] })
@@ -562,8 +641,15 @@ export default function GatePage() {
     setEditStatusConfig(gate?.status_config ?? null)
     setEditMetaConfig(gate?.meta_config ?? [])
     setEditStatusRules(gate?.status_rules ?? [])
+    setEditCustomStatuses(gate?.custom_statuses ?? [])
     openConfigModal()
   }
+
+  // All statuses available for status rules: defaults + custom
+  const allStatuses = useMemo(
+    () => [...DEFAULT_STATUSES, ...editCustomStatuses],
+    [editCustomStatuses]
+  )
 
   // Build metadata display rows: mapped fields + unmapped raw fields (admin only)
   const metaRows = useMemo(() => {
@@ -779,7 +865,9 @@ export default function GatePage() {
             <Divider />
             <MetaConfigEditor value={editMetaConfig} onChange={setEditMetaConfig} />
             <Divider />
-            <StatusRulesEditor value={editStatusRules} onChange={setEditStatusRules} />
+            <CustomStatusesEditor value={editCustomStatuses} onChange={setEditCustomStatuses} />
+            <Divider />
+            <StatusRulesEditor value={editStatusRules} onChange={setEditStatusRules} allStatuses={allStatuses} />
             <Group justify="flex-end">
               <Button variant="default" onClick={closeConfigModal}>{t('common.cancel')}</Button>
               <Button type="submit" loading={updateConfig.isPending}>{t('common.save')}</Button>

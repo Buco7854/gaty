@@ -130,14 +130,14 @@ func (r *customDomainRepository) ResolveByDomain(ctx context.Context, domain str
 		`SELECT g.id, g.name, w.id, w.name,
 		        COALESCE(g.open_config->>'type', 'NONE') <> 'NONE',
 		        COALESCE(g.close_config->>'type', 'NONE') <> 'NONE',
-		        g.meta_config, g.status_metadata
+		        g.status, g.meta_config, g.status_metadata
 		 FROM custom_domains cd
 		 JOIN gates g       ON g.id = cd.gate_id
 		 JOIN workspaces w  ON w.id = cd.workspace_id
 		 WHERE cd.domain = $1 AND cd.verified_at IS NOT NULL`,
 		domain,
 	).Scan(&res.GateID, &res.GateName, &res.WorkspaceID, &res.WorkspaceName,
-		&res.HasOpenAction, &res.HasCloseAction, &rawMetaCfg, &rawStatusMeta)
+		&res.HasOpenAction, &res.HasCloseAction, &res.Status, &rawMetaCfg, &rawStatusMeta)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, repository.ErrNotFound
 	}

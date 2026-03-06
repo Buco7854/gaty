@@ -26,17 +26,19 @@ type CreateGateParams struct {
 	StatusConfig      *model.ActionConfig
 	MetaConfig        []model.MetaField
 	StatusRules       []model.StatusRule
+	CustomStatuses    []string
 }
 
 // UpdateGateParams holds optional fields for updating a gate.
 // For action configs, use model.OmittableNullable: Sent=false = unchanged, Null=true = clear to NULL.
 type UpdateGateParams struct {
-	Name         *string
-	OpenConfig   model.OmittableNullable[model.ActionConfig]
-	CloseConfig  model.OmittableNullable[model.ActionConfig]
-	StatusConfig model.OmittableNullable[model.ActionConfig]
-	MetaConfig   []model.MetaField  // nil = unchanged, [] = clear
-	StatusRules  []model.StatusRule // nil = unchanged, [] = clear
+	Name           *string
+	OpenConfig     model.OmittableNullable[model.ActionConfig]
+	CloseConfig    model.OmittableNullable[model.ActionConfig]
+	StatusConfig   model.OmittableNullable[model.ActionConfig]
+	MetaConfig     []model.MetaField  // nil = unchanged, [] = clear
+	StatusRules    []model.StatusRule // nil = unchanged, [] = clear
+	CustomStatuses []string           // nil = unchanged, [] = clear
 }
 
 type GateService struct {
@@ -105,6 +107,7 @@ func (s *GateService) Create(ctx context.Context, wsID uuid.UUID, params CreateG
 		StatusConfig:      params.StatusConfig,
 		MetaConfig:        params.MetaConfig,
 		StatusRules:       params.StatusRules,
+		CustomStatuses:    params.CustomStatuses,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create gate: %w", err)
@@ -161,12 +164,13 @@ func (s *GateService) Get(ctx context.Context, gateID, wsID uuid.UUID, role mode
 
 func (s *GateService) Update(ctx context.Context, gateID, wsID uuid.UUID, params UpdateGateParams) (*model.Gate, error) {
 	gate, err := s.gates.Update(ctx, gateID, wsID, repository.UpdateGateParams{
-		Name:         params.Name,
-		OpenConfig:   params.OpenConfig,
-		CloseConfig:  params.CloseConfig,
-		StatusConfig: params.StatusConfig,
-		MetaConfig:   params.MetaConfig,
-		StatusRules:  params.StatusRules,
+		Name:           params.Name,
+		OpenConfig:     params.OpenConfig,
+		CloseConfig:    params.CloseConfig,
+		StatusConfig:   params.StatusConfig,
+		MetaConfig:     params.MetaConfig,
+		StatusRules:    params.StatusRules,
+		CustomStatuses: params.CustomStatuses,
 	})
 	if err != nil {
 		return nil, err

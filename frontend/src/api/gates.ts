@@ -21,6 +21,7 @@ export interface CreateGateParams {
   status_config?: ActionConfig | null
   meta_config?: MetaField[]
   status_rules?: StatusRule[]
+  custom_statuses?: string[]
 }
 
 export interface UpdateGateParams {
@@ -30,6 +31,7 @@ export interface UpdateGateParams {
   status_config?: ActionConfig | null
   meta_config?: MetaField[]
   status_rules?: StatusRule[]
+  custom_statuses?: string[]
 }
 
 export interface GateTokenResponse {

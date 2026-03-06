@@ -7,8 +7,9 @@ import type { DomainResolveResult } from '@/types'
 import { getPermissionsFromJWT, getRoleFromJWT } from '@/utils/session'
 import { useTranslation } from 'react-i18next'
 import { notifySuccess, notifyError } from '@/lib/notify'
-import { Center, Stack, Group, Text, Title, Loader, Button, Anchor, Paper } from '@mantine/core'
+import { Center, Stack, Group, Text, Title, Loader, Button, Anchor, Paper, Badge } from '@mantine/core'
 import { XCircle, Hash, KeyRound, LayoutGrid, Users, Activity } from 'lucide-react'
+import type { GateStatus } from '@/types'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
 import { useAuthStore } from '@/store/auth'
@@ -32,6 +33,18 @@ function getNestedValue(obj: Record<string, unknown>, key: string): unknown {
 
 function hasNestedKey(obj: Record<string, unknown>, key: string): boolean {
   return getNestedValue(obj, key) !== undefined
+}
+
+function getStatusColor(status: GateStatus | undefined): string {
+  switch (status) {
+    case 'online':
+    case 'open': return 'green'
+    case 'offline':
+    case 'closed': return 'red'
+    case 'unresponsive':
+    case 'unavailable': return 'orange'
+    default: return 'gray'
+  }
 }
 
 function sessionKey(gateId: string) {
@@ -240,7 +253,14 @@ export default function GatePortalPage() {
         <Stack align="center" gap="xl" w="100%" maw={320}>
           {/* Header */}
           <Stack align="center" gap={4}>
-            <Title order={2}>{gateName}</Title>
+            <Group gap="sm" justify="center">
+              <Title order={2}>{gateName}</Title>
+              {canViewStatus && resolved?.status && (
+                <Badge color={getStatusColor(resolved.status)} variant="light">
+                  {t(`common.${resolved.status}`, { defaultValue: resolved.status })}
+                </Badge>
+              )}
+            </Group>
             <Text size="sm" c="dimmed">
               {session ? t('pinpad.sessionActive') : t('pinpad.chooseMethod')}
             </Text>
