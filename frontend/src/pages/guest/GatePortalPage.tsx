@@ -7,12 +7,32 @@ import type { DomainResolveResult } from '@/types'
 import { getPermissionsFromJWT, getRoleFromJWT } from '@/utils/session'
 import { useTranslation } from 'react-i18next'
 import { notifySuccess, notifyError } from '@/lib/notify'
-import { Center, Stack, Group, Text, Title, Loader, Button, Anchor } from '@mantine/core'
-import { XCircle, Hash, KeyRound, LayoutGrid, Users } from 'lucide-react'
+import { Center, Stack, Group, Text, Title, Loader, Button, Anchor, Paper } from '@mantine/core'
+import { XCircle, Hash, KeyRound, LayoutGrid, Users, Activity } from 'lucide-react'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
 import { useAuthStore } from '@/store/auth'
 import { useState } from 'react'
+
+/**
+ * Resolve a dot-notated key path against a nested object.
+ * Flat keys containing dots are tried first for backwards compatibility.
+ */
+function getNestedValue(obj: Record<string, unknown>, key: string): unknown {
+  if (key in obj) return obj[key]
+  if (!key.includes('.')) return undefined
+  const parts = key.split('.')
+  let current: unknown = obj
+  for (const part of parts) {
+    if (current == null || typeof current !== 'object') return undefined
+    current = (current as Record<string, unknown>)[part]
+  }
+  return current
+}
+
+function hasNestedKey(obj: Record<string, unknown>, key: string): boolean {
+  return getNestedValue(obj, key) !== undefined
+}
 
 function sessionKey(gateId: string) {
   return `gatie_session_${gateId}`
@@ -102,9 +122,23 @@ export default function GatePortalPage() {
   const gateHasClose = resolved?.has_close_action ?? false
   const canOpen = permissions.includes('gate:trigger_open') && gateHasOpen
   const canClose = permissions.includes('gate:trigger_close') && gateHasClose
+  const canViewStatus = permissions.includes('gate:read_status')
   const sessionRole = session?.type === 'member' ? getRoleFromJWT(session.access_token) : null
   const isAdminSession = sessionRole === 'ADMIN' || sessionRole === 'OWNER'
   const policiesReady = session?.type === 'pin' || !!myPolicies
+
+  // Build metadata display rows from resolved gate info (mapped fields only on public page)
+  const metaRows = useMemo(() => {
+    if (!resolved?.status_metadata || !resolved?.meta_config) return []
+    const meta = resolved.status_metadata as Record<string, unknown>
+    return resolved.meta_config
+      .filter((f) => hasNestedKey(meta, f.key))
+      .map((f) => ({
+        label: f.label,
+        value: String(getNestedValue(meta, f.key) ?? ''),
+        unit: f.unit,
+      }))
+  }, [resolved])
 
   async function triggerWithSession(sess: GateSession, action: 'open' | 'close') {
     try {
@@ -247,6 +281,24 @@ export default function GatePortalPage() {
                 >
                   {t('pinpad.myWorkspace')}
                 </Button>
+              )}
+              {canViewStatus && metaRows.length > 0 && (
+                <Paper withBorder p="sm" radius="md" w="100%">
+                  <Group gap="xs" mb="xs">
+                    <Activity size={14} opacity={0.6} />
+                    <Text size="sm" fw={600}>{t('gates.liveData')}</Text>
+                  </Group>
+                  <Stack gap={4}>
+                    {metaRows.map((row) => (
+                      <Group key={row.label} justify="space-between" py={2}>
+                        <Text size="sm">{row.label}</Text>
+                        <Text size="sm" fw={500} ff="mono">
+                          {row.value}{row.unit ? ` ${row.unit}` : ''}
+                        </Text>
+                      </Group>
+                    ))}
+                  </Stack>
+                </Paper>
               )}
               <Anchor component="button" type="button" size="xs" c="dimmed" onClick={clearSession}>
                 {t('pinpad.useAnotherMethod')}

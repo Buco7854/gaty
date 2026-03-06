@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -53,9 +54,10 @@ type StatusRule struct {
 
 // EvaluateStatusRules checks each rule against meta in order and returns the first matching
 // (setStatus, true), or ("", false) if no rule matches.
+// Keys support dot notation for nested objects (e.g. "lora.snr" → meta["lora"]["snr"]).
 func EvaluateStatusRules(rules []StatusRule, meta map[string]any) (string, bool) {
 	for _, rule := range rules {
-		val, ok := meta[rule.Key]
+		val, ok := getNestedValue(meta, rule.Key)
 		if !ok {
 			continue
 		}
@@ -64,6 +66,34 @@ func EvaluateStatusRules(rules []StatusRule, meta map[string]any) (string, bool)
 		}
 	}
 	return "", false
+}
+
+// getNestedValue resolves a dot-notated key path against a nested map.
+// "battery" → meta["battery"], "lora.snr" → meta["lora"]["snr"].
+// For backwards compatibility, flat keys containing dots (e.g. a top-level
+// "lora.snr" key) are tried first before nested resolution.
+func getNestedValue(m map[string]any, key string) (any, bool) {
+	// Direct lookup first (handles flat keys and keys without dots).
+	if v, ok := m[key]; ok {
+		return v, true
+	}
+	if !strings.Contains(key, ".") {
+		return nil, false
+	}
+	// Nested resolution: split on dots and traverse.
+	parts := strings.Split(key, ".")
+	current := any(m)
+	for _, part := range parts {
+		obj, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		current, ok = obj[part]
+		if !ok {
+			return nil, false
+		}
+	}
+	return current, true
 }
 
 func ruleMatches(op string, actual any, threshold string) bool {

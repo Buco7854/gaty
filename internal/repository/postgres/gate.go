@@ -263,20 +263,27 @@ func (r *gateRepository) GetByIDPublic(ctx context.Context, gateID uuid.UUID) (*
 
 func (r *gateRepository) GetPublicInfo(ctx context.Context, gateID uuid.UUID) (*repository.GatePublicInfo, error) {
 	info := &repository.GatePublicInfo{}
+	var rawMetaCfg, rawStatusMeta []byte
 	err := r.pool.QueryRow(ctx,
 		`SELECT g.id, g.name, w.id, w.name,
 		        COALESCE(g.open_config->>'type', 'NONE') <> 'NONE',
-		        COALESCE(g.close_config->>'type', 'NONE') <> 'NONE'
+		        COALESCE(g.close_config->>'type', 'NONE') <> 'NONE',
+		        g.meta_config, g.status_metadata
 		 FROM gates g
 		 JOIN workspaces w ON w.id = g.workspace_id
 		 WHERE g.id = $1`,
 		gateID,
-	).Scan(&info.GateID, &info.GateName, &info.WorkspaceID, &info.WorkspaceName, &info.HasOpenAction, &info.HasCloseAction)
+	).Scan(&info.GateID, &info.GateName, &info.WorkspaceID, &info.WorkspaceName,
+		&info.HasOpenAction, &info.HasCloseAction, &rawMetaCfg, &rawStatusMeta)
 	if err == pgx.ErrNoRows {
 		return nil, repository.ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get gate public info: %w", err)
+	}
+	info.MetaConfig = unmarshalMetaConfig(rawMetaCfg)
+	if len(rawStatusMeta) > 0 {
+		_ = json.Unmarshal(rawStatusMeta, &info.StatusMetadata)
 	}
 	return info, nil
 }

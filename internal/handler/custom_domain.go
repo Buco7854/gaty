@@ -244,12 +244,14 @@ type resolveDomainInput struct {
 
 type resolveDomainOutput struct {
 	Body struct {
-		GateID         uuid.UUID `json:"gate_id"`
-		GateName       string    `json:"gate_name"`
-		WorkspaceID    uuid.UUID `json:"workspace_id"`
-		WorkspaceName  string    `json:"workspace_name"`
-		HasOpenAction  bool      `json:"has_open_action"`
-		HasCloseAction bool      `json:"has_close_action"`
+		GateID         uuid.UUID        `json:"gate_id"`
+		GateName       string           `json:"gate_name"`
+		WorkspaceID    uuid.UUID        `json:"workspace_id"`
+		WorkspaceName  string           `json:"workspace_name"`
+		HasOpenAction  bool             `json:"has_open_action"`
+		HasCloseAction bool             `json:"has_close_action"`
+		MetaConfig     []model.MetaField `json:"meta_config,omitempty"`
+		StatusMetadata map[string]any   `json:"status_metadata,omitempty"`
 	}
 }
 
@@ -269,6 +271,8 @@ func (h *CustomDomainHandler) resolveDomain(ctx context.Context, in *resolveDoma
 	out.Body.WorkspaceName = res.WorkspaceName
 	out.Body.HasOpenAction = res.HasOpenAction
 	out.Body.HasCloseAction = res.HasCloseAction
+	out.Body.MetaConfig = res.MetaConfig
+	out.Body.StatusMetadata = res.StatusMetadata
 	return out, nil
 }
 
@@ -319,6 +323,8 @@ func (h *CustomDomainHandler) resolveGate(ctx context.Context, in *resolveGateIn
 	out.Body.WorkspaceName = res.WorkspaceName
 	out.Body.HasOpenAction = res.HasOpenAction
 	out.Body.HasCloseAction = res.HasCloseAction
+	out.Body.MetaConfig = res.MetaConfig
+	out.Body.StatusMetadata = res.StatusMetadata
 	return out, nil
 }
 

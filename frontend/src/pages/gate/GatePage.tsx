@@ -24,6 +24,44 @@ import {
 
 // ---------- helpers ----------
 
+/**
+ * Resolve a dot-notated key path against a nested object.
+ * Flat keys containing dots are tried first for backwards compatibility.
+ */
+function getNestedValue(obj: Record<string, unknown>, key: string): unknown {
+  if (key in obj) return obj[key]
+  if (!key.includes('.')) return undefined
+  const parts = key.split('.')
+  let current: unknown = obj
+  for (const part of parts) {
+    if (current == null || typeof current !== 'object') return undefined
+    current = (current as Record<string, unknown>)[part]
+  }
+  return current
+}
+
+/** Check whether a dot-notated key exists in a (potentially nested) object. */
+function hasNestedKey(obj: Record<string, unknown>, key: string): boolean {
+  return getNestedValue(obj, key) !== undefined
+}
+
+/**
+ * Collect all leaf-key paths from a nested object using dot notation.
+ * e.g. { lora: { snr: 1, rssi: 2 }, battery: 85 } → ["lora.snr", "lora.rssi", "battery"]
+ */
+function flattenKeys(obj: Record<string, unknown>, prefix = ''): string[] {
+  const keys: string[] = []
+  for (const [k, v] of Object.entries(obj)) {
+    const path = prefix ? `${prefix}.${k}` : k
+    if (v != null && typeof v === 'object' && !Array.isArray(v)) {
+      keys.push(...flattenKeys(v as Record<string, unknown>, path))
+    } else {
+      keys.push(path)
+    }
+  }
+  return keys
+}
+
 function getStatusColor(status: GateStatus | undefined): string {
   switch (status) {
     case 'online':
@@ -530,20 +568,22 @@ export default function GatePage() {
   // Build metadata display rows: mapped fields + unmapped raw fields (admin only)
   const metaRows = useMemo(() => {
     if (!gate?.status_metadata) return []
+    const meta = gate.status_metadata as Record<string, unknown>
     const cfg = gate.meta_config ?? []
     const mapped = cfg
-      .filter((f) => f.key in (gate.status_metadata ?? {}))
+      .filter((f) => hasNestedKey(meta, f.key))
       .map((f) => ({
         label: f.label,
-        value: String((gate.status_metadata ?? {})[f.key] ?? ''),
+        value: String(getNestedValue(meta, f.key) ?? ''),
         unit: f.unit,
         raw: false,
       }))
     if (canManage) {
       const mappedKeys = new Set(cfg.map((f) => f.key))
-      const rawRows = Object.entries(gate.status_metadata ?? {})
-        .filter(([k]) => !mappedKeys.has(k))
-        .map(([k, v]) => ({ label: k, value: String(v ?? ''), unit: undefined, raw: true }))
+      const allKeys = flattenKeys(meta)
+      const rawRows = allKeys
+        .filter((k) => !mappedKeys.has(k))
+        .map((k) => ({ label: k, value: String(getNestedValue(meta, k) ?? ''), unit: undefined, raw: true }))
       return [...mapped, ...rawRows]
     }
     return mapped

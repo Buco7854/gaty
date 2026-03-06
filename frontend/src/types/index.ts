@@ -171,4 +171,6 @@ export interface DomainResolveResult {
   workspace_name: string
   has_open_action: boolean
   has_close_action: boolean
+  meta_config?: MetaField[]
+  status_metadata?: Record<string, unknown>
 }
