@@ -183,6 +183,8 @@ const fr: Translations = {
     tokenCreated: 'Token créé',
     tokenCreatedHint: 'Copiez ce token maintenant — il ne sera plus affiché.',
     tokenExpiresAt: "Date d'expiration",
+    tokenDisabled: 'Tokens API désactivés',
+    tokenDisabledHint: "L'authentification par token API est actuellement désactivée pour ce workspace. Vos tokens existants sont verrouillés — ils ne fonctionneront pas tant que le paramètre ne sera pas réactivé. Vous pouvez toujours les consulter et les supprimer.",
   },
   permissions: {
     title: 'Permissions des membres',

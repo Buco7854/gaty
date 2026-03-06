@@ -181,6 +181,8 @@ const en = {
     tokenCreated: 'Token created',
     tokenCreatedHint: 'Copy this token now — it will not be shown again.',
     tokenExpiresAt: 'Expiry date',
+    tokenDisabled: 'API tokens disabled',
+    tokenDisabledHint: 'API token authentication is currently disabled for this workspace. Your existing tokens are locked — they will not work until the setting is re-enabled. You can still view and delete them.',
   },
   permissions: {
     title: 'Member permissions',

@@ -133,7 +133,7 @@ func main() {
 	api := humachi.New(router, huma.DefaultConfig("GATIE API", "0.1.0"))
 
 	// Global soft auth middleware: silently extracts Bearer token and injects identity into context.
-	api.UseMiddleware(middleware.AuthExtractor(authSvc, memberCredRepo))
+	api.UseMiddleware(middleware.AuthExtractor(authSvc, memberCredRepo, wsRepo))
 
 	// Per-operation middlewares
 	requireAuth := middleware.RequireAuth(api)
@@ -184,7 +184,7 @@ func main() {
 	handler.NewGatePinHandler(gatePinSvc).RegisterRoutes(api, wsMember, wsGateManager)
 	handler.NewAccessScheduleHandler(scheduleSvc).RegisterRoutes(api, wsAdmin)
 	handler.NewSSOHandler(ssoSvc, authSvc, wsRepo, cfg.FrontendURL).RegisterRoutes(api, wsAdmin)
-	handler.NewCredentialHandler(credRepo, memberCredRepo, membershipRepo, credPolicyRepo).RegisterRoutes(api, requireAuth, requireMembership, wsMember, wsAdmin)
+	handler.NewCredentialHandler(credRepo, memberCredRepo, membershipRepo, credPolicyRepo, wsRepo).RegisterRoutes(api, requireAuth, requireMembership, wsMember, wsAdmin)
 	handler.NewCustomDomainHandler(domainRepo, gateRepo).RegisterRoutes(api, wsMember, wsGateManager)
 
 	// Inbound: gate-to-server status push (gate token auth, no workspace middleware).

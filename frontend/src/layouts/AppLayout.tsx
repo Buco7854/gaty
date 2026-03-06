@@ -64,6 +64,7 @@ export default function AppLayout() {
   const [tokenLabel, setTokenLabel] = useState('')
   const [tokenExpiresAt, setTokenExpiresAt] = useState('')
   const [newToken, setNewToken] = useState<CreatedToken | null>(null)
+  const [memberAuthConfig, setMemberAuthConfig] = useState<Record<string, unknown> | null>(null)
 
   const isAdmin = isAuthenticated()
 
@@ -103,14 +104,19 @@ export default function AppLayout() {
     }
   }
 
-  // Load tokens when modal opens
+  // Load tokens (and member auth config for admin) when modal opens
   useEffect(() => {
     if (!tokenModalOpened) return
     setTokensLoading(true)
+    setMemberAuthConfig(null)
     if (isAdmin && wsId) {
-      workspaceCredApi.listTokens(wsId)
-        .then(setTokens)
-        .finally(() => setTokensLoading(false))
+      Promise.all([
+        workspaceCredApi.listTokens(wsId),
+        workspacesApi.getMemberAuthConfig(wsId).catch(() => null),
+      ]).then(([tks, cfg]) => {
+        setTokens(tks)
+        setMemberAuthConfig(cfg as Record<string, unknown> | null)
+      }).finally(() => setTokensLoading(false))
     } else if (localSession?.access_token) {
       memberCredApi.listTokens(localSession.access_token)
         .then(setTokens)
@@ -412,11 +418,17 @@ export default function AppLayout() {
       {/* API token management modal */}
       <Modal
         opened={tokenModalOpened}
-        onClose={() => { closeTokenModal(); setNewToken(null); setTokenLabel(''); setTokenExpiresAt('') }}
+        onClose={() => { closeTokenModal(); setNewToken(null); setTokenLabel(''); setTokenExpiresAt(''); setMemberAuthConfig(null) }}
         title={t('members.apiTokens')}
         size="sm"
       >
         <Stack gap="md">
+          {memberAuthConfig?.api_token === false && (
+            <Alert color="orange" variant="light" title={t('members.tokenDisabled')}>
+              <Text size="xs">{t('members.tokenDisabledHint')}</Text>
+            </Alert>
+          )}
+
           {newToken && (
             <Alert
               color="green"
@@ -441,27 +453,29 @@ export default function AppLayout() {
             </Alert>
           )}
 
-          <form onSubmit={handleCreateToken}>
-            <Stack gap="xs">
-              <TextInput
-                label={t('members.tokenLabel')}
-                placeholder={t('members.tokenLabelPlaceholder')}
-                value={tokenLabel}
-                onChange={(e) => setTokenLabel(e.target.value)}
-                size="xs"
-              />
-              <TextInput
-                label={`${t('members.tokenExpiresAt')} (${t('common.optional')})`}
-                type="date"
-                value={tokenExpiresAt}
-                onChange={(e) => setTokenExpiresAt(e.target.value)}
-                size="xs"
-              />
-              <Button type="submit" size="xs" disabled={!tokenLabel.trim()} fullWidth>
-                {t('common.add')}
-              </Button>
-            </Stack>
-          </form>
+          {memberAuthConfig?.api_token !== false && (
+            <form onSubmit={handleCreateToken}>
+              <Stack gap="xs">
+                <TextInput
+                  label={t('members.tokenLabel')}
+                  placeholder={t('members.tokenLabelPlaceholder')}
+                  value={tokenLabel}
+                  onChange={(e) => setTokenLabel(e.target.value)}
+                  size="xs"
+                />
+                <TextInput
+                  label={`${t('members.tokenExpiresAt')} (${t('common.optional')})`}
+                  type="date"
+                  value={tokenExpiresAt}
+                  onChange={(e) => setTokenExpiresAt(e.target.value)}
+                  size="xs"
+                />
+                <Button type="submit" size="xs" disabled={!tokenLabel.trim()} fullWidth>
+                  {t('common.add')}
+                </Button>
+              </Stack>
+            </form>
+          )}
 
           {tokensLoading ? (
             <Skeleton h={40} />

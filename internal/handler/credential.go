@@ -23,6 +23,7 @@ type CredentialHandler struct {
 	memberCredRepo repository.MembershipCredentialRepository
 	membershipRepo repository.WorkspaceMembershipRepository
 	credPolicyRepo repository.CredentialPolicyRepository
+	wsRepo         repository.WorkspaceRepository
 }
 
 func NewCredentialHandler(
@@ -30,12 +31,14 @@ func NewCredentialHandler(
 	memberCredRepo repository.MembershipCredentialRepository,
 	membershipRepo repository.WorkspaceMembershipRepository,
 	credPolicyRepo repository.CredentialPolicyRepository,
+	wsRepo repository.WorkspaceRepository,
 ) *CredentialHandler {
 	return &CredentialHandler{
 		credRepo:       credRepo,
 		memberCredRepo: memberCredRepo,
 		membershipRepo: membershipRepo,
 		credPolicyRepo: credPolicyRepo,
+		wsRepo:         wsRepo,
 	}
 }
 
@@ -231,6 +234,10 @@ func (h *CredentialHandler) CreateMyWorkspaceMemberAPIToken(ctx context.Context,
 		return nil, huma.Error401Unauthorized("not authenticated as workspace member")
 	}
 
+	if err := h.checkAPITokenEnabled(ctx, membershipID, input.WorkspaceID); err != nil {
+		return nil, err
+	}
+
 	rawToken, hash, err := generateAPIToken()
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to generate token")
@@ -323,8 +330,12 @@ func (h *CredentialHandler) ListMyMemberCredentials(ctx context.Context, _ *stru
 }
 
 func (h *CredentialHandler) CreateMyMemberAPIToken(ctx context.Context, input *createAPITokenInput) (*createAPITokenOutput, error) {
-	membershipID, err := requireLocalMember(ctx)
-	if err != nil {
+	membershipID, workspaceID, ok := middleware.MemberFromContext(ctx)
+	if !ok {
+		return nil, huma.Error403Forbidden("this endpoint requires local membership authentication")
+	}
+
+	if err := h.checkAPITokenEnabled(ctx, membershipID, workspaceID); err != nil {
 		return nil, err
 	}
 
@@ -692,6 +703,39 @@ func (h *CredentialHandler) RegisterRoutes(
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// checkAPITokenEnabled returns a 403 error if API token authentication is disabled
+// for the given membership (considering per-member override and workspace default).
+func (h *CredentialHandler) checkAPITokenEnabled(ctx context.Context, membershipID, workspaceID uuid.UUID) error {
+	m, err := h.membershipRepo.GetByID(ctx, membershipID, workspaceID)
+	if err != nil {
+		return huma.Error500InternalServerError("failed to load membership")
+	}
+	ws, err := h.wsRepo.GetByID(ctx, workspaceID)
+	if err != nil {
+		return huma.Error500InternalServerError("failed to load workspace")
+	}
+	if !credAPITokenEnabled(m.AuthConfig, ws.MemberAuthConfig) {
+		return huma.Error403Forbidden("API token authentication is disabled for this workspace member")
+	}
+	return nil
+}
+
+// credAPITokenEnabled returns true if API token auth is allowed for a member.
+// Per-member setting takes precedence over workspace default; default is enabled.
+func credAPITokenEnabled(memberConfig, wsConfig map[string]any) bool {
+	if v, ok := memberConfig["api_token"]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	if v, ok := wsConfig["api_token"]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return true
+}
 
 // generateAPIToken creates a new API token.
 // Returns the raw token (shown once to the user) and its SHA-256 hash (stored in DB).
