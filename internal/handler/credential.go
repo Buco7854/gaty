@@ -211,8 +211,7 @@ func (h *CredentialHandler) GetMyEffectiveAuthConfig(ctx context.Context, input 
 		return nil, huma.Error401Unauthorized("not authenticated as workspace member")
 	}
 	out := &myEffectiveAuthConfigOutput{}
-	isPrivileged := func(r model.WorkspaceRole) bool { return r == model.RoleAdmin || r == model.RoleOwner }
-	if role, ok := middleware.WorkspaceRoleFromContext(ctx); ok && isPrivileged(role) {
+	if middleware.IsPrivilegedMember(ctx) {
 		out.Body.APIToken = true
 		return out, nil
 	}
@@ -756,11 +755,7 @@ func (h *CredentialHandler) RegisterRoutes(
 // for the given membership (considering per-member override and workspace default).
 // ADMIN/OWNER are always unrestricted regardless of settings.
 func (h *CredentialHandler) checkAPITokenEnabled(ctx context.Context, membershipID, workspaceID uuid.UUID) error {
-	// Role may be in wsMember context (workspace endpoints) or local JWT claims (local endpoints).
-	if role, ok := middleware.WorkspaceRoleFromContext(ctx); ok && (role == model.RoleAdmin || role == model.RoleOwner) {
-		return nil
-	}
-	if role, ok := middleware.MemberRoleFromContext(ctx); ok && (role == model.RoleAdmin || role == model.RoleOwner) {
+	if middleware.IsPrivilegedMember(ctx) {
 		return nil
 	}
 	m, err := h.membershipRepo.GetByID(ctx, membershipID, workspaceID)

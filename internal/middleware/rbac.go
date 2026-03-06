@@ -118,6 +118,18 @@ func WorkspaceAdmin(api huma.API, wsRepo repository.WorkspaceRepository, memberR
 	return workspaceAccess(api, wsRepo, memberRepo, model.RoleAdmin)
 }
 
+// IsPrivilegedMember returns true if the caller is ADMIN or OWNER in the current workspace.
+// Checks both the wsMember context key and the local JWT claims (for /auth/local/me/* routes).
+func IsPrivilegedMember(ctx context.Context) bool {
+	if role, ok := WorkspaceRoleFromContext(ctx); ok {
+		return role == model.RoleAdmin || role == model.RoleOwner
+	}
+	if role, ok := MemberRoleFromContext(ctx); ok {
+		return role == model.RoleAdmin || role == model.RoleOwner
+	}
+	return false
+}
+
 // WorkspaceRoleFromContext retrieves the workspace role injected by WorkspaceMember/WorkspaceAdmin.
 func WorkspaceRoleFromContext(ctx context.Context) (model.WorkspaceRole, bool) {
 	role, ok := ctx.Value(wsRoleKey).(model.WorkspaceRole)
