@@ -99,6 +99,7 @@ const fr: Translations = {
     tokenSection: 'Token du portail',
     tokenDesc: 'Le portail utilise ce secret pour authentifier ses mises à jour de statut.',
     tokenShow: 'Afficher le token',
+    tokenHide: 'Masquer le token',
     tokenRotate: 'Régénérer',
     tokenRotateWarning: 'Cela invalidera le token actuel. Mettez à jour le firmware du portail avant d\'utiliser le nouveau token.',
     tokenRotated: 'Token régénéré',

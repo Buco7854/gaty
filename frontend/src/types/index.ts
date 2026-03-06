@@ -169,4 +169,6 @@ export interface DomainResolveResult {
   gate_name: string
   workspace_id: string
   workspace_name: string
+  has_open_action: boolean
+  has_close_action: boolean
 }

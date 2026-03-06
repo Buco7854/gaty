@@ -9,7 +9,7 @@ import {
   TextInput, PasswordInput, Select, Badge, Avatar, ActionIcon, Center, Skeleton,
   Table, Checkbox, Paper, SegmentedControl, Drawer,
 } from '@mantine/core'
-import { useDisclosure } from '@mantine/hooks'
+import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { UserPlus, Trash2, Users, AlertCircle, Settings2, X, Pencil } from 'lucide-react'
 import { notifySuccess, notifyError, extractApiError } from '@/lib/notify'
 
@@ -70,12 +70,17 @@ function MemberSchedulesTab({
   ]
 
   async function handleScheduleChange(gate: Gate, scheduleId: string) {
-    if (scheduleId === '') {
-      await policiesApi.removeMemberGateSchedule(wsId, gate.id, member.id)
-    } else {
-      await policiesApi.setMemberGateSchedule(wsId, gate.id, member.id, scheduleId)
+    try {
+      if (scheduleId === '') {
+        await policiesApi.removeMemberGateSchedule(wsId, gate.id, member.id)
+      } else {
+        await policiesApi.setMemberGateSchedule(wsId, gate.id, member.id, scheduleId)
+      }
+      qc.invalidateQueries({ queryKey: ['member-gate-schedule', wsId, gate.id, member.id] })
+      notifySuccess(t('common.saved'))
+    } catch (err) {
+      notifyError(err, t('common.error'))
     }
-    qc.invalidateQueries({ queryKey: ['member-gate-schedule', wsId, gate.id, member.id] })
   }
 
   if (gates.length === 0) {
@@ -127,8 +132,6 @@ function MemberSettingsDrawer({
   const { t } = useTranslation()
   const qc = useQueryClient()
 
-  const authConfig: Record<string, unknown> = (member.auth_config ?? {}) as Record<string, unknown>
-
   const { data: schedules = [] } = useQuery<AccessSchedule[]>({
     queryKey: ['schedules', wsId],
     queryFn: () => schedulesApi.list(wsId),
@@ -138,12 +141,12 @@ function MemberSettingsDrawer({
   const updateAuth = useMutation({
     mutationFn: (cfg: Record<string, unknown>) =>
       membersApi.update(wsId, member.id, { auth_config: cfg }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members', wsId] }); notifySuccess(t('common.deleted')) },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members', wsId] }); notifySuccess(t('common.saved')) },
     onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
   function getAuthValue(key: string): string {
-    const val = authConfig[key]
+    const val = (member.auth_config as Record<string, unknown> | null)?.[key]
     if (val === true) return 'on'
     if (val === false) return 'off'
     return 'inherit'
@@ -151,7 +154,8 @@ function MemberSettingsDrawer({
 
   function setAuthValue(key: string, value: string) {
     const mapped: boolean | null = value === 'on' ? true : value === 'off' ? false : null
-    updateAuth.mutate({ ...authConfig, [key]: mapped })
+    const current = (member.auth_config ?? {}) as Record<string, unknown>
+    updateAuth.mutate({ ...current, [key]: mapped })
   }
 
   const { data: policies = [] } = useQuery<MembershipPolicy[]>({
@@ -168,9 +172,13 @@ function MemberSettingsDrawer({
   }
 
   async function toggle(gateId: string, permCode: string, on: boolean) {
-    if (on) await policiesApi.revoke(wsId, gateId, member.id, permCode)
-    else await policiesApi.grant(wsId, gateId, member.id, permCode)
-    invalidatePolicies()
+    try {
+      if (on) await policiesApi.revoke(wsId, gateId, member.id, permCode)
+      else await policiesApi.grant(wsId, gateId, member.id, permCode)
+      invalidatePolicies()
+    } catch (err) {
+      notifyError(err, t('common.error'))
+    }
   }
 
   const memberName = member.display_name ?? member.local_username ?? member.user_email ?? member.id.slice(0, 8)
@@ -434,6 +442,9 @@ export default function MembersPage() {
       Array.from(selectedMembers).forEach((memberId) =>
         qc.invalidateQueries({ queryKey: ['member-policies', wsId, memberId] })
       )
+      notifySuccess(t('common.saved'))
+    } catch (err) {
+      notifyError(err, t('common.error'))
     } finally {
       setBulkLoading(false)
     }
@@ -447,11 +458,15 @@ export default function MembersPage() {
         membersApi.update(wsId, memberId, { auth_config: { [key]: value } })
       ))
       qc.invalidateQueries({ queryKey: ['members', wsId] })
+      notifySuccess(t('common.saved'))
+    } catch (err) {
+      notifyError(err, t('common.error'))
     } finally {
       setBulkLoading(false)
     }
   }
 
+  const isMobile = useMediaQuery('(max-width: 768px)') ?? false
   const isPending = invite.isPending || createLocal.isPending
   const selectableMembers = members?.filter((m) => m.role === 'MEMBER') ?? []
 
@@ -535,14 +550,14 @@ export default function MembersPage() {
 
             return (
               <Paper key={m.id} withBorder radius="md" p="sm">
-                <Group justify="space-between" wrap="nowrap">
+                <Group justify="space-between" align="flex-start" wrap="wrap" gap="xs">
                   <Group gap="sm" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
                     {isSelectable ? (
-                      <Checkbox size="xs" checked={isSelected} onChange={() => toggleSelected(m.id)} />
+                      <Checkbox size="xs" checked={isSelected} onChange={() => toggleSelected(m.id)} style={{ flexShrink: 0, marginTop: 2 }} />
                     ) : (
-                      <div style={{ width: 16 }} />
+                      <div style={{ width: 16, flexShrink: 0 }} />
                     )}
-                    <Avatar color="indigo" radius="xl" size={32}>{memberName[0].toUpperCase()}</Avatar>
+                    <Avatar color="indigo" radius="xl" size={32} style={{ flexShrink: 0 }}>{memberName[0].toUpperCase()}</Avatar>
                     <div style={{ minWidth: 0 }}>
                       <Text size="sm" fw={500} truncate>{memberName}</Text>
                       {m.local_username && m.display_name && (
@@ -551,7 +566,7 @@ export default function MembersPage() {
                     </div>
                   </Group>
 
-                  <Group gap="xs" wrap="nowrap">
+                  <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
                     {m.role !== 'OWNER' ? (
                       <Select
                         size="xs"
@@ -615,7 +630,7 @@ export default function MembersPage() {
       {drawerMember && (
         <MemberSettingsDrawer
           wsId={wsId!}
-          member={drawerMember}
+          member={members?.find((m) => m.id === drawerMember.id) ?? drawerMember}
           gates={gates}
           opened={!!drawerMember}
           onClose={() => setDrawerMember(null)}
@@ -628,7 +643,13 @@ export default function MembersPage() {
           withBorder
           shadow="md"
           p="sm"
-          style={{
+          style={isMobile ? {
+            position: 'fixed',
+            bottom: 16,
+            left: 16,
+            right: 16,
+            zIndex: 100,
+          } : {
             position: 'fixed',
             bottom: 16,
             left: 'calc(50% + 120px)',

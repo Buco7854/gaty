@@ -244,10 +244,12 @@ type resolveDomainInput struct {
 
 type resolveDomainOutput struct {
 	Body struct {
-		GateID        uuid.UUID `json:"gate_id"`
-		GateName      string    `json:"gate_name"`
-		WorkspaceID   uuid.UUID `json:"workspace_id"`
-		WorkspaceName string    `json:"workspace_name"`
+		GateID         uuid.UUID `json:"gate_id"`
+		GateName       string    `json:"gate_name"`
+		WorkspaceID    uuid.UUID `json:"workspace_id"`
+		WorkspaceName  string    `json:"workspace_name"`
+		HasOpenAction  bool      `json:"has_open_action"`
+		HasCloseAction bool      `json:"has_close_action"`
 	}
 }
 
@@ -265,6 +267,8 @@ func (h *CustomDomainHandler) resolveDomain(ctx context.Context, in *resolveDoma
 	out.Body.GateName = res.GateName
 	out.Body.WorkspaceID = res.WorkspaceID
 	out.Body.WorkspaceName = res.WorkspaceName
+	out.Body.HasOpenAction = res.HasOpenAction
+	out.Body.HasCloseAction = res.HasCloseAction
 	return out, nil
 }
 
@@ -313,6 +317,8 @@ func (h *CustomDomainHandler) resolveGate(ctx context.Context, in *resolveGateIn
 	out.Body.GateName = res.GateName
 	out.Body.WorkspaceID = res.WorkspaceID
 	out.Body.WorkspaceName = res.WorkspaceName
+	out.Body.HasOpenAction = res.HasOpenAction
+	out.Body.HasCloseAction = res.HasCloseAction
 	return out, nil
 }
 

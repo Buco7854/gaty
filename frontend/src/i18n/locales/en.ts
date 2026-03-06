@@ -97,6 +97,7 @@ const en = {
     tokenSection: 'Gate token',
     tokenDesc: 'The gate uses this secret to authenticate its status updates.',
     tokenShow: 'Show token',
+    tokenHide: 'Hide token',
     tokenRotate: 'Rotate',
     tokenRotateWarning: 'This will invalidate the current token. Update the gate firmware before using the new token.',
     tokenRotated: 'Token rotated',

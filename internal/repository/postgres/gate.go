@@ -264,12 +264,14 @@ func (r *gateRepository) GetByIDPublic(ctx context.Context, gateID uuid.UUID) (*
 func (r *gateRepository) GetPublicInfo(ctx context.Context, gateID uuid.UUID) (*repository.GatePublicInfo, error) {
 	info := &repository.GatePublicInfo{}
 	err := r.pool.QueryRow(ctx,
-		`SELECT g.id, g.name, w.id, w.name
+		`SELECT g.id, g.name, w.id, w.name,
+		        COALESCE(g.open_config->>'type', 'NONE') <> 'NONE',
+		        COALESCE(g.close_config->>'type', 'NONE') <> 'NONE'
 		 FROM gates g
 		 JOIN workspaces w ON w.id = g.workspace_id
 		 WHERE g.id = $1`,
 		gateID,
-	).Scan(&info.GateID, &info.GateName, &info.WorkspaceID, &info.WorkspaceName)
+	).Scan(&info.GateID, &info.GateName, &info.WorkspaceID, &info.WorkspaceName, &info.HasOpenAction, &info.HasCloseAction)
 	if err == pgx.ErrNoRows {
 		return nil, repository.ErrNotFound
 	}

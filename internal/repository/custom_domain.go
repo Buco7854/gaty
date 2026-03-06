@@ -10,10 +10,12 @@ import (
 
 // DomainResolveResult holds gate + workspace context for a verified custom domain.
 type DomainResolveResult struct {
-	GateID        uuid.UUID
-	GateName      string
-	WorkspaceID   uuid.UUID
-	WorkspaceName string
+	GateID         uuid.UUID
+	GateName       string
+	WorkspaceID    uuid.UUID
+	WorkspaceName  string
+	HasOpenAction  bool
+	HasCloseAction bool
 }
 
 // CustomDomainRepository is the data-access contract for custom domains.
