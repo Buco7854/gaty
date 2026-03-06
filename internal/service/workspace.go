@@ -48,6 +48,18 @@ func (s *WorkspaceService) Get(ctx context.Context, wsID, userID uuid.UUID) (*mo
 	return &model.WorkspaceWithRole{Workspace: *ws, Role: role}, nil
 }
 
+func (s *WorkspaceService) Rename(ctx context.Context, wsID uuid.UUID, name string) (*model.Workspace, error) {
+	ws, err := s.workspaces.Rename(ctx, wsID, name)
+	if err != nil {
+		return nil, err
+	}
+	return ws, nil
+}
+
+func (s *WorkspaceService) Delete(ctx context.Context, wsID uuid.UUID) error {
+	return s.workspaces.Delete(ctx, wsID)
+}
+
 func (s *WorkspaceService) GetMemberAuthConfig(ctx context.Context, wsID uuid.UUID) (map[string]any, error) {
 	ws, err := s.workspaces.GetByID(ctx, wsID)
 	if err != nil {

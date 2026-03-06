@@ -652,10 +652,10 @@ export default function MembersPage() {
           } : {
             position: 'fixed',
             bottom: 16,
-            left: 'calc(50% + 120px)',
+            left: 'calc(50% + 140px)',
             transform: 'translateX(-50%)',
             zIndex: 100,
-            width: 'calc(100vw - 240px - 32px)',
+            width: 'calc(100vw - 280px - 32px)',
             maxWidth: 680,
           }}
         >

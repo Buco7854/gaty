@@ -16,6 +16,12 @@ export const workspacesApi = {
   create: (name: string) =>
     api.post<Workspace>('/workspaces', { name }).then((r) => r.data),
 
+  rename: (wsId: string, name: string) =>
+    api.patch<Workspace>(`/workspaces/${wsId}/name`, { name }).then((r) => r.data),
+
+  delete: (wsId: string) =>
+    api.delete(`/workspaces/${wsId}`),
+
   updateSsoSettings: (wsId: string, settings: Record<string, unknown>) =>
     api.patch(`/workspaces/${wsId}/sso-settings`, settings).then((r) => r.data),
 

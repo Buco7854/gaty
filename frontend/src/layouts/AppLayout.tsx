@@ -225,15 +225,15 @@ export default function AppLayout() {
       {/* Navigation */}
       <ScrollArea style={{ flex: 1 }}>
         {wsId && (
-          <Stack gap={4} p="xs">
+          <Stack gap={2} p="xs">
             <NavLink
               component={RouterNavLink as React.FC}
               to={`/workspaces/${wsId}`}
               end
               label={t('gates.title')}
-              leftSection={<LayoutGrid size={16} />}
+              leftSection={<LayoutGrid size={18} />}
               onClick={() => setNavOpened(false)}
-              styles={{ root: { borderRadius: 'var(--mantine-radius-md)' } }}
+              styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
             />
             {(isAdmin || localSession?.role === 'ADMIN' || localSession?.role === 'OWNER') && (
               <>
@@ -241,25 +241,25 @@ export default function AppLayout() {
                   component={RouterNavLink as React.FC}
                   to={`/workspaces/${wsId}/members`}
                   label={t('members.title')}
-                  leftSection={<Users size={16} />}
+                  leftSection={<Users size={18} />}
                   onClick={() => setNavOpened(false)}
-                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)' } }}
+                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
                 />
                 <NavLink
                   component={RouterNavLink as React.FC}
                   to={`/workspaces/${wsId}/schedules`}
                   label={t('schedules.title')}
-                  leftSection={<CalendarClock size={16} />}
+                  leftSection={<CalendarClock size={18} />}
                   onClick={() => setNavOpened(false)}
-                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)' } }}
+                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
                 />
                 <NavLink
                   component={RouterNavLink as React.FC}
                   to={`/workspaces/${wsId}/settings`}
                   label={t('settings.title')}
-                  leftSection={<Settings size={16} />}
+                  leftSection={<Settings size={18} />}
                   onClick={() => setNavOpened(false)}
-                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)' } }}
+                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
                 />
               </>
             )}
@@ -326,7 +326,7 @@ export default function AppLayout() {
 
   return (
     <AppShell
-      navbar={{ width: 240, breakpoint: 'sm', collapsed: { mobile: true } }}
+      navbar={{ width: 280, breakpoint: 'sm', collapsed: { mobile: true } }}
       header={{ height: { base: 56, sm: 0 } }}
       padding={0}
     >
@@ -356,7 +356,7 @@ export default function AppLayout() {
       <Drawer
         opened={navOpened}
         onClose={() => setNavOpened(false)}
-        size={240}
+        size={280}
         padding={0}
         withCloseButton={false}
         styles={{ body: { padding: 0, height: '100%', display: 'flex', flexDirection: 'column' } }}
