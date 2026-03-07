@@ -180,10 +180,7 @@ func (h *CredentialHandler) ChangeMyPassword(ctx context.Context, input *changeP
 		return nil, huma.Error500InternalServerError("failed to hash password", err)
 	}
 
-	if err := h.credRepo.Delete(ctx, existing.ID, userID); err != nil {
-		return nil, huma.Error500InternalServerError("failed to update password", err)
-	}
-	if _, err := h.credRepo.Create(ctx, userID, model.CredPassword, string(newHash), nil, nil, nil); err != nil {
+	if err := h.credRepo.UpdateHashedValue(ctx, existing.ID, userID, string(newHash)); err != nil {
 		return nil, huma.Error500InternalServerError("failed to update password", err)
 	}
 	return nil, nil
@@ -454,10 +451,7 @@ func (h *CredentialHandler) ChangeMyMemberPassword(ctx context.Context, input *c
 		return nil, huma.Error500InternalServerError("failed to hash password", err)
 	}
 
-	if err := h.memberCredRepo.Delete(ctx, existing.ID, membershipID); err != nil {
-		return nil, huma.Error500InternalServerError("failed to update password", err)
-	}
-	if _, err := h.memberCredRepo.Create(ctx, membershipID, model.CredPassword, string(newHash), nil, nil, nil); err != nil {
+	if err := h.memberCredRepo.UpdateHashedValue(ctx, existing.ID, membershipID, string(newHash)); err != nil {
 		return nil, huma.Error500InternalServerError("failed to update password", err)
 	}
 	return nil, nil

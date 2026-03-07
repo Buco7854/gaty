@@ -95,6 +95,20 @@ func (r *credentialRepository) ListByUserAndType(ctx context.Context, userID uui
 	return result, rows.Err()
 }
 
+func (r *credentialRepository) UpdateHashedValue(ctx context.Context, credID, userID uuid.UUID, newHashedValue string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE credentials SET hashed_value = $1 WHERE id = $2 AND user_id = $3`,
+		newHashedValue, credID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("update credential hashed value: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return repository.ErrNotFound
+	}
+	return nil
+}
+
 func (r *credentialRepository) Delete(ctx context.Context, credID, userID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx,
 		`DELETE FROM credentials WHERE id = $1 AND user_id = $2`,

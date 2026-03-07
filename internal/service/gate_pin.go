@@ -198,11 +198,20 @@ func (s *GatePinService) Open(ctx context.Context, gateID uuid.UUID, pin, ip str
 	if len(perms) == 0 {
 		perms = []string{"gate:trigger_open"}
 	}
+	// Whitelist: only allow known PIN-safe permissions.
+	allowedPINPerms := map[string]bool{
+		"gate:trigger_open":  true,
+		"gate:trigger_close": true,
+		"gate:view_status":   true,
+	}
 	filtered := make([]string, 0, len(perms))
 	for _, p := range perms {
-		if p != "gate:manage" {
+		if allowedPINPerms[p] {
 			filtered = append(filtered, p)
 		}
+	}
+	if len(filtered) == 0 {
+		filtered = []string{"gate:trigger_open"}
 	}
 
 	tokens, err := s.auth.IssueGatePinSession(ctx, matched.ID, gateID, sessionDuration, filtered)
@@ -270,11 +279,14 @@ func (s *GatePinService) validatePIN(ctx context.Context, gateID uuid.UUID, pin,
 		return nil, pinMetadata{}, ErrInvalidPIN
 	}
 
+	// Compare against all PINs without early exit to prevent timing attacks
+	// that could leak information about PIN count or position.
 	var matched *model.GatePin
 	for _, p := range pins {
 		if bcrypt.CompareHashAndPassword([]byte(p.HashedPin), []byte(pin)) == nil {
-			matched = p
-			break
+			if matched == nil {
+				matched = p
+			}
 		}
 	}
 	if matched == nil {

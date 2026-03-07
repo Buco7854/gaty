@@ -47,7 +47,7 @@ export default function SsoCallbackPage() {
     }
 
     if (error) {
-      console.error('[SSO] callback error:', error, { workspaceId, gateId })
+      console.error('[SSO] callback error:', error)
       if (workspaceId) {
         const params = new URLSearchParams({ error })
         if (gateId) params.set('gate_id', gateId)
@@ -58,7 +58,7 @@ export default function SsoCallbackPage() {
       return
     }
 
-    console.error('[SSO] callback: missing tokens', { accessToken: !!accessToken, refreshToken: !!refreshToken, error })
+    console.error('[SSO] callback: missing tokens')
     navigate('/login', { replace: true })
   }, [navigate, location.search])
 

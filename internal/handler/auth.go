@@ -84,7 +84,7 @@ type LoginLocalInput struct {
 	Body struct {
 		WorkspaceID   uuid.UUID `json:"workspace_id"`
 		LocalUsername string    `json:"local_username" minLength:"1"`
-		Password      string    `json:"password" minLength:"1"`
+		Password      string    `json:"password" minLength:"8"`
 	}
 }
 
@@ -146,7 +146,7 @@ type MergeInput struct {
 	Body struct {
 		WorkspaceID   uuid.UUID `json:"workspace_id"`
 		LocalUsername string    `json:"local_username" minLength:"1"`
-		Password      string    `json:"password" minLength:"1"`
+		Password      string    `json:"password" minLength:"8"`
 	}
 }
 
@@ -181,13 +181,14 @@ func (h *AuthHandler) Me(ctx context.Context, _ *struct{}) (*MeOutput, error) {
 }
 
 // RegisterRoutes wires auth endpoints onto the Huma API.
-func (h *AuthHandler) RegisterRoutes(api huma.API, requireAuth func(huma.Context, func(huma.Context))) {
+func (h *AuthHandler) RegisterRoutes(api huma.API, requireAuth func(huma.Context, func(huma.Context)), authRateLimit func(huma.Context, func(huma.Context))) {
 	huma.Register(api, huma.Operation{
 		OperationID: "auth-register",
 		Method:      http.MethodPost,
 		Path:        "/api/auth/register",
 		Summary:     "Register a new platform user",
 		Tags:        []string{"Auth"},
+		Middlewares: huma.Middlewares{authRateLimit},
 	}, h.Register)
 
 	huma.Register(api, huma.Operation{
@@ -196,6 +197,7 @@ func (h *AuthHandler) RegisterRoutes(api huma.API, requireAuth func(huma.Context
 		Path:        "/api/auth/login",
 		Summary:     "Login with email and password (platform user)",
 		Tags:        []string{"Auth"},
+		Middlewares: huma.Middlewares{authRateLimit},
 	}, h.Login)
 
 	huma.Register(api, huma.Operation{
@@ -204,6 +206,7 @@ func (h *AuthHandler) RegisterRoutes(api huma.API, requireAuth func(huma.Context
 		Path:        "/api/auth/login/local",
 		Summary:     "Login as a managed member (local credentials)",
 		Tags:        []string{"Auth"},
+		Middlewares: huma.Middlewares{authRateLimit},
 	}, h.LoginLocal)
 
 	huma.Register(api, huma.Operation{

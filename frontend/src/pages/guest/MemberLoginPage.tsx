@@ -58,8 +58,8 @@ export default function MemberLoginPage() {
 
   function redirectAfterLogin(accessToken: string) {
     const authState = { state: { justAuthenticated: true } }
-    // Explicit redirect param takes priority
-    if (redirectParam) {
+    // Explicit redirect param takes priority — only allow relative paths to prevent open redirect.
+    if (redirectParam && redirectParam.startsWith('/') && !redirectParam.startsWith('//')) {
       navigate(redirectParam, authState)
       return
     }

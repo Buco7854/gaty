@@ -67,6 +67,7 @@ func main() {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
+	router.Use(middleware.SecurityHeaders)
 	router.Use(middleware.TenantResolver(pool, redisClient))
 
 	// MQTT client (non-fatal: API works without broker)
@@ -166,6 +167,7 @@ func main() {
 	wsMember := middleware.WorkspaceMember(api, wsRepo, membershipRepo)
 	wsAdmin := middleware.WorkspaceAdmin(api, wsRepo, membershipRepo)
 	wsGateManager := middleware.GateManager(api, policyRepo)
+	authRateLimit := middleware.RateLimiter(api, redisClient, "auth", 10, 15*time.Minute)
 
 	huma.Get(api, "/api/health", func(ctx context.Context, _ *struct{}) (*struct {
 		Body struct {
@@ -197,11 +199,11 @@ func main() {
 		return resp, nil
 	})
 
-	// Setup (public, no auth)
-	handler.NewSetupHandler(userRepo, authSvc).RegisterRoutes(api)
+	// Setup (public, no auth, rate-limited)
+	handler.NewSetupHandler(userRepo, authSvc).RegisterRoutes(api, authRateLimit)
 
 	// Register route groups
-	handler.NewAuthHandler(authSvc, userRepo).RegisterRoutes(api, requireAuth)
+	handler.NewAuthHandler(authSvc, userRepo).RegisterRoutes(api, requireAuth, authRateLimit)
 	handler.NewWorkspaceHandler(workspaceSvc).RegisterRoutes(api, requireAuth, wsAdmin)
 	handler.NewGateHandler(gateSvc).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
 	handler.NewPolicyHandler(policySvc).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)

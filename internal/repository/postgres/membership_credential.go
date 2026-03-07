@@ -139,6 +139,20 @@ func (r *membershipCredentialRepository) FindBySSOIdentity(ctx context.Context, 
 	return c, nil
 }
 
+func (r *membershipCredentialRepository) UpdateHashedValue(ctx context.Context, credID, membershipID uuid.UUID, newHashedValue string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE membership_credentials SET hashed_value = $1 WHERE id = $2 AND membership_id = $3`,
+		newHashedValue, credID, membershipID,
+	)
+	if err != nil {
+		return fmt.Errorf("update membership credential hashed value: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return repository.ErrNotFound
+	}
+	return nil
+}
+
 func (r *membershipCredentialRepository) Delete(ctx context.Context, credID, membershipID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx,
 		`DELETE FROM membership_credentials WHERE id = $1 AND membership_id = $2`,

@@ -74,7 +74,7 @@ func (h *SetupHandler) init(ctx context.Context, input *SetupInitInput) (*SetupI
 }
 
 // RegisterRoutes wires setup endpoints — no auth required.
-func (h *SetupHandler) RegisterRoutes(api huma.API) {
+func (h *SetupHandler) RegisterRoutes(api huma.API, authRateLimit func(huma.Context, func(huma.Context))) {
 	huma.Register(api, huma.Operation{
 		OperationID: "setup-status",
 		Method:      http.MethodGet,
@@ -84,10 +84,11 @@ func (h *SetupHandler) RegisterRoutes(api huma.API) {
 	}, h.status)
 
 	huma.Register(api, huma.Operation{
-		OperationID: "setup-init",
-		Method:      http.MethodPost,
-		Path:        "/api/setup/init",
-		Summary:     "Create the first admin user (only when no users exist)",
-		Tags:        []string{"Setup"},
+		OperationID:   "setup-init",
+		Method:        http.MethodPost,
+		Path:          "/api/setup/init",
+		Summary:       "Create the first admin user (only when no users exist)",
+		Tags:          []string{"Setup"},
+		Middlewares:   huma.Middlewares{authRateLimit},
 	}, h.init)
 }

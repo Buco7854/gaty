@@ -18,5 +18,6 @@ type MembershipCredentialRepository interface {
 	// FindByHashedAPIToken looks up a valid (non-expired) API token by its SHA-256 hash and returns
 	// the credential and its associated membership. Returns ErrNotFound if no match.
 	FindByHashedAPIToken(ctx context.Context, hash string) (*model.MembershipCredential, *model.WorkspaceMembership, error)
+	UpdateHashedValue(ctx context.Context, credID, membershipID uuid.UUID, newHashedValue string) error
 	Delete(ctx context.Context, credID, membershipID uuid.UUID) error
 }

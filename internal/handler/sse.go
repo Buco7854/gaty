@@ -29,9 +29,14 @@ func (h *SSEHandler) RegisterRoutes(r chi.Router) {
 
 func (h *SSEHandler) stream(w http.ResponseWriter, r *http.Request) {
 	// Extract token from Authorization header or ?token= query param.
+	// Query param is supported for EventSource compatibility but discouraged
+	// because tokens in URLs leak via logs, browser history, and Referer headers.
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if token == "" {
 		token = r.URL.Query().Get("token")
+		if token != "" {
+			slog.Warn("sse: token passed via query parameter, prefer Authorization header")
+		}
 	}
 	if token == "" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)

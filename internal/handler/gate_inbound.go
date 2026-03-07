@@ -78,7 +78,7 @@ func (h *GateInboundHandler) PushStatus(ctx context.Context, input *GateStatusPu
 	status, meta, err := resolveInboundPayload(gate, input.Body)
 	if err != nil {
 		slog.Warn("inbound: payload mapping failed", "gate_id", gate.ID, "error", err)
-		return nil, huma.Error400BadRequest("invalid payload: " + err.Error())
+		return nil, huma.Error400BadRequest("invalid payload: check your status_config mapping")
 	}
 
 	if err := h.gates.ProcessStatus(ctx, gate, status, meta); err != nil {
