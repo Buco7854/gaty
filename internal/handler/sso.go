@@ -69,11 +69,11 @@ func (h *SSOHandler) Authorize(ctx context.Context, input *SSOAuthorizeInput) (*
 	authURL, workspaceID, err := h.ssoSvc.GenerateAuthURL(ctx, input.WorkspaceID, input.ProviderID, input.GateID)
 	if errors.Is(err, service.ErrSSONotConfigured) {
 		slog.Warn("sso authorize: not configured", "workspace_id", input.WorkspaceID, "provider_id", input.ProviderID)
-		return &ssoRedirect{Location: h.frontendCallbackURL("", "", input.GateID, workspaceID, "not_configured")}, nil
+		return &ssoRedirect{Location: h.frontendCallbackURL("", input.GateID, workspaceID, "not_configured")}, nil
 	}
 	if err != nil {
 		slog.Error("sso authorize: config error", "workspace_id", input.WorkspaceID, "provider_id", input.ProviderID, "error", err)
-		return &ssoRedirect{Location: h.frontendCallbackURL("", "", input.GateID, workspaceID, "config_error")}, nil
+		return &ssoRedirect{Location: h.frontendCallbackURL("", input.GateID, workspaceID, "config_error")}, nil
 	}
 	return &ssoRedirect{Location: authURL}, nil
 }
@@ -92,41 +92,47 @@ func (h *SSOHandler) Callback(ctx context.Context, input *SSOCallbackInput) (*ss
 	if input.Error != "" {
 		gateID, workspaceID := h.ssoSvc.ConsumeState(ctx, input.State)
 		slog.Warn("sso callback: provider returned error", "workspace_id", input.WorkspaceID, "provider_id", input.ProviderID, "error", input.Error)
-		return &ssoRedirect{Location: h.frontendCallbackURL("", "", gateID, workspaceID, input.Error)}, nil
+		return &ssoRedirect{Location: h.frontendCallbackURL("", gateID, workspaceID, input.Error)}, nil
 	}
 
 	membership, gateID, workspaceID, err := h.ssoSvc.Callback(ctx, input.WorkspaceID, input.ProviderID, input.Code, input.State)
 	if errors.Is(err, service.ErrSSOInvalidState) {
 		slog.Warn("sso callback: invalid state", "workspace_id", input.WorkspaceID, "provider_id", input.ProviderID)
-		return &ssoRedirect{Location: h.frontendCallbackURL("", "", "", "", "invalid_state")}, nil
+		return &ssoRedirect{Location: h.frontendCallbackURL("", "", "", "invalid_state")}, nil
 	}
 	if errors.Is(err, service.ErrSSOAccessDenied) {
 		slog.Warn("sso callback: access denied (auto-provision disabled)", "workspace_id", input.WorkspaceID, "provider_id", input.ProviderID)
-		return &ssoRedirect{Location: h.frontendCallbackURL("", "", gateID, workspaceID, "access_denied")}, nil
+		return &ssoRedirect{Location: h.frontendCallbackURL("", gateID, workspaceID, "access_denied")}, nil
 	}
 	if err != nil {
 		slog.Error("sso callback: error", "workspace_id", input.WorkspaceID, "provider_id", input.ProviderID, "error", err)
-		return &ssoRedirect{Location: h.frontendCallbackURL("", "", gateID, workspaceID, "server_error")}, nil
+		return &ssoRedirect{Location: h.frontendCallbackURL("", gateID, workspaceID, "server_error")}, nil
 	}
 
 	tokens, err := h.authSvc.IssueLocalTokenPair(ctx, membership.ID, membership.WorkspaceID, membership.Role)
 	if err != nil {
 		slog.Error("sso callback: failed to issue token pair", "membership_id", membership.ID, "error", err)
-		return &ssoRedirect{Location: h.frontendCallbackURL("", "", gateID, workspaceID, "server_error")}, nil
+		return &ssoRedirect{Location: h.frontendCallbackURL("", gateID, workspaceID, "server_error")}, nil
 	}
 
-	return &ssoRedirect{Location: h.frontendCallbackURL(tokens.AccessToken, tokens.RefreshToken, gateID, workspaceID, "")}, nil
+	// Store tokens behind a one-time exchange code to avoid exposing them in the redirect URL.
+	exchangeCode, err := h.authSvc.StoreSSOExchangeCode(ctx, tokens, gateID, workspaceID)
+	if err != nil {
+		slog.Error("sso callback: failed to store exchange code", "error", err)
+		return &ssoRedirect{Location: h.frontendCallbackURL("", gateID, workspaceID, "server_error")}, nil
+	}
+
+	return &ssoRedirect{Location: h.frontendCallbackURL(exchangeCode, "", workspaceID, "")}, nil
 }
 
-func (h *SSOHandler) frontendCallbackURL(accessToken, refreshToken, gateID, workspaceID, errCode string) string {
+func (h *SSOHandler) frontendCallbackURL(code, gateID, workspaceID, errCode string) string {
 	u, _ := url.Parse(fmt.Sprintf("%s/auth/sso/callback", h.frontendURL))
 	q := u.Query()
 	if errCode != "" {
 		q.Set("error", errCode)
 	}
-	if accessToken != "" {
-		q.Set("access_token", accessToken)
-		q.Set("refresh_token", refreshToken)
+	if code != "" {
+		q.Set("code", code)
 	}
 	if gateID != "" {
 		q.Set("gate_id", gateID)
@@ -136,6 +142,36 @@ func (h *SSOHandler) frontendCallbackURL(accessToken, refreshToken, gateID, work
 	}
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+// --- Exchange code for tokens ---
+
+type SSOExchangeInput struct {
+	Body struct {
+		Code string `json:"code" minLength:"1"`
+	}
+}
+
+type SSOExchangeOutput struct {
+	Body struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		GateID       string `json:"gate_id,omitempty"`
+		WorkspaceID  string `json:"workspace_id,omitempty"`
+	}
+}
+
+func (h *SSOHandler) Exchange(ctx context.Context, input *SSOExchangeInput) (*SSOExchangeOutput, error) {
+	tokens, gateID, workspaceID, err := h.authSvc.ExchangeSSOCode(ctx, input.Body.Code)
+	if err != nil {
+		return nil, huma.Error401Unauthorized("invalid or expired exchange code")
+	}
+	out := &SSOExchangeOutput{}
+	out.Body.AccessToken = tokens.AccessToken
+	out.Body.RefreshToken = tokens.RefreshToken
+	out.Body.GateID = gateID
+	out.Body.WorkspaceID = workspaceID
+	return out, nil
 }
 
 // --- SSO Settings (admin) ---
@@ -312,6 +348,14 @@ func (h *SSOHandler) RegisterRoutes(
 		Tags:          []string{"SSO"},
 		DefaultStatus: http.StatusFound,
 	}, h.Callback)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "sso-exchange",
+		Method:      http.MethodPost,
+		Path:        "/api/auth/sso/exchange",
+		Summary:     "Exchange a one-time SSO code for access and refresh tokens",
+		Tags:        []string{"SSO"},
+	}, h.Exchange)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "sso-settings-get",

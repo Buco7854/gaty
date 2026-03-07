@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -25,9 +26,11 @@ var (
 )
 
 const (
-	accessTokenTTL      = 15 * time.Minute
-	defaultSessionTTL   = 7 * 24 * time.Hour
-	refreshKeyPrefix    = "refresh:"
+	accessTokenTTL         = 15 * time.Minute
+	defaultSessionTTL      = 7 * 24 * time.Hour
+	refreshKeyPrefix       = "refresh:"
+	ssoExchangeCodePrefix  = "sso:code:"
+	ssoExchangeCodeTTL     = 60 * time.Second
 )
 
 type TokenPair struct {
@@ -172,7 +175,7 @@ func (s *AuthService) LoginLocal(ctx context.Context, workspaceID uuid.UUID, loc
 // Refresh redeems a refresh token and issues a new token pair of the same type,
 // preserving the original session duration.
 func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenPair, error) {
-	val, err := s.redis.GetDel(ctx, refreshKeyPrefix+refreshToken).Result()
+	val, err := s.redis.GetDel(ctx, refreshKeyPrefix+hashRefreshToken(refreshToken)).Result()
 	if err != nil {
 		return nil, ErrInvalidToken
 	}
@@ -383,7 +386,7 @@ func (s *AuthService) IssueGatePinSession(ctx context.Context, pinID, gateID uui
 		"permissions":      permissions,
 		"session_duration": sessionDuration.Seconds(),
 	})
-	if err := s.redis.Set(ctx, refreshKeyPrefix+refreshToken, string(payload), sessionDuration).Err(); err != nil {
+	if err := s.redis.Set(ctx, refreshKeyPrefix+hashRefreshToken(refreshToken), string(payload), sessionDuration).Err(); err != nil {
 		return nil, fmt.Errorf("store pin session refresh token: %w", err)
 	}
 
@@ -440,6 +443,46 @@ func (s *AuthService) IssueLocalTokenPair(ctx context.Context, membershipID, wor
 	return s.issueLocalTokenPair(ctx, membershipID, workspaceID, role, sessionDuration)
 }
 
+// StoreSSOExchangeCode stores a token pair in Redis behind a one-time exchange code.
+// The code is returned to the caller (SSO callback handler) to be passed as a URL query parameter
+// instead of the tokens themselves, preventing token exposure in browser history and server logs.
+func (s *AuthService) StoreSSOExchangeCode(ctx context.Context, tokens *TokenPair, gateID, workspaceID string) (string, error) {
+	code, err := newRefreshToken() // 32 bytes hex, sufficient entropy
+	if err != nil {
+		return "", fmt.Errorf("generate SSO exchange code: %w", err)
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"access_token":  tokens.AccessToken,
+		"refresh_token": tokens.RefreshToken,
+		"gate_id":       gateID,
+		"workspace_id":  workspaceID,
+	})
+	if err := s.redis.Set(ctx, ssoExchangeCodePrefix+code, string(payload), ssoExchangeCodeTTL).Err(); err != nil {
+		return "", fmt.Errorf("store SSO exchange code: %w", err)
+	}
+	return code, nil
+}
+
+// ExchangeSSOCode redeems a one-time SSO exchange code and returns the stored tokens.
+func (s *AuthService) ExchangeSSOCode(ctx context.Context, code string) (tokens *TokenPair, gateID, workspaceID string, err error) {
+	val, redisErr := s.redis.GetDel(ctx, ssoExchangeCodePrefix+code).Result()
+	if redisErr != nil {
+		return nil, "", "", ErrInvalidToken
+	}
+	var payload map[string]any
+	if jsonErr := json.Unmarshal([]byte(val), &payload); jsonErr != nil {
+		return nil, "", "", ErrInvalidToken
+	}
+	at, _ := payload["access_token"].(string)
+	rt, _ := payload["refresh_token"].(string)
+	if at == "" || rt == "" {
+		return nil, "", "", ErrInvalidToken
+	}
+	gateID, _ = payload["gate_id"].(string)
+	workspaceID, _ = payload["workspace_id"].(string)
+	return &TokenPair{AccessToken: at, RefreshToken: rt}, gateID, workspaceID, nil
+}
+
 func (s *AuthService) keyFunc(t *jwt.Token) (any, error) {
 	if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 		return nil, fmt.Errorf("unexpected signing method")
@@ -468,7 +511,7 @@ func (s *AuthService) issueGlobalTokenPair(ctx context.Context, userID uuid.UUID
 		"sub":              userID.String(),
 		"session_duration": sessionDuration.Seconds(),
 	})
-	if err := s.redis.Set(ctx, refreshKeyPrefix+refreshToken, string(payload), sessionDuration).Err(); err != nil {
+	if err := s.redis.Set(ctx, refreshKeyPrefix+hashRefreshToken(refreshToken), string(payload), sessionDuration).Err(); err != nil {
 		return nil, fmt.Errorf("store refresh token: %w", err)
 	}
 
@@ -500,7 +543,7 @@ func (s *AuthService) issueLocalTokenPair(ctx context.Context, membershipID, wor
 		"role":             string(role),
 		"session_duration": sessionDuration.Seconds(),
 	})
-	if err := s.redis.Set(ctx, refreshKeyPrefix+refreshToken, string(payload), sessionDuration).Err(); err != nil {
+	if err := s.redis.Set(ctx, refreshKeyPrefix+hashRefreshToken(refreshToken), string(payload), sessionDuration).Err(); err != nil {
 		return nil, fmt.Errorf("store refresh token: %w", err)
 	}
 
@@ -553,4 +596,12 @@ func newRefreshToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// hashRefreshToken returns a SHA-256 hex digest of a refresh token.
+// Used as the Redis key so that a compromised Redis dump cannot be used
+// to forge valid refresh tokens.
+func hashRefreshToken(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
 }
