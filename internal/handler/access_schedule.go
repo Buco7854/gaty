@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/Buco7854/gatie/internal/middleware"
 	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/Buco7854/gatie/internal/service"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
@@ -27,7 +29,7 @@ type ListSchedulesOutput struct {
 	Body []*model.AccessSchedule
 }
 
-// --- Create ---
+// --- Create (workspace-level, admin only) ---
 
 type CreateScheduleInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
@@ -46,7 +48,7 @@ func (h *AccessScheduleHandler) Create(ctx context.Context, input *CreateSchedul
 	return &ScheduleOutput{Body: s}, nil
 }
 
-// --- List ---
+// --- List (workspace-level, any member) ---
 
 func (h *AccessScheduleHandler) List(ctx context.Context, input *WorkspacePathParam) (*ListSchedulesOutput, error) {
 	list, err := h.schedules.List(ctx, input.WorkspaceID)
@@ -65,7 +67,7 @@ type SchedulePathParam struct {
 
 func (h *AccessScheduleHandler) Get(ctx context.Context, input *SchedulePathParam) (*ScheduleOutput, error) {
 	s, err := h.schedules.Get(ctx, input.ScheduleID, input.WorkspaceID)
-	if errors.Is(err, model.ErrNotFound) {
+	if errors.Is(err, model.ErrNotFound) || errors.Is(err, repository.ErrNotFound) {
 		return nil, huma.Error404NotFound("schedule not found")
 	}
 	if err != nil {
@@ -74,7 +76,7 @@ func (h *AccessScheduleHandler) Get(ctx context.Context, input *SchedulePathPara
 	return &ScheduleOutput{Body: s}, nil
 }
 
-// --- Update ---
+// --- Update (workspace-level, admin only) ---
 
 type UpdateScheduleInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
@@ -88,7 +90,7 @@ type UpdateScheduleInput struct {
 
 func (h *AccessScheduleHandler) Update(ctx context.Context, input *UpdateScheduleInput) (*ScheduleOutput, error) {
 	s, err := h.schedules.Update(ctx, input.ScheduleID, input.WorkspaceID, input.Body.Name, input.Body.Description, input.Body.Expr)
-	if errors.Is(err, model.ErrNotFound) {
+	if errors.Is(err, model.ErrNotFound) || errors.Is(err, repository.ErrNotFound) {
 		return nil, huma.Error404NotFound("schedule not found")
 	}
 	if err != nil {
@@ -97,11 +99,11 @@ func (h *AccessScheduleHandler) Update(ctx context.Context, input *UpdateSchedul
 	return &ScheduleOutput{Body: s}, nil
 }
 
-// --- Delete ---
+// --- Delete (workspace-level, admin only) ---
 
 func (h *AccessScheduleHandler) Delete(ctx context.Context, input *SchedulePathParam) (*struct{}, error) {
 	err := h.schedules.Delete(ctx, input.ScheduleID, input.WorkspaceID)
-	if errors.Is(err, model.ErrNotFound) {
+	if errors.Is(err, model.ErrNotFound) || errors.Is(err, repository.ErrNotFound) {
 		return nil, huma.Error404NotFound("schedule not found")
 	}
 	if err != nil {
@@ -110,14 +112,111 @@ func (h *AccessScheduleHandler) Delete(ctx context.Context, input *SchedulePathP
 	return nil, nil
 }
 
+// --- Member personal schedules ---
+
+// ListMine lists the current member's personal schedules.
+func (h *AccessScheduleHandler) ListMine(ctx context.Context, input *WorkspacePathParam) (*ListSchedulesOutput, error) {
+	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized("unauthorized")
+	}
+	list, err := h.schedules.ListMine(ctx, input.WorkspaceID, membershipID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to list personal schedules", err)
+	}
+	return &ListSchedulesOutput{Body: list}, nil
+}
+
+// CreateMine creates a personal schedule for the current member.
+func (h *AccessScheduleHandler) CreateMine(ctx context.Context, input *CreateScheduleInput) (*ScheduleOutput, error) {
+	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized("unauthorized")
+	}
+	s, err := h.schedules.CreateMember(ctx, input.WorkspaceID, membershipID, input.Body.Name, input.Body.Description, input.Body.Expr)
+	if err != nil {
+		return nil, huma.Error400BadRequest("validation failed", &huma.ErrorDetail{Message: err.Error(), Location: "/body/expr"})
+	}
+	return &ScheduleOutput{Body: s}, nil
+}
+
+// UpdateMine updates a personal schedule — only if it belongs to the current member.
+func (h *AccessScheduleHandler) UpdateMine(ctx context.Context, input *UpdateScheduleInput) (*ScheduleOutput, error) {
+	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized("unauthorized")
+	}
+	// Fetch to verify ownership before updating.
+	existing, err := h.schedules.Get(ctx, input.ScheduleID, input.WorkspaceID)
+	if errors.Is(err, model.ErrNotFound) || errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("schedule not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get schedule", err)
+	}
+	if existing.MembershipID == nil || *existing.MembershipID != membershipID {
+		return nil, huma.Error403Forbidden("you can only edit your own schedules")
+	}
+	s, err := h.schedules.Update(ctx, input.ScheduleID, input.WorkspaceID, input.Body.Name, input.Body.Description, input.Body.Expr)
+	if errors.Is(err, model.ErrNotFound) || errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("schedule not found")
+	}
+	if err != nil {
+		return nil, huma.Error400BadRequest("validation failed", &huma.ErrorDetail{Message: err.Error(), Location: "/body/expr"})
+	}
+	return &ScheduleOutput{Body: s}, nil
+}
+
+// DeleteMine deletes a personal schedule — only if it belongs to the current member.
+func (h *AccessScheduleHandler) DeleteMine(ctx context.Context, input *SchedulePathParam) (*struct{}, error) {
+	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized("unauthorized")
+	}
+	existing, err := h.schedules.Get(ctx, input.ScheduleID, input.WorkspaceID)
+	if errors.Is(err, model.ErrNotFound) || errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("schedule not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get schedule", err)
+	}
+	if existing.MembershipID == nil || *existing.MembershipID != membershipID {
+		return nil, huma.Error403Forbidden("you can only delete your own schedules")
+	}
+	if err := h.schedules.Delete(ctx, input.ScheduleID, input.WorkspaceID); err != nil {
+		return nil, huma.Error500InternalServerError("failed to delete schedule", err)
+	}
+	return nil, nil
+}
+
+// GetMine retrieves a specific personal schedule — only if it belongs to the current member.
+func (h *AccessScheduleHandler) GetMine(ctx context.Context, input *SchedulePathParam) (*ScheduleOutput, error) {
+	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized("unauthorized")
+	}
+	s, err := h.schedules.Get(ctx, input.ScheduleID, input.WorkspaceID)
+	if errors.Is(err, model.ErrNotFound) || errors.Is(err, repository.ErrNotFound) {
+		return nil, huma.Error404NotFound("schedule not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get schedule", err)
+	}
+	if s.MembershipID == nil || *s.MembershipID != membershipID {
+		return nil, huma.Error404NotFound("schedule not found")
+	}
+	return &ScheduleOutput{Body: s}, nil
+}
+
 // --- Routes ---
 
 func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsMember func(huma.Context, func(huma.Context)), wsAdmin func(huma.Context, func(huma.Context))) {
+	// Workspace-level schedules (admin-managed)
 	huma.Register(api, huma.Operation{
 		OperationID:   "schedule-create",
 		Method:        http.MethodPost,
 		Path:          "/api/workspaces/{ws_id}/schedules",
-		Summary:       "Create a time-restriction schedule",
+		Summary:       "Create a workspace time-restriction schedule",
 		Tags:          []string{"Schedules"},
 		DefaultStatus: http.StatusCreated,
 		Middlewares:   huma.Middlewares{wsAdmin},
@@ -127,7 +226,7 @@ func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsMember func(huma.
 		OperationID: "schedule-list",
 		Method:      http.MethodGet,
 		Path:        "/api/workspaces/{ws_id}/schedules",
-		Summary:     "List all time-restriction schedules in a workspace",
+		Summary:     "List workspace time-restriction schedules",
 		Tags:        []string{"Schedules"},
 		Middlewares: huma.Middlewares{wsMember},
 	}, h.List)
@@ -145,7 +244,7 @@ func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsMember func(huma.
 		OperationID: "schedule-update",
 		Method:      http.MethodPut,
 		Path:        "/api/workspaces/{ws_id}/schedules/{schedule_id}",
-		Summary:     "Replace a time-restriction schedule",
+		Summary:     "Replace a workspace time-restriction schedule",
 		Tags:        []string{"Schedules"},
 		Middlewares: huma.Middlewares{wsAdmin},
 	}, h.Update)
@@ -154,8 +253,55 @@ func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsMember func(huma.
 		OperationID: "schedule-delete",
 		Method:      http.MethodDelete,
 		Path:        "/api/workspaces/{ws_id}/schedules/{schedule_id}",
-		Summary:     "Delete a time-restriction schedule",
+		Summary:     "Delete a workspace time-restriction schedule",
 		Tags:        []string{"Schedules"},
 		Middlewares: huma.Middlewares{wsAdmin},
 	}, h.Delete)
+
+	// Member personal schedules (any member manages their own)
+	huma.Register(api, huma.Operation{
+		OperationID:   "my-schedule-create",
+		Method:        http.MethodPost,
+		Path:          "/api/workspaces/{ws_id}/my-schedules",
+		Summary:       "Create a personal time-restriction schedule",
+		Tags:          []string{"Schedules"},
+		DefaultStatus: http.StatusCreated,
+		Middlewares:   huma.Middlewares{wsMember},
+	}, h.CreateMine)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "my-schedule-list",
+		Method:      http.MethodGet,
+		Path:        "/api/workspaces/{ws_id}/my-schedules",
+		Summary:     "List my personal time-restriction schedules",
+		Tags:        []string{"Schedules"},
+		Middlewares: huma.Middlewares{wsMember},
+	}, h.ListMine)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "my-schedule-get",
+		Method:      http.MethodGet,
+		Path:        "/api/workspaces/{ws_id}/my-schedules/{schedule_id}",
+		Summary:     "Get a personal time-restriction schedule",
+		Tags:        []string{"Schedules"},
+		Middlewares: huma.Middlewares{wsMember},
+	}, h.GetMine)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "my-schedule-update",
+		Method:      http.MethodPut,
+		Path:        "/api/workspaces/{ws_id}/my-schedules/{schedule_id}",
+		Summary:     "Replace a personal time-restriction schedule",
+		Tags:        []string{"Schedules"},
+		Middlewares: huma.Middlewares{wsMember},
+	}, h.UpdateMine)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "my-schedule-delete",
+		Method:      http.MethodDelete,
+		Path:        "/api/workspaces/{ws_id}/my-schedules/{schedule_id}",
+		Summary:     "Delete a personal time-restriction schedule",
+		Tags:        []string{"Schedules"},
+		Middlewares: huma.Middlewares{wsMember},
+	}, h.DeleteMine)
 }

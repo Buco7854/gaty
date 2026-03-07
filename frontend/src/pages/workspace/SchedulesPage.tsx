@@ -3,7 +3,7 @@ import type { AxiosError } from 'axios'
 import { useParams } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { schedulesApi } from '@/api'
-import type { AccessSchedule, ExprNode, ScheduleRule } from '@/types'
+import type { AccessSchedule, ExprNode, ScheduleRule, WorkspaceWithRole } from '@/types'
 import { useTranslation } from 'react-i18next'
 import {
   Container, Title, Text, Stack, Paper, Group, Button, TextInput, ActionIcon,
@@ -11,8 +11,10 @@ import {
   SimpleGrid, SegmentedControl, Checkbox,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
-import { Plus, Trash2, Pencil, CalendarClock } from 'lucide-react'
+import { Plus, Trash2, Pencil, CalendarClock, Lock, User } from 'lucide-react'
 import { QueryError } from '@/components/QueryError'
+import { useAuthStore } from '@/store/auth'
+import { findLocalSession } from '@/utils/session'
 
 // 0=Sun, 1=Mon, …, 6=Sat (Go's time.Weekday)
 const WEEKDAY_OPTIONS = [
@@ -353,22 +355,187 @@ function extractApiError(err: unknown): string {
   return data?.detail ?? 'An error occurred'
 }
 
-export default function SchedulesPage() {
-  const { wsId } = useParams<{ wsId: string }>()
-  const { t } = useTranslation()
-  const qc = useQueryClient()
+// Shared schedule card component
+function ScheduleCard({
+  s,
+  onEdit,
+  onDelete,
+  isDeleting,
+  t,
+}: {
+  s: AccessSchedule
+  onEdit: (s: AccessSchedule) => void
+  onDelete: (id: string) => void
+  isDeleting: boolean
+  t: (key: string) => string
+}) {
+  return (
+    <Paper withBorder p="md" radius="md">
+      <Group justify="space-between" wrap="nowrap">
+        <Stack gap={4} style={{ minWidth: 0 }}>
+          <Group gap="xs">
+            <Text fw={600} size="sm" truncate>{s.name}</Text>
+            {s.expr ? (
+              <Badge size="xs" variant="filled" color={
+                s.expr.op === 'and' ? 'blue' :
+                s.expr.op === 'or' ? 'green' :
+                s.expr.op === 'not' ? 'orange' : 'gray'
+              }>
+                {s.expr.op.toUpperCase()}
+              </Badge>
+            ) : (
+              <Badge size="xs" variant="light" color="gray">{t('schedules.noRestriction')}</Badge>
+            )}
+          </Group>
+          {s.description && (
+            <Text size="xs" c="dimmed">{s.description}</Text>
+          )}
+          {s.expr && (
+            <Text size="xs" c="dimmed" ff="mono" truncate>
+              {exprSummary(s.expr)}
+            </Text>
+          )}
+        </Stack>
+        <Group gap={4} wrap="nowrap">
+          <ActionIcon size="sm" variant="subtle" onClick={() => onEdit(s)}>
+            <Pencil size={14} />
+          </ActionIcon>
+          <ActionIcon
+            size="sm"
+            variant="subtle"
+            color="red"
+            loading={isDeleting}
+            onClick={() => onDelete(s.id)}
+          >
+            <Trash2 size={14} />
+          </ActionIcon>
+        </Group>
+      </Group>
+    </Paper>
+  )
+}
 
-  const { data: schedules = [], isLoading, isError, error } = useQuery<AccessSchedule[]>({
-    queryKey: ['schedules', wsId],
-    queryFn: () => schedulesApi.list(wsId!),
-  })
+// Shared schedule form modal
+function ScheduleModal({
+  opened,
+  onClose,
+  editing,
+  onSave,
+  isSaving,
+  saveError,
+  name,
+  setName,
+  description,
+  setDescription,
+  expr,
+  setExpr,
+  ruleTypeOptions,
+  title,
+  t,
+}: {
+  opened: boolean
+  onClose: () => void
+  editing: AccessSchedule | null
+  onSave: (e: React.FormEvent) => void
+  isSaving: boolean
+  saveError: string | null
+  name: string
+  setName: (v: string) => void
+  description: string
+  setDescription: (v: string) => void
+  expr: ExprNode | null
+  setExpr: (v: ExprNode | null) => void
+  ruleTypeOptions: { value: string; label: string }[]
+  title: string
+  t: (key: string) => string
+}) {
+  return (
+    <Modal opened={opened} onClose={onClose} title={title} size="lg">
+      <form onSubmit={onSave}>
+        <Stack gap="md">
+          <TextInput
+            label={t('common.name')}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+            autoFocus
+          />
+          <TextInput
+            label={t('schedules.description')}
+            placeholder={t('schedules.descriptionPlaceholder')}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
 
-  const [modalOpened, { open, close }] = useDisclosure(false)
+          <Text size="xs" c="dimmed">{t('schedules.exprHint')}</Text>
+
+          <Divider label={t('schedules.addExpr')} labelPosition="left" />
+
+          {expr === null ? (
+            <Stack gap="xs">
+              <Text size="xs" c="dimmed">{t('schedules.noRestriction')}</Text>
+              <Group gap={4}>
+                <Button size="xs" variant="default" leftSection={<Plus size={11} />} onClick={() => setExpr(makeAndNode())} type="button">AND</Button>
+                <Button size="xs" variant="default" leftSection={<Plus size={11} />} onClick={() => setExpr(makeOrNode())} type="button">OR</Button>
+                <Button size="xs" variant="default" leftSection={<Plus size={11} />} onClick={() => setExpr(makeNotNode())} type="button">NOT</Button>
+                <Button size="xs" variant="default" leftSection={<Plus size={11} />} onClick={() => setExpr(makeRuleNode())} type="button">{t('schedules.opRule')}</Button>
+              </Group>
+            </Stack>
+          ) : (
+            <Stack gap="xs">
+              <ExprNodeEditor
+                node={expr}
+                onChange={setExpr}
+                onDelete={() => setExpr(null)}
+                depth={0}
+                ruleTypeOptions={ruleTypeOptions}
+              />
+            </Stack>
+          )}
+
+          {saveError && <Alert color="red" variant="light" style={{ whiteSpace: 'pre-line' }}>{saveError}</Alert>}
+
+          <Group justify="flex-end" pt="xs">
+            <Button variant="default" onClick={onClose} type="button">{t('common.cancel')}</Button>
+            <Button type="submit" loading={isSaving} disabled={!name.trim()}>{t('common.save')}</Button>
+          </Group>
+        </Stack>
+      </form>
+    </Modal>
+  )
+}
+
+function useScheduleForm() {
   const [editing, setEditing] = useState<AccessSchedule | null>(null)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [expr, setExpr] = useState<ExprNode | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [modalOpened, { open, close }] = useDisclosure(false)
+
+  function openCreate() {
+    setEditing(null); setName(''); setDescription(''); setExpr(null); setSaveError(null); open()
+  }
+  function openEdit(s: AccessSchedule) {
+    setEditing(s); setName(s.name); setDescription(s.description ?? ''); setExpr(s.expr ?? null); setSaveError(null); open()
+  }
+  function closeModal() { close(); setSaveError(null) }
+
+  return { editing, name, setName, description, setDescription, expr, setExpr, saveError, setSaveError, modalOpened, openCreate, openEdit, closeModal }
+}
+
+export default function SchedulesPage() {
+  const { wsId } = useParams<{ wsId: string }>()
+  const { t } = useTranslation()
+  const qc = useQueryClient()
+
+  // Determine current user's role (same pattern as WorkspacePage)
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const globalAuth = isAuthenticated()
+  const localSession = globalAuth ? null : findLocalSession(wsId!)
+  const ws = qc.getQueryData<WorkspaceWithRole[]>(['workspaces'])?.find((w) => w.id === wsId)
+  const effectiveRole = globalAuth ? ws?.role : localSession?.role
+  const isAdmin = effectiveRole === 'ADMIN' || effectiveRole === 'OWNER'
 
   const ruleTypeOptions = [
     { value: 'time_range', label: t('schedules.timeRange') },
@@ -378,225 +545,207 @@ export default function SchedulesPage() {
     { value: 'month_range', label: t('schedules.monthRange') },
   ]
 
-  const createMut = useMutation({
-    mutationFn: () =>
-      schedulesApi.create(wsId!, { name: name.trim(), description: description.trim() || undefined, expr }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['schedules', wsId] }); closeModal() },
-    onError: (err) => setSaveError(extractApiError(err)),
+  // --- Workspace schedules (admin) ---
+  const wsForm = useScheduleForm()
+
+  const { data: wsSchedules = [], isLoading: wsLoading, isError: wsError, error: wsErr } = useQuery<AccessSchedule[]>({
+    queryKey: ['schedules', wsId],
+    queryFn: () => schedulesApi.list(wsId!),
+    enabled: isAdmin,
   })
 
-  const updateMut = useMutation({
-    mutationFn: () =>
-      schedulesApi.update(wsId!, editing!.id, { name: name.trim(), description: description.trim() || undefined, expr }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['schedules', wsId] }); closeModal() },
-    onError: (err) => setSaveError(extractApiError(err)),
+  const wsCreateMut = useMutation({
+    mutationFn: () => schedulesApi.create(wsId!, { name: wsForm.name.trim(), description: wsForm.description.trim() || undefined, expr: wsForm.expr }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['schedules', wsId] }); wsForm.closeModal() },
+    onError: (err) => wsForm.setSaveError(extractApiError(err)),
   })
 
-  const deleteMut = useMutation({
+  const wsUpdateMut = useMutation({
+    mutationFn: () => schedulesApi.update(wsId!, wsForm.editing!.id, { name: wsForm.name.trim(), description: wsForm.description.trim() || undefined, expr: wsForm.expr }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['schedules', wsId] }); wsForm.closeModal() },
+    onError: (err) => wsForm.setSaveError(extractApiError(err)),
+  })
+
+  const wsDeleteMut = useMutation({
     mutationFn: (id: string) => schedulesApi.delete(wsId!, id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules', wsId] }),
   })
 
-  function openCreate() {
-    setEditing(null)
-    setName('')
-    setDescription('')
-    setExpr(null)
-    setSaveError(null)
-    open()
-  }
-
-  function openEdit(s: AccessSchedule) {
-    setEditing(s)
-    setName(s.name)
-    setDescription(s.description ?? '')
-    setExpr(s.expr ?? null)
-    setSaveError(null)
-    open()
-  }
-
-  function closeModal() {
-    close()
-    setSaveError(null)
-  }
-
-  function handleSave(e: React.FormEvent) {
+  function handleWsSave(e: React.FormEvent) {
     e.preventDefault()
-    setSaveError(null)
-    if (editing) updateMut.mutate()
-    else createMut.mutate()
+    wsForm.setSaveError(null)
+    if (wsForm.editing) wsUpdateMut.mutate()
+    else wsCreateMut.mutate()
   }
 
-  const isSaving = createMut.isPending || updateMut.isPending
+  // --- My schedules (personal) ---
+  const myForm = useScheduleForm()
+
+  const { data: mySchedules = [], isLoading: myLoading, isError: myError, error: myErr } = useQuery<AccessSchedule[]>({
+    queryKey: ['my-schedules', wsId],
+    queryFn: () => schedulesApi.listMine(wsId!),
+  })
+
+  const myCreateMut = useMutation({
+    mutationFn: () => schedulesApi.createMine(wsId!, { name: myForm.name.trim(), description: myForm.description.trim() || undefined, expr: myForm.expr }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['my-schedules', wsId] }); myForm.closeModal() },
+    onError: (err) => myForm.setSaveError(extractApiError(err)),
+  })
+
+  const myUpdateMut = useMutation({
+    mutationFn: () => schedulesApi.updateMine(wsId!, myForm.editing!.id, { name: myForm.name.trim(), description: myForm.description.trim() || undefined, expr: myForm.expr }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['my-schedules', wsId] }); myForm.closeModal() },
+    onError: (err) => myForm.setSaveError(extractApiError(err)),
+  })
+
+  const myDeleteMut = useMutation({
+    mutationFn: (id: string) => schedulesApi.deleteMine(wsId!, id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['my-schedules', wsId] }),
+  })
+
+  function handleMySave(e: React.FormEvent) {
+    e.preventDefault()
+    myForm.setSaveError(null)
+    if (myForm.editing) myUpdateMut.mutate()
+    else myCreateMut.mutate()
+  }
 
   return (
     <Container size="sm" py="xl">
-      <Group justify="space-between" mb="lg">
+      <Stack gap="xl">
+
+        {/* My Schedules section */}
         <div>
-          <Title order={3}>{t('schedules.title')}</Title>
-          <Text size="sm" c="dimmed">{t('schedules.subtitle')}</Text>
-        </div>
-        <Button leftSection={<Plus size={14} />} size="sm" onClick={openCreate}>
-          {t('schedules.add')}
-        </Button>
-      </Group>
-
-      {isLoading ? (
-        <Center py="xl"><Loader size="sm" /></Center>
-      ) : isError ? (
-        <QueryError error={error} />
-      ) : schedules.length === 0 ? (
-        <Paper withBorder p="xl" radius="md">
-          <Center>
-            <Stack align="center" gap="xs">
-              <CalendarClock size={32} opacity={0.3} />
-              <Text c="dimmed" size="sm">{t('schedules.noSchedules')}</Text>
-              <Text c="dimmed" size="xs">{t('schedules.noSchedulesHint')}</Text>
-            </Stack>
-          </Center>
-        </Paper>
-      ) : (
-        <Stack gap="xs">
-          {schedules.map((s) => (
-            <Paper key={s.id} withBorder p="md" radius="md">
-              <Group justify="space-between" wrap="nowrap">
-                <Stack gap={4} style={{ minWidth: 0 }}>
-                  <Group gap="xs">
-                    <Text fw={600} size="sm" truncate>{s.name}</Text>
-                    {s.expr ? (
-                      <Badge size="xs" variant="filled" color={
-                        s.expr.op === 'and' ? 'blue' :
-                        s.expr.op === 'or' ? 'green' :
-                        s.expr.op === 'not' ? 'orange' : 'gray'
-                      }>
-                        {s.expr.op.toUpperCase()}
-                      </Badge>
-                    ) : (
-                      <Badge size="xs" variant="light" color="gray">{t('schedules.noRestriction')}</Badge>
-                    )}
-                  </Group>
-                  {s.description && (
-                    <Text size="xs" c="dimmed">{s.description}</Text>
-                  )}
-                  {s.expr && (
-                    <Text size="xs" c="dimmed" ff="mono" truncate>
-                      {exprSummary(s.expr)}
-                    </Text>
-                  )}
-                </Stack>
-                <Group gap={4} wrap="nowrap">
-                  <ActionIcon size="sm" variant="subtle" onClick={() => openEdit(s)}>
-                    <Pencil size={14} />
-                  </ActionIcon>
-                  <ActionIcon
-                    size="sm"
-                    variant="subtle"
-                    color="red"
-                    loading={deleteMut.isPending}
-                    onClick={() => deleteMut.mutate(s.id)}
-                  >
-                    <Trash2 size={14} />
-                  </ActionIcon>
-                </Group>
+          <Group justify="space-between" mb="md">
+            <div>
+              <Group gap="xs" mb={2}>
+                <User size={16} />
+                <Title order={4}>{t('schedules.mySchedulesTitle')}</Title>
               </Group>
+              <Text size="sm" c="dimmed">{t('schedules.mySchedulesSubtitle')}</Text>
+            </div>
+            <Button leftSection={<Plus size={14} />} size="sm" variant="default" onClick={myForm.openCreate}>
+              {t('schedules.add')}
+            </Button>
+          </Group>
+
+          {myLoading ? (
+            <Center py="md"><Loader size="sm" /></Center>
+          ) : myError ? (
+            <QueryError error={myErr} />
+          ) : mySchedules.length === 0 ? (
+            <Paper withBorder p="lg" radius="md">
+              <Center>
+                <Stack align="center" gap="xs">
+                  <CalendarClock size={28} opacity={0.3} />
+                  <Text c="dimmed" size="sm">{t('schedules.noSchedules')}</Text>
+                  <Text c="dimmed" size="xs">{t('schedules.mySchedulesHint')}</Text>
+                </Stack>
+              </Center>
             </Paper>
-          ))}
-        </Stack>
-      )}
-
-      <Modal
-        opened={modalOpened}
-        onClose={closeModal}
-        title={editing ? t('schedules.editSchedule') : t('schedules.add')}
-        size="lg"
-      >
-        <form onSubmit={handleSave}>
-          <Stack gap="md">
-            <TextInput
-              label={t('common.name')}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              autoFocus
-            />
-            <TextInput
-              label={t('schedules.description')}
-              placeholder={t('schedules.descriptionPlaceholder')}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-
-            <Text size="xs" c="dimmed">{t('schedules.exprHint')}</Text>
-
-            <Divider label={t('schedules.addExpr')} labelPosition="left" />
-
-            {expr === null ? (
-              <Stack gap="xs">
-                <Text size="xs" c="dimmed">{t('schedules.noRestriction')}</Text>
-                <Group gap={4}>
-                  <Button
-                    size="xs"
-                    variant="default"
-                    leftSection={<Plus size={11} />}
-                    onClick={() => setExpr(makeAndNode())}
-                    type="button"
-                  >
-                    AND
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="default"
-                    leftSection={<Plus size={11} />}
-                    onClick={() => setExpr(makeOrNode())}
-                    type="button"
-                  >
-                    OR
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="default"
-                    leftSection={<Plus size={11} />}
-                    onClick={() => setExpr(makeNotNode())}
-                    type="button"
-                  >
-                    NOT
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="default"
-                    leftSection={<Plus size={11} />}
-                    onClick={() => setExpr(makeRuleNode())}
-                    type="button"
-                  >
-                    {t('schedules.opRule')}
-                  </Button>
-                </Group>
-              </Stack>
-            ) : (
-              <Stack gap="xs">
-                <ExprNodeEditor
-                  node={expr}
-                  onChange={setExpr}
-                  onDelete={() => setExpr(null)}
-                  depth={0}
-                  ruleTypeOptions={ruleTypeOptions}
+          ) : (
+            <Stack gap="xs">
+              {mySchedules.map((s) => (
+                <ScheduleCard
+                  key={s.id}
+                  s={s}
+                  onEdit={myForm.openEdit}
+                  onDelete={(id) => myDeleteMut.mutate(id)}
+                  isDeleting={myDeleteMut.isPending}
+                  t={t}
                 />
-              </Stack>
-            )}
+              ))}
+            </Stack>
+          )}
+        </div>
 
-            {saveError && <Alert color="red" variant="light" style={{ whiteSpace: 'pre-line' }}>{saveError}</Alert>}
-
-            <Group justify="flex-end" pt="xs">
-              <Button variant="default" onClick={closeModal} type="button">
-                {t('common.cancel')}
-              </Button>
-              <Button type="submit" loading={isSaving} disabled={!name.trim()}>
-                {t('common.save')}
+        {/* Workspace Schedules section (admin only) */}
+        {isAdmin && (
+          <div>
+            <Group justify="space-between" mb="md">
+              <div>
+                <Group gap="xs" mb={2}>
+                  <Lock size={16} />
+                  <Title order={4}>{t('schedules.workspaceSchedulesTitle')}</Title>
+                </Group>
+                <Text size="sm" c="dimmed">{t('schedules.workspaceSchedulesSubtitle')}</Text>
+              </div>
+              <Button leftSection={<Plus size={14} />} size="sm" onClick={wsForm.openCreate}>
+                {t('schedules.add')}
               </Button>
             </Group>
-          </Stack>
-        </form>
-      </Modal>
+
+            {wsLoading ? (
+              <Center py="md"><Loader size="sm" /></Center>
+            ) : wsError ? (
+              <QueryError error={wsErr} />
+            ) : wsSchedules.length === 0 ? (
+              <Paper withBorder p="lg" radius="md">
+                <Center>
+                  <Stack align="center" gap="xs">
+                    <CalendarClock size={28} opacity={0.3} />
+                    <Text c="dimmed" size="sm">{t('schedules.noSchedules')}</Text>
+                    <Text c="dimmed" size="xs">{t('schedules.workspaceSchedulesHint')}</Text>
+                  </Stack>
+                </Center>
+              </Paper>
+            ) : (
+              <Stack gap="xs">
+                {wsSchedules.map((s) => (
+                  <ScheduleCard
+                    key={s.id}
+                    s={s}
+                    onEdit={wsForm.openEdit}
+                    onDelete={(id) => wsDeleteMut.mutate(id)}
+                    isDeleting={wsDeleteMut.isPending}
+                    t={t}
+                  />
+                ))}
+              </Stack>
+            )}
+          </div>
+        )}
+      </Stack>
+
+      {/* My schedules modal */}
+      <ScheduleModal
+        opened={myForm.modalOpened}
+        onClose={myForm.closeModal}
+        editing={myForm.editing}
+        onSave={handleMySave}
+        isSaving={myCreateMut.isPending || myUpdateMut.isPending}
+        saveError={myForm.saveError}
+        name={myForm.name}
+        setName={myForm.setName}
+        description={myForm.description}
+        setDescription={myForm.setDescription}
+        expr={myForm.expr}
+        setExpr={myForm.setExpr}
+        ruleTypeOptions={ruleTypeOptions}
+        title={myForm.editing ? t('schedules.editSchedule') : t('schedules.addMySchedule')}
+        t={t}
+      />
+
+      {/* Workspace schedules modal (admin) */}
+      {isAdmin && (
+        <ScheduleModal
+          opened={wsForm.modalOpened}
+          onClose={wsForm.closeModal}
+          editing={wsForm.editing}
+          onSave={handleWsSave}
+          isSaving={wsCreateMut.isPending || wsUpdateMut.isPending}
+          saveError={wsForm.saveError}
+          name={wsForm.name}
+          setName={wsForm.setName}
+          description={wsForm.description}
+          setDescription={wsForm.setDescription}
+          expr={wsForm.expr}
+          setExpr={wsForm.setExpr}
+          ruleTypeOptions={ruleTypeOptions}
+          title={wsForm.editing ? t('schedules.editSchedule') : t('schedules.addWorkspaceSchedule')}
+          t={t}
+        />
+      )}
     </Container>
   )
 }
