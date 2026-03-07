@@ -6,7 +6,7 @@ function normalizeList(data: unknown): Gate[] {
   return ((data as Record<string, unknown>).gates ?? []) as Gate[]
 }
 
-export type ActionDriverType = 'MQTT' | 'HTTP' | 'NONE'
+export type ActionDriverType = 'MQTT_GATIE' | 'MQTT_CUSTOM' | 'HTTP' | 'HTTP_INBOUND' | 'HTTP_WEBHOOK' | 'NONE'
 
 export interface ActionConfig {
   type: ActionDriverType
@@ -40,8 +40,8 @@ export interface GateTokenResponse {
 }
 
 export const gatesApi = {
-  list: (wsId: string) =>
-    api.get(`/workspaces/${wsId}/gates`).then((r) => normalizeList(r.data)),
+  list: (wsId: string, bearerToken?: string) =>
+    api.get(`/workspaces/${wsId}/gates`, bearerToken ? { headers: { Authorization: `Bearer ${bearerToken}` } } : undefined).then((r) => normalizeList(r.data)),
 
   get: (wsId: string, gateId: string) =>
     api.get<Gate>(`/workspaces/${wsId}/gates/${gateId}`).then((r) => r.data),

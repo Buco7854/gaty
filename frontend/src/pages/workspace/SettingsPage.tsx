@@ -6,12 +6,14 @@ import type { Gate } from '@/types'
 import { useTranslation } from 'react-i18next'
 import {
   Container, Title, Text, Stack, Paper, Group, Button, TextInput, PasswordInput, Select, Alert,
-  Switch, Divider, ActionIcon, Badge, Modal, NumberInput, Loader, Center, Collapse, Anchor,
+  Switch, Divider, ActionIcon, Badge, Modal, NumberInput, Loader, Center, Collapse, Anchor, TagsInput,
 } from '@mantine/core'
 import { GatePermissionsGrid, useGatePermissions } from '@/components/GatePermissionsGrid'
 import { useDisclosure } from '@mantine/hooks'
 import { KeyRound, Save, CheckCircle2, Plus, Trash2, Pencil, AlertTriangle } from 'lucide-react'
 import { notifySuccess, notifyError } from '@/lib/notify'
+import { QueryError } from '@/components/QueryError'
+import { useAuthStore } from '@/store/auth'
 
 interface RoleMappingEntry {
   claim: string
@@ -64,7 +66,7 @@ function ProviderModal({
   const [issuer, setIssuer] = useState(initial?.issuer ?? '')
   const [clientId, setClientId] = useState(initial?.client_id ?? '')
   const [clientSecret, setClientSecret] = useState('')
-  const [scopes, setScopes] = useState((initial?.scopes ?? []).join(' '))
+  const [scopes, setScopes] = useState<string[]>(initial?.scopes ?? [])
   const [authEndpoint, setAuthEndpoint] = useState(initial?.auth_endpoint ?? '')
   const [tokenEndpoint, setTokenEndpoint] = useState(initial?.token_endpoint ?? '')
   const [jwksUri, setJwksUri] = useState(initial?.jwks_uri ?? '')
@@ -96,7 +98,7 @@ function ProviderModal({
       issuer,
       client_id: clientId,
       client_secret: clientSecret || (initial?.client_secret ? '***' : ''),
-      scopes: scopes.split(/\s+/).filter(Boolean),
+      scopes,
       auth_endpoint: authEndpoint,
       token_endpoint: tokenEndpoint,
       jwks_uri: jwksUri,
@@ -137,6 +139,7 @@ function ProviderModal({
           <>
             <TextInput
               label={t('settings.issuerUrl')}
+              description={t('settings.issuerUrlHint')}
               value={issuer}
               onChange={(e) => setIssuer(e.target.value)}
               placeholder="https://accounts.google.com"
@@ -153,12 +156,13 @@ function ProviderModal({
               onChange={(e) => setClientSecret(e.target.value)}
               placeholder={isNew ? '' : t('settings.clientSecretPlaceholder')}
             />
-            <TextInput
+            <TagsInput
               label={t('settings.providerScopes')}
               description={t('common.optional')}
               value={scopes}
-              onChange={(e) => setScopes(e.target.value)}
-              placeholder={t('settings.providerScopesPlaceholder')}
+              onChange={setScopes}
+              placeholder={scopes.length === 0 ? t('settings.providerScopesPlaceholder') : undefined}
+              splitChars={[' ', ',']}
             />
             <Anchor
               component="button"
@@ -267,6 +271,8 @@ export default function SettingsPage() {
   const qc = useQueryClient()
   const { t } = useTranslation()
   const gatePermissions = useGatePermissions()
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const globalAuth = isAuthenticated()
   const [saved, setSaved] = useState(false)
   const [macSaved, setMacSaved] = useState(false)
   const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false)
@@ -280,10 +286,11 @@ export default function SettingsPage() {
   const [deleteModalOpened, { open: openDeleteModal, close: closeDeleteModal }] = useDisclosure(false)
   const [deleteConfirmName, setDeleteConfirmName] = useState('')
 
+  // workspace-get requires global auth — local members cannot call it
   const { data: wsData } = useQuery({
     queryKey: ['workspace', wsId],
     queryFn: () => workspacesApi.get(wsId!),
-    enabled: !!wsId,
+    enabled: !!wsId && globalAuth,
   })
 
   const renameWorkspace = useMutation({
@@ -306,13 +313,13 @@ export default function SettingsPage() {
     onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
-  const { data: ssoData, isLoading: ssoLoading } = useQuery({
+  const { data: ssoData, isLoading: ssoLoading, isError: ssoError, error: ssoFetchError } = useQuery({
     queryKey: ['sso-settings', wsId],
     queryFn: () => workspacesApi.getSsoSettings(wsId!),
     enabled: !!wsId,
   })
 
-  const { data: macData, isLoading: macLoading } = useQuery({
+  const { data: macData, isLoading: macLoading, isError: macError, error: macFetchError } = useQuery({
     queryKey: ['member-auth-config', wsId],
     queryFn: () => workspacesApi.getMemberAuthConfig(wsId!),
     enabled: !!wsId,
@@ -418,6 +425,14 @@ export default function SettingsPage() {
     )
   }
 
+  if (ssoError || macError) {
+    return (
+      <Container size="sm" py="xl">
+        <QueryError error={ssoFetchError ?? macFetchError} />
+      </Container>
+    )
+  }
+
   return (
     <Container size="sm" py="xl">
       <Stack mb="xl" gap={4}>
@@ -425,8 +440,8 @@ export default function SettingsPage() {
         <Text c="dimmed" size="sm">{t('settings.subtitle')}</Text>
       </Stack>
 
-      {/* Rename workspace */}
-      <Paper withBorder p="lg" radius="md" mb="md">
+      {/* Rename workspace — global users only (local member tokens cannot call workspace-get/rename) */}
+      {globalAuth && <Paper withBorder p="lg" radius="md" mb="md">
         <Text fw={600} mb="xs">{t('settings.renameWorkspace')}</Text>
         <Text size="xs" c="dimmed" mb="md">{t('settings.renameWorkspaceHint')}</Text>
         <Group gap="xs" align="flex-end">
@@ -450,7 +465,7 @@ export default function SettingsPage() {
             {t('common.save')}
           </Button>
         </Group>
-      </Paper>
+      </Paper>}
 
       {/* SSO Providers */}
       <Paper withBorder p="lg" radius="md" mb="md">
@@ -586,8 +601,8 @@ export default function SettingsPage() {
         </Group>
       </Paper>
 
-      {/* Danger zone */}
-      <Paper withBorder p="lg" radius="md" mt="md" style={{ borderColor: 'var(--mantine-color-red-6)' }}>
+      {/* Danger zone — global users only */}
+      {globalAuth && <Paper withBorder p="lg" radius="md" mt="md" style={{ borderColor: 'var(--mantine-color-red-6)' }}>
         <Group gap="xs" mb="md">
           <AlertTriangle size={18} color="var(--mantine-color-red-6)" />
           <Text fw={600} c="red">{t('settings.dangerZone')}</Text>
@@ -606,7 +621,7 @@ export default function SettingsPage() {
             {t('settings.deleteWorkspace')}
           </Button>
         </div>
-      </Paper>
+      </Paper>}
 
       <ProviderModal
         key={modalKey}

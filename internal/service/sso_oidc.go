@@ -3,15 +3,25 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 )
+
+// oidcHTTPClient forces HTTP/1.1 to avoid issues with HTTP/2 on some OIDC providers.
+var oidcHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		TLSNextProto:    make(map[string]func(string, *tls.Conn) http.RoundTripper),
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+	},
+}
 
 type ssoState struct {
 	GateID      string `json:"gate_id,omitempty"`
@@ -47,7 +57,7 @@ func (c *oidcDiscoveryCache) get(ctx context.Context, issuer string) (*gooidc.Pr
 	if p, ok = c.store[issuer]; ok {
 		return p, nil
 	}
-	p, err := gooidc.NewProvider(ctx, issuer)
+	p, err := gooidc.NewProvider(gooidc.ClientContext(ctx, oidcHTTPClient), issuer)
 	if err != nil {
 		return nil, fmt.Errorf("OIDC discovery for %q: %w", issuer, err)
 	}

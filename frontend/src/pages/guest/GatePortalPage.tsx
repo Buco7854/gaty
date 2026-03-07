@@ -8,7 +8,7 @@ import { getPermissionsFromJWT, getRoleFromJWT } from '@/utils/session'
 import { useTranslation } from 'react-i18next'
 import { notifySuccess, notifyError } from '@/lib/notify'
 import { Center, Stack, Group, Text, Title, Loader, Button, Anchor, Paper, Badge } from '@mantine/core'
-import { XCircle, Hash, KeyRound, LayoutGrid, Users, Activity } from 'lucide-react'
+import { Hash, KeyRound, LayoutGrid, Users, Activity } from 'lucide-react'
 import type { GateStatus } from '@/types'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
@@ -60,7 +60,7 @@ export default function GatePortalPage() {
 
   const [resolving, setResolving] = useState(true)
   const [resolved, setResolved] = useState<DomainResolveResult | null>(null)
-  const [resolveError, setResolveError] = useState(false)
+
   const [session, setSession] = useState<GateSession | null>(null)
   const autoTriggeredRef = useRef(false)
 
@@ -73,20 +73,18 @@ export default function GatePortalPage() {
         .finally(() => setResolving(false))
       return
     }
-    const domain = window.location.hostname
-    publicApi.resolve(domain)
+    publicApi.resolve(window.location.hostname)
       .then((data) => setResolved(data))
       .catch(() => {
-        // Not a custom domain — redirect based on auth state.
         if (isAuthenticated()) {
           navigate('/workspaces', { replace: true })
         } else {
           navigate('/login', { replace: true })
         }
-        setResolveError(true)
       })
       .finally(() => setResolving(false))
   }, [gateIdParam])
+
 
   const effectiveGateId = gateIdParam ?? resolved?.gate_id
   const effectiveWsId = wsIdParam ?? resolved?.workspace_id
@@ -227,17 +225,6 @@ export default function GatePortalPage() {
     )
   }
 
-  if (resolveError) {
-    return (
-      <Center mih="100vh" p="xl">
-        <Stack align="center" gap="sm">
-          <XCircle size={48} color="var(--mantine-color-red-6)" />
-          <Title order={3}>{t('pinpad.domainNotConfigured')}</Title>
-          <Text size="sm" c="dimmed" ta="center">{t('pinpad.domainNotConfiguredHint')}</Text>
-        </Stack>
-      </Center>
-    )
-  }
 
   const gateName = resolved?.gate_name ?? 'Gate'
   const isPending = triggerMutation.isPending

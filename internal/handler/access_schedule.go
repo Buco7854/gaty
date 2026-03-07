@@ -51,7 +51,7 @@ func (h *AccessScheduleHandler) Create(ctx context.Context, input *CreateSchedul
 func (h *AccessScheduleHandler) List(ctx context.Context, input *WorkspacePathParam) (*ListSchedulesOutput, error) {
 	list, err := h.schedules.List(ctx, input.WorkspaceID)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to list schedules")
+		return nil, huma.Error500InternalServerError("failed to list schedules", err)
 	}
 	return &ListSchedulesOutput{Body: list}, nil
 }
@@ -69,7 +69,7 @@ func (h *AccessScheduleHandler) Get(ctx context.Context, input *SchedulePathPara
 		return nil, huma.Error404NotFound("schedule not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to get schedule")
+		return nil, huma.Error500InternalServerError("failed to get schedule", err)
 	}
 	return &ScheduleOutput{Body: s}, nil
 }
@@ -105,14 +105,14 @@ func (h *AccessScheduleHandler) Delete(ctx context.Context, input *SchedulePathP
 		return nil, huma.Error404NotFound("schedule not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to delete schedule")
+		return nil, huma.Error500InternalServerError("failed to delete schedule", err)
 	}
 	return nil, nil
 }
 
 // --- Routes ---
 
-func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsAdmin func(huma.Context, func(huma.Context))) {
+func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsMember func(huma.Context, func(huma.Context)), wsAdmin func(huma.Context, func(huma.Context))) {
 	huma.Register(api, huma.Operation{
 		OperationID:   "schedule-create",
 		Method:        http.MethodPost,
@@ -129,7 +129,7 @@ func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsAdmin func(huma.C
 		Path:        "/api/workspaces/{ws_id}/schedules",
 		Summary:     "List all time-restriction schedules in a workspace",
 		Tags:        []string{"Schedules"},
-		Middlewares: huma.Middlewares{wsAdmin},
+		Middlewares: huma.Middlewares{wsMember},
 	}, h.List)
 
 	huma.Register(api, huma.Operation{
@@ -138,7 +138,7 @@ func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsAdmin func(huma.C
 		Path:        "/api/workspaces/{ws_id}/schedules/{schedule_id}",
 		Summary:     "Get a time-restriction schedule",
 		Tags:        []string{"Schedules"},
-		Middlewares: huma.Middlewares{wsAdmin},
+		Middlewares: huma.Middlewares{wsMember},
 	}, h.Get)
 
 	huma.Register(api, huma.Operation{

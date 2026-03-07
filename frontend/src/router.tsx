@@ -47,7 +47,7 @@ function RequireGuest() {
 }
 
 export const router = createBrowserRouter([
-  // Custom domain root — must come first so it is matched before RequireAuth captures '/'
+  // Custom domain root — resolve by hostname; redirect to /workspaces if not a custom domain
   { path: '/', element: <GatePortalPage /> },
   // Public gate portal (no auth required)
   { path: '/workspaces/:wsId/gates/:gateId/public', element: <GatePortalPage /> },

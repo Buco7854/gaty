@@ -95,7 +95,7 @@ func (h *MemberHandler) Create(ctx context.Context, input *CreateMemberInput) (*
 		return nil, huma.Error409Conflict("username already taken in this workspace")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to create member")
+		return nil, huma.Error500InternalServerError("failed to create member", err)
 	}
 	return &MemberOutput{Body: toMembershipBody(membership)}, nil
 }
@@ -131,7 +131,7 @@ func (h *MemberHandler) InviteUser(ctx context.Context, input *InviteUserInput) 
 		return nil, huma.Error409Conflict("user already has a membership in this workspace")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to invite user")
+		return nil, huma.Error500InternalServerError("failed to invite user", err)
 	}
 	return &MemberOutput{Body: toMembershipBody(membership)}, nil
 }
@@ -141,7 +141,7 @@ func (h *MemberHandler) InviteUser(ctx context.Context, input *InviteUserInput) 
 func (h *MemberHandler) List(ctx context.Context, input *MemberWorkspacePathParam) (*ListMembersOutput, error) {
 	members, err := h.memberships.List(ctx, input.WorkspaceID)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to list members")
+		return nil, huma.Error500InternalServerError("failed to list members", err)
 	}
 	bodies := make([]*membershipBody, len(members))
 	for i, m := range members {
@@ -158,7 +158,7 @@ func (h *MemberHandler) Get(ctx context.Context, input *MemberIDPathParam) (*Mem
 		return nil, huma.Error404NotFound("member not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to get member")
+		return nil, huma.Error500InternalServerError("failed to get member", err)
 	}
 	return &MemberOutput{Body: toMembershipBody(membership)}, nil
 }
@@ -195,7 +195,7 @@ func (h *MemberHandler) Update(ctx context.Context, input *UpdateMemberInput) (*
 		return nil, huma.Error409Conflict("local_username already taken in this workspace")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to update member")
+		return nil, huma.Error500InternalServerError("failed to update member", err)
 	}
 	return &MemberOutput{Body: toMembershipBody(membership)}, nil
 }
@@ -208,7 +208,7 @@ func (h *MemberHandler) Delete(ctx context.Context, input *MemberIDPathParam) (*
 		return nil, huma.Error404NotFound("member not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to delete member")
+		return nil, huma.Error500InternalServerError("failed to delete member", err)
 	}
 	return nil, nil
 }

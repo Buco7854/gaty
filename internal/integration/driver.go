@@ -37,15 +37,19 @@ func NewCloseDriver(gate *model.Gate, mqtt *internalmqtt.Client) (Driver, error)
 
 func newDriver(cfg *model.ActionConfig, defaultAction string, mqtt *internalmqtt.Client) (Driver, error) {
 	switch cfg.Type {
-	case model.DriverTypeMQTT:
+	case model.DriverTypeMQTTGatie:
+		// MQTT_GATIE: Gaty native protocol, sends {"action":"open|close"}.
 		if mqtt == nil {
 			return nil, fmt.Errorf("MQTT driver requested but broker is unavailable")
 		}
-		action := defaultAction
-		if v, ok := cfg.Config["action"].(string); ok && v != "" {
-			action = v
+		return &MQTTGatieDriver{client: mqtt, action: defaultAction}, nil
+	case model.DriverTypeMQTTCustom:
+		// MQTT_CUSTOM: publishes config["payload"] as-is.
+		if mqtt == nil {
+			return nil, fmt.Errorf("MQTT driver requested but broker is unavailable")
 		}
-		return &MQTTDriver{client: mqtt, action: action}, nil
+		payload, _ := cfg.Config["payload"].(map[string]any)
+		return &MQTTCustomDriver{client: mqtt, payload: payload}, nil
 	case model.DriverTypeHTTP:
 		return NewHTTPDriver(cfg.Config)
 	case model.DriverTypeNone:

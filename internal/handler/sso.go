@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 
@@ -51,7 +52,7 @@ func (h *SSOHandler) ListProviders(ctx context.Context, input *SSOProvidersInput
 		return &SSOProvidersOutput{Body: []service.PublicSSOProvider{}}, nil
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to list SSO providers")
+		return nil, huma.Error500InternalServerError("failed to list SSO providers", err)
 	}
 	return &SSOProvidersOutput{Body: providers}, nil
 }
@@ -67,9 +68,11 @@ type SSOAuthorizeInput struct {
 func (h *SSOHandler) Authorize(ctx context.Context, input *SSOAuthorizeInput) (*ssoRedirect, error) {
 	authURL, workspaceID, err := h.ssoSvc.GenerateAuthURL(ctx, input.WorkspaceID, input.ProviderID, input.GateID)
 	if errors.Is(err, service.ErrSSONotConfigured) {
+		slog.Warn("sso authorize: not configured", "workspace_id", input.WorkspaceID, "provider_id", input.ProviderID)
 		return &ssoRedirect{Location: h.frontendCallbackURL("", "", input.GateID, workspaceID, "not_configured")}, nil
 	}
 	if err != nil {
+		slog.Error("sso authorize: config error", "workspace_id", input.WorkspaceID, "provider_id", input.ProviderID, "error", err)
 		return &ssoRedirect{Location: h.frontendCallbackURL("", "", input.GateID, workspaceID, "config_error")}, nil
 	}
 	return &ssoRedirect{Location: authURL}, nil
@@ -87,24 +90,28 @@ type SSOCallbackInput struct {
 
 func (h *SSOHandler) Callback(ctx context.Context, input *SSOCallbackInput) (*ssoRedirect, error) {
 	if input.Error != "" {
-		// Recover gate_id and workspace_id from the Redis state before it expires.
 		gateID, workspaceID := h.ssoSvc.ConsumeState(ctx, input.State)
+		slog.Warn("sso callback: provider returned error", "workspace_id", input.WorkspaceID, "provider_id", input.ProviderID, "error", input.Error)
 		return &ssoRedirect{Location: h.frontendCallbackURL("", "", gateID, workspaceID, input.Error)}, nil
 	}
 
 	membership, gateID, workspaceID, err := h.ssoSvc.Callback(ctx, input.WorkspaceID, input.ProviderID, input.Code, input.State)
 	if errors.Is(err, service.ErrSSOInvalidState) {
+		slog.Warn("sso callback: invalid state", "workspace_id", input.WorkspaceID, "provider_id", input.ProviderID)
 		return &ssoRedirect{Location: h.frontendCallbackURL("", "", "", "", "invalid_state")}, nil
 	}
 	if errors.Is(err, service.ErrSSOAccessDenied) {
+		slog.Warn("sso callback: access denied (auto-provision disabled)", "workspace_id", input.WorkspaceID, "provider_id", input.ProviderID)
 		return &ssoRedirect{Location: h.frontendCallbackURL("", "", gateID, workspaceID, "access_denied")}, nil
 	}
 	if err != nil {
+		slog.Error("sso callback: error", "workspace_id", input.WorkspaceID, "provider_id", input.ProviderID, "error", err)
 		return &ssoRedirect{Location: h.frontendCallbackURL("", "", gateID, workspaceID, "server_error")}, nil
 	}
 
 	tokens, err := h.authSvc.IssueLocalTokenPair(ctx, membership.ID, membership.WorkspaceID, membership.Role)
 	if err != nil {
+		slog.Error("sso callback: failed to issue token pair", "membership_id", membership.ID, "error", err)
 		return &ssoRedirect{Location: h.frontendCallbackURL("", "", gateID, workspaceID, "server_error")}, nil
 	}
 
@@ -150,7 +157,7 @@ func (h *SSOHandler) GetSettings(ctx context.Context, input *SSOSettingsPathPara
 		return nil, huma.Error404NotFound("workspace not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to get workspace")
+		return nil, huma.Error500InternalServerError("failed to get workspace", err)
 	}
 	settings := ws.SSOSettings
 	if settings == nil {
@@ -198,7 +205,7 @@ func (h *SSOHandler) UpdateSettings(ctx context.Context, input *UpdateSSOSetting
 
 	// Preserve existing client_secret for providers where the value is "***".
 	if err := h.preserveSecrets(ctx, input.WorkspaceID, body); err != nil {
-		return nil, huma.Error500InternalServerError("failed to preserve existing secrets")
+		return nil, huma.Error500InternalServerError("failed to preserve existing secrets", err)
 	}
 
 	ws, err := h.wsRepo.UpdateSSOSettings(ctx, input.WorkspaceID, body)
@@ -206,7 +213,7 @@ func (h *SSOHandler) UpdateSettings(ctx context.Context, input *UpdateSSOSetting
 		return nil, huma.Error404NotFound("workspace not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to update SSO settings")
+		return nil, huma.Error500InternalServerError("failed to update SSO settings", err)
 	}
 	return &SSOSettingsOutput{Body: maskProviderSecrets(ws.SSOSettings)}, nil
 }

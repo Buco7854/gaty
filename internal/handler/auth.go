@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 
 	"github.com/Buco7854/gatie/internal/middleware"
@@ -70,8 +69,7 @@ func (h *AuthHandler) Login(ctx context.Context, input *LoginInput) (*AuthOutput
 		return nil, huma.Error401Unauthorized("invalid credentials")
 	}
 	if err != nil {
-		slog.Error("login failed", "error", err)
-		return nil, huma.Error500InternalServerError("login failed")
+		return nil, huma.Error500InternalServerError("login failed", err)
 	}
 	resp := &AuthOutput{}
 	resp.Body.AccessToken = tokens.AccessToken

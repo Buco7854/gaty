@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -130,6 +131,30 @@ func main() {
 	defer ttlCancel()
 	go service.NewGateTTLWorker(gateRepo, redisClient, service.DefaultGateTTL).Run(ttlCtx)
 
+	// Webhook worker: polls HTTP_WEBHOOK-configured gates on their configured interval.
+	webhookCtx, webhookCancel := context.WithCancel(ctx)
+	defer webhookCancel()
+	go service.NewGateWebhookWorker(gateRepo, redisClient, cfg.WebhookMaxRetries, cfg.WebhookRetryDelay).Run(webhookCtx)
+
+	// Global error hook: log 5xx with the original cause, but never expose raw
+	// errors to the client. Structured *huma.ErrorDetail items (validation) are
+	// still included in 4xx responses.
+	huma.NewError = func(status int, message string, errs ...error) huma.StatusError {
+		model := &huma.ErrorModel{Status: status, Title: http.StatusText(status), Detail: message}
+		for _, err := range errs {
+			if err == nil {
+				continue
+			}
+			var detail *huma.ErrorDetail
+			if errors.As(err, &detail) {
+				model.Errors = append(model.Errors, detail)
+			} else if status >= 500 {
+				slog.Error(message, "error", err)
+			}
+		}
+		return model
+	}
+
 	api := humachi.New(router, huma.DefaultConfig("GATIE API", "0.1.0"))
 
 	// Global soft auth middleware: silently extracts Bearer token and injects identity into context.
@@ -182,7 +207,7 @@ func main() {
 	handler.NewPolicyHandler(policySvc).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
 	handler.NewMemberHandler(membershipSvc).RegisterRoutes(api, wsAdmin)
 	handler.NewGatePinHandler(gatePinSvc).RegisterRoutes(api, wsMember, wsGateManager)
-	handler.NewAccessScheduleHandler(scheduleSvc).RegisterRoutes(api, wsAdmin)
+	handler.NewAccessScheduleHandler(scheduleSvc).RegisterRoutes(api, wsMember, wsAdmin)
 	handler.NewSSOHandler(ssoSvc, authSvc, wsRepo, cfg.FrontendURL).RegisterRoutes(api, wsAdmin)
 	handler.NewCredentialHandler(credRepo, memberCredRepo, membershipRepo, credPolicyRepo, wsRepo).RegisterRoutes(api, requireAuth, requireMembership, wsMember, wsAdmin)
 	handler.NewCustomDomainHandler(domainRepo, gateRepo).RegisterRoutes(api, wsMember, wsGateManager)

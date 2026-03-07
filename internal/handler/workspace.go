@@ -44,7 +44,7 @@ func (h *WorkspaceHandler) Create(ctx context.Context, input *CreateWorkspaceInp
 	}
 	ws, err := h.workspaces.Create(ctx, input.Body.Name, userID)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to create workspace")
+		return nil, huma.Error500InternalServerError("failed to create workspace", err)
 	}
 	return &WorkspaceOutput{Body: *ws}, nil
 }
@@ -62,7 +62,7 @@ func (h *WorkspaceHandler) List(ctx context.Context, _ *struct{}) (*ListWorkspac
 	}
 	list, err := h.workspaces.List(ctx, userID)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to list workspaces")
+		return nil, huma.Error500InternalServerError("failed to list workspaces", err)
 	}
 	return &ListWorkspacesOutput{Body: list}, nil
 }
@@ -82,7 +82,7 @@ func (h *WorkspaceHandler) Get(ctx context.Context, input *WorkspacePathParam) (
 		return nil, huma.Error403Forbidden("access denied")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to get workspace")
+		return nil, huma.Error500InternalServerError("failed to get workspace", err)
 	}
 	return &WorkspaceOutput{Body: *ws}, nil
 }
@@ -110,7 +110,7 @@ func (h *WorkspaceHandler) Rename(ctx context.Context, input *RenameWorkspaceInp
 		return nil, huma.Error404NotFound("workspace not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to rename workspace")
+		return nil, huma.Error500InternalServerError("failed to rename workspace", err)
 	}
 	return &WorkspaceOutput{Body: model.WorkspaceWithRole{Workspace: *renamed, Role: model.RoleOwner}}, nil
 }
@@ -130,7 +130,7 @@ func (h *WorkspaceHandler) Delete(ctx context.Context, input *WorkspacePathParam
 		if errors.Is(err, model.ErrNotFound) {
 			return nil, huma.Error404NotFound("workspace not found")
 		}
-		return nil, huma.Error500InternalServerError("failed to delete workspace")
+		return nil, huma.Error500InternalServerError("failed to delete workspace", err)
 	}
 	return nil, nil
 }
@@ -147,7 +147,7 @@ func (h *WorkspaceHandler) GetMemberAuthConfig(ctx context.Context, input *Works
 		return nil, huma.Error404NotFound("workspace not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to get member auth config")
+		return nil, huma.Error500InternalServerError("failed to get member auth config", err)
 	}
 	return &MemberAuthConfigOutput{Body: cfg}, nil
 }
@@ -163,7 +163,7 @@ func (h *WorkspaceHandler) UpdateMemberAuthConfig(ctx context.Context, input *Up
 		return nil, huma.Error404NotFound("workspace not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to update member auth config")
+		return nil, huma.Error500InternalServerError("failed to update member auth config", err)
 	}
 	return &MemberAuthConfigOutput{Body: cfg}, nil
 }

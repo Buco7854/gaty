@@ -29,7 +29,7 @@ type ListPoliciesOutput struct {
 func (h *PolicyHandler) List(ctx context.Context, input *GatePathParam) (*ListPoliciesOutput, error) {
 	policies, err := h.policies.List(ctx, input.GateID)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to list policies")
+		return nil, huma.Error500InternalServerError("failed to list policies", err)
 	}
 	return &ListPoliciesOutput{Body: policies}, nil
 }
@@ -44,7 +44,7 @@ type MembershipPoliciesPathParam struct {
 func (h *PolicyHandler) ListByMembership(ctx context.Context, input *MembershipPoliciesPathParam) (*ListPoliciesOutput, error) {
 	policies, err := h.policies.ListForMembership(ctx, input.MembershipID)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to list membership policies")
+		return nil, huma.Error500InternalServerError("failed to list membership policies", err)
 	}
 	return &ListPoliciesOutput{Body: policies}, nil
 }
@@ -58,7 +58,7 @@ func (h *PolicyHandler) ListMine(ctx context.Context, input *WorkspacePathParam)
 	}
 	policies, err := h.policies.ListForMembership(ctx, membershipID)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to list policies")
+		return nil, huma.Error500InternalServerError("failed to list policies", err)
 	}
 	return &ListPoliciesOutput{Body: policies}, nil
 }
@@ -76,7 +76,7 @@ type GrantPolicyInput struct {
 
 func (h *PolicyHandler) Grant(ctx context.Context, input *GrantPolicyInput) (*struct{}, error) {
 	if err := h.policies.Grant(ctx, input.Body.MembershipID, input.GateID, input.Body.PermissionCode); err != nil {
-		return nil, huma.Error500InternalServerError("failed to grant policy")
+		return nil, huma.Error500InternalServerError("failed to grant policy", err)
 	}
 	return nil, nil
 }
@@ -91,7 +91,7 @@ type PolicyMembershipPathParam struct {
 
 func (h *PolicyHandler) Revoke(ctx context.Context, input *PolicyMembershipPathParam) (*struct{}, error) {
 	if err := h.policies.Revoke(ctx, input.MembershipID, input.GateID); err != nil {
-		return nil, huma.Error500InternalServerError("failed to revoke policy")
+		return nil, huma.Error500InternalServerError("failed to revoke policy", err)
 	}
 	return nil, nil
 }
@@ -111,7 +111,7 @@ func (h *PolicyHandler) RevokePermission(ctx context.Context, input *RevokePermi
 		return nil, huma.Error404NotFound("policy not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to revoke permission")
+		return nil, huma.Error500InternalServerError("failed to revoke permission", err)
 	}
 	return nil, nil
 }
@@ -128,7 +128,7 @@ func (h *PolicyHandler) GetMemberGateSchedule(ctx context.Context, input *Policy
 		return &MemberGateScheduleOutput{Body: nil}, nil
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to get schedule")
+		return nil, huma.Error500InternalServerError("failed to get schedule", err)
 	}
 	return &MemberGateScheduleOutput{Body: schedule}, nil
 }
@@ -144,14 +144,14 @@ type SetMemberGateScheduleInput struct {
 
 func (h *PolicyHandler) SetMemberGateSchedule(ctx context.Context, input *SetMemberGateScheduleInput) (*struct{}, error) {
 	if err := h.policies.SetMemberGateSchedule(ctx, input.MembershipID, input.GateID, input.Body.ScheduleID); err != nil {
-		return nil, huma.Error500InternalServerError("failed to set schedule")
+		return nil, huma.Error500InternalServerError("failed to set schedule", err)
 	}
 	return nil, nil
 }
 
 func (h *PolicyHandler) RemoveMemberGateSchedule(ctx context.Context, input *PolicyMembershipPathParam) (*struct{}, error) {
 	if err := h.policies.RemoveMemberGateSchedule(ctx, input.MembershipID, input.GateID); err != nil {
-		return nil, huma.Error500InternalServerError("failed to remove schedule")
+		return nil, huma.Error500InternalServerError("failed to remove schedule", err)
 	}
 	return nil, nil
 }

@@ -12,6 +12,7 @@ import {
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { Plus, Trash2, Pencil, CalendarClock } from 'lucide-react'
+import { QueryError } from '@/components/QueryError'
 
 // 0=Sun, 1=Mon, …, 6=Sat (Go's time.Weekday)
 const WEEKDAY_OPTIONS = [
@@ -357,7 +358,7 @@ export default function SchedulesPage() {
   const { t } = useTranslation()
   const qc = useQueryClient()
 
-  const { data: schedules = [], isLoading } = useQuery<AccessSchedule[]>({
+  const { data: schedules = [], isLoading, isError, error } = useQuery<AccessSchedule[]>({
     queryKey: ['schedules', wsId],
     queryFn: () => schedulesApi.list(wsId!),
   })
@@ -442,6 +443,8 @@ export default function SchedulesPage() {
 
       {isLoading ? (
         <Center py="xl"><Loader size="sm" /></Center>
+      ) : isError ? (
+        <QueryError error={error} />
       ) : schedules.length === 0 ? (
         <Paper withBorder p="xl" radius="md">
           <Center>

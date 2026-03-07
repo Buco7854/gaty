@@ -11,6 +11,7 @@ import {
 import { useDisclosure } from '@mantine/hooks'
 import { Plus, Building2, ChevronRight, AlertCircle } from 'lucide-react'
 import { extractApiError, notifySuccess } from '@/lib/notify'
+import { QueryError } from '@/components/QueryError'
 
 export default function WorkspacesPage() {
   const navigate = useNavigate()
@@ -20,7 +21,7 @@ export default function WorkspacesPage() {
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  const { data: workspaces, isLoading } = useQuery<WorkspaceWithRole[]>({
+  const { data: workspaces, isLoading, isError, error: fetchError } = useQuery<WorkspaceWithRole[]>({
     queryKey: ['workspaces'],
     queryFn: workspacesApi.list,
   })
@@ -84,6 +85,8 @@ export default function WorkspacesPage() {
         <Stack>
           {[0, 1, 2].map((i) => <Skeleton key={i} height={72} radius="md" />)}
         </Stack>
+      ) : isError ? (
+        <QueryError error={fetchError} />
       ) : workspaces?.length === 0 ? (
         <Center py={80}>
           <Stack align="center" gap="xs">

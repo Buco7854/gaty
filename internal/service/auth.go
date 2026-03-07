@@ -192,7 +192,7 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenP
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
-			wid, ok := payload["wid"].(string)
+			wid, ok := payload["workspace_id"].(string)
 			if !ok {
 				return nil, ErrInvalidToken
 			}
@@ -341,7 +341,7 @@ func (s *AuthService) ValidateMemberToken(tokenStr string) (membershipID, worksp
 		return uuid.Nil, uuid.Nil, "", ErrInvalidToken
 	}
 
-	wid, _ := claims["wid"].(string)
+	wid, _ := claims["workspace_id"].(string)
 	workspaceID, err = uuid.Parse(wid)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, "", ErrInvalidToken
@@ -479,7 +479,7 @@ func (s *AuthService) issueLocalTokenPair(ctx context.Context, membershipID, wor
 	accessToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub":  membershipID.String(),
 		"type": "local",
-		"wid":  workspaceID.String(),
+		"workspace_id":  workspaceID.String(),
 		"role": string(role),
 		"iat":  time.Now().Unix(),
 		"exp":  time.Now().Add(accessTokenTTL).Unix(),
@@ -496,7 +496,7 @@ func (s *AuthService) issueLocalTokenPair(ctx context.Context, membershipID, wor
 	payload, _ := json.Marshal(map[string]any{
 		"type":             "local",
 		"sub":              membershipID.String(),
-		"wid":              workspaceID.String(),
+		"workspace_id":              workspaceID.String(),
 		"role":             string(role),
 		"session_duration": sessionDuration.Seconds(),
 	})

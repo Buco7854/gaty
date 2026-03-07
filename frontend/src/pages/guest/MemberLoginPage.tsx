@@ -39,19 +39,20 @@ export default function MemberLoginPage() {
   const [errorMsg, setErrorMsg] = useState(errorParam ? t('pinpad.ssoError') : '')
 
   useEffect(() => {
+    // Always fetch SSO providers using wsId — available immediately from URL params.
+    if (wsId) {
+      publicApi.ssoProviders(wsId)
+        .then((providers) => setSsoProviders(providers))
+        .catch(() => {})
+    }
+
     if (!gateId) {
-      // No gate_id: just resolve workspace SSO providers for display
       setResolving(false)
       return
     }
     publicApi.resolveByGateId(gateId)
-      .then((data) => {
-        setResolved(data)
-        publicApi.ssoProviders(data.workspace_id)
-          .then((providers) => setSsoProviders(providers))
-          .catch(() => {})
-      })
-      .catch(() => {/* workspace info unavailable, show login form anyway */})
+      .then((data) => setResolved(data))
+      .catch(() => {/* gate info unavailable, show login form anyway */})
       .finally(() => setResolving(false))
   }, [gateId, wsId, navigate])
 
@@ -105,8 +106,10 @@ export default function MemberLoginPage() {
   }
 
   function handleSSOLogin(providerId: string) {
-    if (!resolved || !gateId) return
-    window.location.href = `/api/auth/sso/${encodeURIComponent(resolved.workspace_id)}/${encodeURIComponent(providerId)}/authorize?gate_id=${encodeURIComponent(gateId)}`
+    const workspaceId = resolved?.workspace_id ?? wsId
+    if (!workspaceId) return
+    const url = `/api/auth/sso/${encodeURIComponent(workspaceId)}/${encodeURIComponent(providerId)}/authorize`
+    window.location.href = gateId ? `${url}?gate_id=${encodeURIComponent(gateId)}` : url
   }
 
   if (resolving) {

@@ -30,7 +30,7 @@ type SetupStatusOutput struct {
 func (h *SetupHandler) status(ctx context.Context, _ *struct{}) (*SetupStatusOutput, error) {
 	hasAny, err := h.users.HasAny(ctx)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to check setup status")
+		return nil, huma.Error500InternalServerError("failed to check setup status", err)
 	}
 	out := &SetupStatusOutput{}
 	out.Body.SetupRequired = !hasAny
@@ -56,7 +56,7 @@ type SetupInitOutput struct {
 func (h *SetupHandler) init(ctx context.Context, input *SetupInitInput) (*SetupInitOutput, error) {
 	hasAny, err := h.users.HasAny(ctx)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to check setup status")
+		return nil, huma.Error500InternalServerError("failed to check setup status", err)
 	}
 	if hasAny {
 		return nil, huma.Error409Conflict("setup already completed")
@@ -64,7 +64,7 @@ func (h *SetupHandler) init(ctx context.Context, input *SetupInitInput) (*SetupI
 
 	tokens, _, err := h.authSvc.Register(ctx, input.Body.Email, input.Body.Password)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to create admin user")
+		return nil, huma.Error500InternalServerError("failed to create admin user", err)
 	}
 
 	out := &SetupInitOutput{}

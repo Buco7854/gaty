@@ -39,7 +39,7 @@ func (h *GateHandler) List(ctx context.Context, input *WorkspacePathParam) (*Lis
 
 	gates, err := h.gates.List(ctx, input.WorkspaceID, role, membershipID)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to list gates")
+		return nil, huma.Error500InternalServerError("failed to list gates", err)
 	}
 	return &ListGatesOutput{Body: gates}, nil
 }
@@ -69,6 +69,22 @@ type GateOutput struct {
 }
 
 func (h *GateHandler) Create(ctx context.Context, input *CreateGateInput) (*GateOutput, error) {
+	b := input.Body
+	if err := validateActionConfig("open_config", b.OpenConfig); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	if err := validateActionConfig("close_config", b.CloseConfig); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	if err := validateStatusActionConfig(b.StatusConfig); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	if err := validateCustomStatuses(b.CustomStatuses); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	if err := validateStatusRules(b.StatusRules, b.CustomStatuses); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
 	gate, err := h.gates.Create(ctx, input.WorkspaceID, service.CreateGateParams{
 		Name:              input.Body.Name,
 		IntegrationType:   input.Body.IntegrationType,
@@ -81,7 +97,7 @@ func (h *GateHandler) Create(ctx context.Context, input *CreateGateInput) (*Gate
 		CustomStatuses:    input.Body.CustomStatuses,
 	})
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to create gate")
+		return nil, huma.Error500InternalServerError("failed to create gate", err)
 	}
 	// GateToken is already populated by Create (returned once, on creation).
 	return &GateOutput{Body: gate}, nil
@@ -101,7 +117,7 @@ func (h *GateHandler) Get(ctx context.Context, input *GatePathParam) (*GateOutpu
 		return nil, huma.Error403Forbidden("access denied")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to get gate")
+		return nil, huma.Error500InternalServerError("failed to get gate", err)
 	}
 	return &GateOutput{Body: gate}, nil
 }
@@ -126,6 +142,32 @@ type UpdateGateInput struct {
 }
 
 func (h *GateHandler) Update(ctx context.Context, input *UpdateGateInput) (*GateOutput, error) {
+	b := input.Body
+	if b.OpenConfig.Sent && !b.OpenConfig.Null {
+		if err := validateActionConfig("open_config", &b.OpenConfig.Value); err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+	}
+	if b.CloseConfig.Sent && !b.CloseConfig.Null {
+		if err := validateActionConfig("close_config", &b.CloseConfig.Value); err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+	}
+	if b.StatusConfig.Sent && !b.StatusConfig.Null {
+		if err := validateStatusActionConfig(&b.StatusConfig.Value); err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+	}
+	if b.CustomStatuses != nil {
+		if err := validateCustomStatuses(b.CustomStatuses); err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+	}
+	if b.StatusRules != nil {
+		if err := validateStatusRules(b.StatusRules, b.CustomStatuses); err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+	}
 	gate, err := h.gates.Update(ctx, input.GateID, input.WorkspaceID, service.UpdateGateParams{
 		Name:           input.Body.Name,
 		OpenConfig:     input.Body.OpenConfig.ToModel(),
@@ -139,7 +181,7 @@ func (h *GateHandler) Update(ctx context.Context, input *UpdateGateInput) (*Gate
 		return nil, huma.Error404NotFound("gate not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to update gate")
+		return nil, huma.Error500InternalServerError("failed to update gate", err)
 	}
 	return &GateOutput{Body: gate}, nil
 }
@@ -157,7 +199,7 @@ func (h *GateHandler) Delete(ctx context.Context, input *DeleteGateInput) (*stru
 		return nil, huma.Error404NotFound("gate not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to delete gate")
+		return nil, huma.Error500InternalServerError("failed to delete gate", err)
 	}
 	return nil, nil
 }
@@ -197,7 +239,7 @@ func (h *GateHandler) Trigger(ctx context.Context, input *TriggerInput) (*struct
 		return nil, huma.Error403Forbidden("access not allowed at this time")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to trigger gate")
+		return nil, huma.Error500InternalServerError("failed to trigger gate", err)
 	}
 	return nil, nil
 }
@@ -218,7 +260,7 @@ func (h *GateHandler) GetToken(ctx context.Context, input *GatePathParam) (*Gate
 		return nil, huma.Error404NotFound("gate not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to get gate token")
+		return nil, huma.Error500InternalServerError("failed to get gate token", err)
 	}
 	out := &GateTokenOutput{}
 	out.Body.GateID = input.GateID
@@ -233,7 +275,7 @@ func (h *GateHandler) RotateToken(ctx context.Context, input *GatePathParam) (*G
 		return nil, huma.Error404NotFound("gate not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to rotate gate token")
+		return nil, huma.Error500InternalServerError("failed to rotate gate token", err)
 	}
 	out := &GateTokenOutput{}
 	out.Body.GateID = input.GateID

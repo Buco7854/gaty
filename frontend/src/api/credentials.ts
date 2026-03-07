@@ -70,11 +70,22 @@ export const memberCredApi = {
       .then((r) => (Array.isArray(r.data) ? r.data : []))
       .then((data) => data.filter((c) => c.type === 'API_TOKEN')),
 
-  createToken: (bearerToken: string, label: string, expiresAt?: string): Promise<CreatedToken> =>
+  createToken: (
+    bearerToken: string,
+    label: string,
+    expiresAt?: string,
+    policies?: PolicyInput[],
+    scheduleId?: string,
+  ): Promise<CreatedToken> =>
     api
       .post<CreatedToken>(
         '/auth/local/me/api-tokens',
-        { label, ...(expiresAt ? { expires_at: expiresAt + 'T23:59:59Z' } : {}) },
+        {
+          label,
+          ...(expiresAt ? { expires_at: expiresAt + 'T23:59:59Z' } : {}),
+          ...(policies?.length ? { policies } : {}),
+          ...(scheduleId ? { schedule_id: scheduleId } : {}),
+        },
         authHeader(bearerToken),
       )
       .then((r) => r.data),

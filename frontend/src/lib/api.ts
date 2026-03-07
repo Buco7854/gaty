@@ -68,7 +68,7 @@ api.interceptors.response.use(
         const loginUrl = `/workspaces/${_authMeta.wsId}/login?${params.toString()}`
         if (window.location.pathname !== `/workspaces/${_authMeta.wsId}/login`) window.location.href = loginUrl
       } else {
-        if (window.location.pathname !== '/') window.location.href = '/'
+        if (window.location.pathname !== '/login') window.location.href = '/login'
       }
       return Promise.reject(error)
     }

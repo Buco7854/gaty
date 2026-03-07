@@ -452,3 +452,23 @@ func (r *gateRepository) ListForWorkspace(ctx context.Context, wsID uuid.UUID, r
 	}
 	return result, rows.Err()
 }
+
+func (r *gateRepository) ListWebhookGates(ctx context.Context) ([]model.Gate, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+colsFull+` FROM gates WHERE status_config->>'type' = 'HTTP_WEBHOOK'`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list webhook gates: %w", err)
+	}
+	defer rows.Close()
+
+	var gates []model.Gate
+	for rows.Next() {
+		var g model.Gate
+		if err := scanGate(rows, &g); err != nil {
+			return nil, fmt.Errorf("scan webhook gate: %w", err)
+		}
+		gates = append(gates, g)
+	}
+	return gates, rows.Err()
+}

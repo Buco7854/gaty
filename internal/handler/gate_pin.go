@@ -63,7 +63,7 @@ type ListGatePinsOutput struct {
 func (h *GatePinHandler) ListPINs(ctx context.Context, input *GatePathParam) (*ListGatePinsOutput, error) {
 	pins, err := h.pins.List(ctx, input.GateID)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to list pins")
+		return nil, huma.Error500InternalServerError("failed to list pins", err)
 	}
 	return &ListGatePinsOutput{Body: pins}, nil
 }
@@ -89,7 +89,7 @@ func (h *GatePinHandler) UpdatePIN(ctx context.Context, input *UpdatePINInput) (
 		return nil, huma.Error404NotFound("pin not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to update pin")
+		return nil, huma.Error500InternalServerError("failed to update pin", err)
 	}
 	return &GatePinOutput{Body: pin}, nil
 }
@@ -111,7 +111,7 @@ func (h *GatePinHandler) SetPinSchedule(ctx context.Context, input *SetPinSchedu
 		return nil, huma.Error404NotFound("pin not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to set schedule")
+		return nil, huma.Error500InternalServerError("failed to set schedule", err)
 	}
 	return &GatePinOutput{Body: pin}, nil
 }
@@ -130,7 +130,7 @@ func (h *GatePinHandler) ClearPinSchedule(ctx context.Context, input *PinIDPathP
 		return nil, huma.Error404NotFound("pin not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to clear schedule")
+		return nil, huma.Error500InternalServerError("failed to clear schedule", err)
 	}
 	return &GatePinOutput{Body: pin}, nil
 }
@@ -149,7 +149,7 @@ func (h *GatePinHandler) DeletePIN(ctx context.Context, input *DeletePINInput) (
 		return nil, huma.Error404NotFound("pin not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to delete pin")
+		return nil, huma.Error500InternalServerError("failed to delete pin", err)
 	}
 	return nil, nil
 }
@@ -240,7 +240,7 @@ func (h *GatePinHandler) PublicTrigger(ctx context.Context, input *PublicTrigger
 		return nil, huma.Error404NotFound("gate not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to trigger gate")
+		return nil, huma.Error500InternalServerError("failed to trigger gate", err)
 	}
 	return nil, nil
 }
@@ -262,7 +262,7 @@ func mapPINError(err error) error {
 	if errors.Is(err, service.ErrMaxUsesExceeded) {
 		return huma.Error403Forbidden("pin max uses exceeded")
 	}
-	return huma.Error500InternalServerError("internal error")
+	return huma.Error500InternalServerError("internal error", err)
 }
 
 // RegisterRoutes wires gate pin endpoints onto the Huma API.

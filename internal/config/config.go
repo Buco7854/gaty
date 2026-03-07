@@ -22,6 +22,10 @@ type Config struct {
 	BaseURL               string        // public base URL of this API, e.g. https://api.example.com
 	FrontendURL           string        // public URL of the frontend SPA, for post-SSO redirects
 	GlobalSessionDuration time.Duration // refresh token TTL for platform users (0 = infinite)
+
+	// Webhook poller settings (HTTP_WEBHOOK status mode).
+	WebhookMaxRetries int           // max retry attempts per poll (default 3)
+	WebhookRetryDelay time.Duration // delay between retries (default 1s)
 }
 
 func Load() (*Config, error) {
@@ -90,6 +94,26 @@ func Load() (*Config, error) {
 		} else {
 			cfg.GlobalSessionDuration = time.Duration(secs) * time.Second
 		}
+	}
+
+	// WEBHOOK_MAX_RETRIES: number of retry attempts for HTTP_WEBHOOK status polls. Default: 3.
+	cfg.WebhookMaxRetries = 3
+	if v := os.Getenv("WEBHOOK_MAX_RETRIES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEBHOOK_MAX_RETRIES: %w", err)
+		}
+		cfg.WebhookMaxRetries = n
+	}
+
+	// WEBHOOK_RETRY_DELAY_MS: milliseconds between webhook poll retries. Default: 1000.
+	cfg.WebhookRetryDelay = time.Second
+	if v := os.Getenv("WEBHOOK_RETRY_DELAY_MS"); v != "" {
+		ms, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEBHOOK_RETRY_DELAY_MS: %w", err)
+		}
+		cfg.WebhookRetryDelay = time.Duration(ms) * time.Millisecond
 	}
 
 	return cfg, nil

@@ -159,9 +159,16 @@ func ruleMatches(op string, actual any, threshold string) bool {
 type DriverType string
 
 const (
-	DriverTypeMQTT DriverType = "MQTT"
-	DriverTypeHTTP DriverType = "HTTP"
-	DriverTypeNone DriverType = "NONE"
+	// DriverTypeMQTTGatie uses the native Gaty MQTT protocol (fixed format, no config required).
+	// Commands: {"action":"open|close"}. Status: {"token":"...","status":"...","meta":{...}}.
+	DriverTypeMQTTGatie DriverType = "MQTT_GATIE"
+	// DriverTypeMQTTCustom uses a user-configurable MQTT payload.
+	// Commands: config["payload"] published as-is. Status: extracted via config["mapping"].
+	DriverTypeMQTTCustom  DriverType = "MQTT_CUSTOM"
+	DriverTypeHTTP        DriverType = "HTTP"          // outgoing HTTP (open/close actions)
+	DriverTypeHTTPInbound DriverType = "HTTP_INBOUND"  // device pushes status to our server
+	DriverTypeHTTPWebhook DriverType = "HTTP_WEBHOOK"  // server polls device for status
+	DriverTypeNone        DriverType = "NONE"
 )
 
 // ActionConfig describes how to execute a specific gate action (open, close, status).

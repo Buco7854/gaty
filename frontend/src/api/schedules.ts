@@ -7,8 +7,8 @@ function normalizeList(data: unknown): AccessSchedule[] {
 }
 
 export const schedulesApi = {
-  list: (wsId: string) =>
-    api.get(`/workspaces/${wsId}/schedules`).then((r) => normalizeList(r.data)),
+  list: (wsId: string, bearerToken?: string) =>
+    api.get(`/workspaces/${wsId}/schedules`, bearerToken ? { headers: { Authorization: `Bearer ${bearerToken}` } } : undefined).then((r) => normalizeList(r.data)),
 
   create: (wsId: string, params: { name: string; description?: string; expr: ExprNode | null }) =>
     api.post<AccessSchedule>(`/workspaces/${wsId}/schedules`, params).then((r) => r.data),

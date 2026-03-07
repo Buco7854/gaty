@@ -100,9 +100,14 @@ export default function AppLayout() {
     const gateId = localSession?.gateId
     if (gateId) {
       localStorage.removeItem(`gatie_session_${gateId}`)
-      navigate(wsId ? `/workspaces/${wsId}/gates/${gateId}/public` : '/')
+      const isWorkspaceSession = gateId === localSession?.workspace_id
+      if (isWorkspaceSession) {
+        navigate(wsId ? `/workspaces/${wsId}/login` : '/login')
+      } else {
+        navigate(wsId ? `/workspaces/${wsId}/gates/${gateId}/public` : '/login')
+      }
     } else {
-      navigate('/')
+      navigate('/login')
     }
   }
 
@@ -110,7 +115,12 @@ export default function AppLayout() {
     if (isAdmin) {
       navigate('/workspaces')
     } else if (wsId && localSession?.gateId) {
-      navigate(`/workspaces/${wsId}/gates/${localSession.gateId}/public`)
+      const isWorkspaceSession = localSession.gateId === localSession.workspace_id
+      if (isWorkspaceSession) {
+        navigate(`/workspaces/${wsId}`)
+      } else {
+        navigate(`/workspaces/${wsId}/gates/${localSession.gateId}/public`)
+      }
     }
   }
 
@@ -135,9 +145,13 @@ export default function AppLayout() {
       Promise.all([
         memberCredApi.listTokens(localSession.access_token),
         workspaceCredApi.getMyAuthConfig(wsId, localSession.access_token).catch(() => null),
-      ]).then(([tks, cfg]) => {
+        gatesApi.list(wsId, localSession.access_token).catch(() => []),
+        schedulesApi.list(wsId, localSession.access_token).catch(() => []),
+      ]).then(([tks, cfg, gates, schedules]) => {
         setTokens(tks)
         setMemberAuthConfig(cfg)
+        setTokenGates(gates as Gate[])
+        setTokenSchedules(schedules as AccessSchedule[])
       }).finally(() => setTokensLoading(false))
     } else {
       setTokensLoading(false)
@@ -170,7 +184,8 @@ export default function AppLayout() {
       const updated = await workspaceCredApi.listTokens(wsId)
       setTokens(updated)
     } else if (localSession?.access_token) {
-      created = await memberCredApi.createToken(localSession.access_token, tokenLabel, tokenExpiresAt || undefined)
+      const policies = tokenRestrictPerms && tokenPolicies.length > 0 ? tokenPolicies : undefined
+      created = await memberCredApi.createToken(localSession.access_token, tokenLabel, tokenExpiresAt || undefined, policies, tokenScheduleId || undefined)
       const updated = await memberCredApi.listTokens(localSession.access_token)
       setTokens(updated)
     } else {
@@ -454,12 +469,12 @@ export default function AppLayout() {
         opened={tokenModalOpened}
         onClose={() => { closeTokenModal(); setNewToken(null); resetTokenForm(); setMemberAuthConfig(null) }}
         title={t('members.apiTokens')}
-        size={isAdmin && tokenGates.length > 0 ? 'md' : 'sm'}
+        size="lg"
       >
-        <Stack gap="md">
+        <Stack gap="xl">
           {memberAuthConfig?.api_token === false && (
             <Alert color="orange" variant="light" title={t('members.tokenDisabled')}>
-              <Text size="xs">{t('members.tokenDisabledHint')}</Text>
+              <Text size="sm">{t('members.tokenDisabledHint')}</Text>
             </Alert>
           )}
 
@@ -471,14 +486,14 @@ export default function AppLayout() {
               onClose={() => setNewToken(null)}
               title={t('members.tokenCreated')}
             >
-              <Text size="xs" mb={4}>{t('members.tokenCreatedHint')}</Text>
+              <Text size="sm" mb={4}>{t('members.tokenCreatedHint')}</Text>
               <Group gap={4} align="center">
-                <Code style={{ flex: 1, wordBreak: 'break-all', fontSize: 11 }}>{newToken.token}</Code>
+                <Code style={{ flex: 1, wordBreak: 'break-all', fontSize: 12 }}>{newToken.token}</Code>
                 <CopyButton value={newToken.token}>
                   {({ copied, copy }) => (
                     <Tooltip label={copied ? t('common.copied') : t('common.copy')}>
                       <ActionIcon size="sm" variant="subtle" onClick={copy}>
-                        {copied ? <Check size={12} /> : <Copy size={12} />}
+                        {copied ? <Check size={14} /> : <Copy size={14} />}
                       </ActionIcon>
                     </Tooltip>
                   )}
@@ -488,26 +503,25 @@ export default function AppLayout() {
           )}
 
           {memberAuthConfig?.api_token !== false && (
-            <form onSubmit={handleCreateToken}>
-              <Stack gap="xs">
-                <TextInput
-                  label={t('members.tokenLabel')}
-                  placeholder={t('members.tokenLabelPlaceholder')}
-                  value={tokenLabel}
-                  onChange={(e) => setTokenLabel(e.target.value)}
-                  size="xs"
-                />
-                <TextInput
-                  label={`${t('members.tokenExpiresAt')} (${t('common.optional')})`}
-                  type="date"
-                  value={tokenExpiresAt}
-                  onChange={(e) => setTokenExpiresAt(e.target.value)}
-                  size="xs"
-                />
+            <div>
+              <Text fw={600} mb="sm">{t('members.newToken')}</Text>
+              <form onSubmit={handleCreateToken}>
+                <Stack gap="sm">
+                  <TextInput
+                    label={t('members.tokenLabel')}
+                    placeholder={t('members.tokenLabelPlaceholder')}
+                    value={tokenLabel}
+                    onChange={(e) => setTokenLabel(e.target.value)}
+                    withAsterisk
+                  />
+                  <TextInput
+                    label={`${t('members.tokenExpiresAt')} (${t('common.optional')})`}
+                    type="date"
+                    value={tokenExpiresAt}
+                    onChange={(e) => setTokenExpiresAt(e.target.value)}
+                  />
 
-                {/* Fine-grained options — admin only */}
-                {isAdmin && (
-                  <>
+                  {tokenSchedules.length > 0 && (
                     <Select
                       label={t('members.tokenSchedule')}
                       description={t('members.tokenScheduleHint')}
@@ -517,71 +531,72 @@ export default function AppLayout() {
                         { value: '', label: t('common.none') },
                         ...tokenSchedules.map((s) => ({ value: s.id, label: s.name })),
                       ]}
-                      size="xs"
                       clearable
                     />
+                  )}
 
-                    {tokenGates.length > 0 && (
-                      <Switch
-                        label={t('members.tokenRestrictPerms')}
-                        description={t('members.tokenRestrictPermsHint')}
-                        checked={tokenRestrictPerms}
-                        onChange={(e) => {
-                          setTokenRestrictPerms(e.currentTarget.checked)
-                          if (!e.currentTarget.checked) setTokenPolicies([])
-                        }}
-                        size="xs"
+                  {tokenGates.length > 0 && (
+                    <Switch
+                      label={t('members.tokenRestrictPerms')}
+                      description={t('members.tokenRestrictPermsHint')}
+                      checked={tokenRestrictPerms}
+                      onChange={(e) => {
+                        setTokenRestrictPerms(e.currentTarget.checked)
+                        if (!e.currentTarget.checked) setTokenPolicies([])
+                      }}
+                    />
+                  )}
+
+                  {tokenRestrictPerms && tokenGates.length > 0 && (
+                    <div>
+                      <Text size="sm" fw={600} mb={6}>{t('members.gatePermissions')}</Text>
+                      <GatePermissionsGrid
+                        gates={tokenGates}
+                        permissions={tokenPermissions}
+                        isChecked={(gateId, code) =>
+                          tokenPolicies.some((p) => p.gate_id === gateId && p.permission_code === code)
+                        }
+                        onToggle={togglePolicy}
+                        withColumnSelect
+                        maxHeight={200}
                       />
-                    )}
+                    </div>
+                  )}
 
-                    {tokenRestrictPerms && tokenGates.length > 0 && (
-                      <div>
-                        <Text size="xs" fw={600} mb={6}>{t('members.gatePermissions')}</Text>
-                        <GatePermissionsGrid
-                          gates={tokenGates}
-                          permissions={tokenPermissions}
-                          isChecked={(gateId, code) =>
-                            tokenPolicies.some((p) => p.gate_id === gateId && p.permission_code === code)
-                          }
-                          onToggle={togglePolicy}
-                          withColumnSelect
-                          maxHeight={200}
-                        />
-                      </div>
-                    )}
-                  </>
-                )}
+                  <Button type="submit" disabled={!tokenLabel.trim()} fullWidth>
+                    {t('common.add')}
+                  </Button>
+                </Stack>
+              </form>
+            </div>
+          )}
 
-                <Button type="submit" size="xs" disabled={!tokenLabel.trim()} fullWidth>
-                  {t('common.add')}
-                </Button>
+          <div>
+            <Text fw={600} mb="sm">{t('members.existingTokens')}</Text>
+            {tokensLoading ? (
+              <Skeleton h={40} />
+            ) : tokens.length === 0 ? (
+              <Text size="sm" c="dimmed">{t('members.noTokens')}</Text>
+            ) : (
+              <Stack gap={4}>
+                {tokens.map((cred) => (
+                  <Group key={cred.id} justify="space-between" wrap="nowrap" p={8}
+                    style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 6 }}>
+                    <Stack gap={0} style={{ minWidth: 0 }}>
+                      <Text size="sm" fw={500} truncate>{cred.label || '—'}</Text>
+                      <Text size="xs" c="dimmed">
+                        {cred.created_at ? new Date(cred.created_at).toLocaleDateString() : '—'}
+                        {cred.expires_at && ` → ${new Date(cred.expires_at).toLocaleDateString()}`}
+                      </Text>
+                    </Stack>
+                    <ActionIcon size="sm" color="red" variant="subtle" onClick={() => handleDeleteToken(cred.id)}>
+                      <Trash2 size={14} />
+                    </ActionIcon>
+                  </Group>
+                ))}
               </Stack>
-            </form>
-          )}
-
-          {tokensLoading ? (
-            <Skeleton h={40} />
-          ) : tokens.length === 0 ? (
-            <Text size="sm" c="dimmed">{t('members.noTokens')}</Text>
-          ) : (
-            <Stack gap={4}>
-              {tokens.map((cred) => (
-                <Group key={cred.id} justify="space-between" wrap="nowrap" p={6}
-                  style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 6 }}>
-                  <Stack gap={0} style={{ minWidth: 0 }}>
-                    <Text size="xs" fw={500} truncate>{cred.label || '—'}</Text>
-                    <Text size="xs" c="dimmed">
-                      {cred.created_at ? new Date(cred.created_at).toLocaleDateString() : '—'}
-                      {cred.expires_at && ` → ${new Date(cred.expires_at).toLocaleDateString()}`}
-                    </Text>
-                  </Stack>
-                  <ActionIcon size="sm" color="red" variant="subtle" onClick={() => handleDeleteToken(cred.id)}>
-                    <Trash2 size={13} />
-                  </ActionIcon>
-                </Group>
-              ))}
-            </Stack>
-          )}
+            )}
+          </div>
         </Stack>
       </Modal>
     </AppShell>

@@ -13,6 +13,7 @@ import { GatePermissionsGrid, useGatePermissions } from '@/components/GatePermis
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { UserPlus, Trash2, Users, AlertCircle, Settings2, X, Pencil } from 'lucide-react'
 import { notifySuccess, notifyError, extractApiError } from '@/lib/notify'
+import { QueryError } from '@/components/QueryError'
 
 const ROLE_COLOR: Record<string, string> = {
   OWNER: 'yellow',
@@ -342,7 +343,7 @@ export default function MembersPage() {
   const [bulkLoading, setBulkLoading] = useState(false)
   const [bulkMode, setBulkMode] = useState<'permissions' | 'auth'>('permissions')
 
-  const { data: members, isLoading } = useQuery<WorkspaceMembership[]>({
+  const { data: members, isLoading, isError, error } = useQuery<WorkspaceMembership[]>({
     queryKey: ['members', wsId],
     queryFn: () => membersApi.list(wsId!),
   })
@@ -494,6 +495,8 @@ export default function MembersPage() {
       {/* Member list */}
       {isLoading ? (
         <Stack>{[0, 1, 2].map((i) => <Skeleton key={i} height={60} radius="md" />)}</Stack>
+      ) : isError ? (
+        <QueryError error={error} />
       ) : members?.length === 0 ? (
         <Center py={80}>
           <Stack align="center" gap="xs">

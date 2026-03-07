@@ -22,8 +22,26 @@ export interface WorkspaceWithRole extends Workspace {
   role: WorkspaceRole
 }
 
+/** Maps raw device status values (stringified) to application status strings. */
+export type StatusValueMap = Record<string, string>
+
+/** Defines how to extract the gate status from an incoming payload field. */
+export interface StatusFieldMapping {
+  /** Dot-notated path to the status value in the payload (e.g. "state", "data.status"). */
+  field: string
+  /** Maps raw device values to app status strings. If empty, the raw string is used as-is. */
+  values?: StatusValueMap
+}
+
+/** Configures how to parse an incoming status payload. */
+export interface PayloadMapping {
+  /** Payload format — only "json" is currently supported. */
+  format?: 'json'
+  status: StatusFieldMapping
+}
+
 export interface ActionConfig {
-  type: 'MQTT' | 'HTTP' | 'NONE'
+  type: 'MQTT_GATIE' | 'MQTT_CUSTOM' | 'HTTP' | 'HTTP_INBOUND' | 'HTTP_WEBHOOK' | 'NONE'
   config?: Record<string, unknown>
 }
 

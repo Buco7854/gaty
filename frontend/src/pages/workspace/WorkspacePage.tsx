@@ -8,19 +8,16 @@ import { useGateEvents } from '@/hooks/useGateEvents'
 import type { GateEvent } from '@/hooks/useGateEvents'
 import { useTranslation } from 'react-i18next'
 import {
-  Container, Title, Text, Group, Button, Modal, TextInput, Stack, Badge,
+  Container, Title, Text, Group, Button, Modal, TextInput, Textarea, Stack, Badge,
   SimpleGrid, Card, ActionIcon, Select, Center, Tooltip, Loader, Collapse, Anchor,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { Plus, DoorOpen, Zap, ChevronRight } from 'lucide-react'
 import { notifySuccess, notifyError } from '@/lib/notify'
+import { QueryError } from '@/components/QueryError'
 import { useAuthStore } from '@/store/auth'
 import { findLocalSession } from '@/utils/session'
 
-function normalizeGates(data: unknown): Gate[] {
-  if (Array.isArray(data)) return data as Gate[]
-  return ((data as Record<string, unknown>).gates ?? []) as Gate[]
-}
 
 function getStatusColor(status: GateStatus | undefined): string {
   switch (status) {
@@ -70,10 +67,27 @@ function ActionConfigForm({
         }}
         data={[
           { value: 'NONE', label: t('gates.noneDriver') },
-          { value: 'MQTT', label: t('gates.mqttDriver') },
+          { value: 'MQTT_GATIE', label: t('gates.mqttGatieDriver') },
+          { value: 'MQTT_CUSTOM', label: t('gates.mqttCustomDriver') },
           { value: 'HTTP', label: t('gates.httpDriver') },
         ]}
       />
+      {driverType === 'MQTT_CUSTOM' && (
+        <Textarea
+          label={t('gates.mqttCustomPayload')}
+          description={t('gates.mqttCustomPayloadDesc')}
+          defaultValue={JSON.stringify(value?.config?.payload ?? {}, null, 2)}
+          onBlur={(e) => {
+            try {
+              const parsed = JSON.parse(e.target.value)
+              onChange({ type: 'MQTT_CUSTOM', config: { ...value?.config, payload: parsed } })
+            } catch { /* ignore invalid JSON */ }
+          }}
+          placeholder={'{\n  "cmd": 1\n}'}
+          minRows={3}
+          styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+        />
+      )}
       {driverType === 'HTTP' && (
         <TextInput
           label={t('gates.httpUrl')}
@@ -109,12 +123,12 @@ export default function WorkspacePage() {
   const [opened, { open, close }] = useDisclosure(false)
   const [advancedOpened, setAdvancedOpened] = useState(false)
   const [gateName, setGateName] = useState('')
-  const [openConfig, setOpenConfig] = useState<ActionConfig | null>({ type: 'MQTT' })
+  const [openConfig, setOpenConfig] = useState<ActionConfig | null>({ type: 'MQTT_GATIE' })
   const [closeConfig, setCloseConfig] = useState<ActionConfig | null>(null)
   const [statusConfig, setStatusConfig] = useState<ActionConfig | null>(null)
   const [triggeringId, setTriggeringId] = useState<string | null>(null)
 
-  const { data: gates, isLoading } = useQuery<Gate[]>({
+  const { data: gates, isLoading, isError, error } = useQuery<Gate[]>({
     queryKey: ['gates', wsId],
     queryFn: () => gatesApi.list(wsId!),
     refetchInterval: globalAuth ? 15_000 : false,
@@ -157,7 +171,7 @@ export default function WorkspacePage() {
       qc.invalidateQueries({ queryKey: ['gates', wsId] })
       close()
       setGateName('')
-      setOpenConfig({ type: 'MQTT' })
+      setOpenConfig({ type: 'MQTT_GATIE' })
       setCloseConfig(null)
       setStatusConfig(null)
       setAdvancedOpened(false)
@@ -244,6 +258,8 @@ export default function WorkspacePage() {
 
       {isLoading ? (
         <Center py={80}><Loader /></Center>
+      ) : isError ? (
+        <QueryError error={error} />
       ) : gates?.length === 0 ? (
         <Center py={80}>
           <Stack align="center" gap="xs">

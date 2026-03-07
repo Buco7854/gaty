@@ -70,4 +70,7 @@ type GateRepository interface {
 	SetToken(ctx context.Context, gateID, wsID uuid.UUID, token string) error
 	UpdateStatus(ctx context.Context, gateID uuid.UUID, status string, meta map[string]any) error
 	MarkUnresponsiveWithIDs(ctx context.Context, ttl time.Duration) ([]UnresponsiveGate, error)
+	// ListWebhookGates returns all gates configured with HTTP_WEBHOOK status polling.
+	// Used by the webhook worker to determine which gates need periodic polling.
+	ListWebhookGates(ctx context.Context) ([]model.Gate, error)
 }

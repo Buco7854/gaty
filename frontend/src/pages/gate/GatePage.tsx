@@ -8,12 +8,13 @@ import { useAuthStore } from '@/store/auth'
 import { findLocalSession } from '@/utils/session'
 import { useTranslation } from 'react-i18next'
 import { notifySuccess, notifyError } from '@/lib/notify'
+import { QueryError } from '@/components/QueryError'
 import { useGateEvents } from '@/hooks/useGateEvents'
 import type { GateEvent } from '@/hooks/useGateEvents'
 import {
   Container, Title, Text, Group, Button, Stack, Paper, Badge, ActionIcon,
-  TextInput, PasswordInput, Select, Tooltip, Modal, Code, Alert,
-  NumberInput, Checkbox, Divider,
+  TextInput, PasswordInput, Select, Tooltip, Modal, Code, Alert, Textarea,
+  NumberInput, Checkbox,
 } from '@mantine/core'
 import { useDisclosure, useClipboard } from '@mantine/hooks'
 import {
@@ -87,13 +88,16 @@ function ActionConfigForm({
   onChange: (v: ActionConfig | null) => void
 }) {
   const { t } = useTranslation()
-  const driverType = value?.type ?? 'NONE'
+  const VALID_ACTION_TYPES = ['NONE', 'MQTT_GATIE', 'MQTT_CUSTOM', 'HTTP']
+  const rawDriver = value?.type
+  const driverType = rawDriver && VALID_ACTION_TYPES.includes(rawDriver) ? rawDriver : 'NONE'
 
   return (
     <Stack gap="xs">
       <Select
         label={label}
         value={driverType}
+        allowDeselect={false}
         onChange={(v) => {
           const type = (v ?? 'NONE') as ActionConfig['type']
           if (type === 'NONE') {
@@ -104,10 +108,27 @@ function ActionConfigForm({
         }}
         data={[
           { value: 'NONE', label: t('gates.noneDriver') },
-          { value: 'MQTT', label: t('gates.mqttDriver') },
+          { value: 'MQTT_GATIE', label: t('gates.mqttGatieDriver') },
+          { value: 'MQTT_CUSTOM', label: t('gates.mqttCustomDriver') },
           { value: 'HTTP', label: t('gates.httpDriver') },
         ]}
       />
+      {driverType === 'MQTT_CUSTOM' && (
+        <Textarea
+          label={t('gates.mqttCustomPayload')}
+          description={t('gates.mqttCustomPayloadDesc')}
+          defaultValue={JSON.stringify(value?.config?.payload ?? {}, null, 2)}
+          onBlur={(e) => {
+            try {
+              const parsed = JSON.parse(e.target.value)
+              onChange({ type: 'MQTT_CUSTOM', config: { ...value?.config, payload: parsed } })
+            } catch { /* ignore invalid JSON */ }
+          }}
+          placeholder={'{\n  "cmd": 1\n}'}
+          minRows={3}
+          styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+        />
+      )}
       {driverType === 'HTTP' && (
         <>
           <TextInput
@@ -128,6 +149,220 @@ function ActionConfigForm({
             data={['POST', 'GET', 'PUT', 'PATCH']}
           />
         </>
+      )}
+    </Stack>
+  )
+}
+
+type StatusDriverType = 'NONE' | 'MQTT_GATIE' | 'MQTT_CUSTOM' | 'HTTP_INBOUND' | 'HTTP_WEBHOOK'
+
+/**
+ * Full status source configuration form.
+ * Replaces the generic ActionConfigForm for the status_config field.
+ * Supports NONE / MQTT / HTTP_INBOUND / HTTP_WEBHOOK modes with payload mapping.
+ */
+function StatusConfigForm({
+  value,
+  onChange,
+  allStatuses,
+}: {
+  value: ActionConfig | null
+  onChange: (v: ActionConfig | null) => void
+  allStatuses: string[]
+}) {
+  const { t } = useTranslation()
+  const VALID_STATUS_TYPES: StatusDriverType[] = ['NONE', 'MQTT_GATIE', 'MQTT_CUSTOM', 'HTTP_INBOUND', 'HTTP_WEBHOOK']
+  const rawType = value?.type as StatusDriverType | undefined
+  const type: StatusDriverType = rawType && VALID_STATUS_TYPES.includes(rawType) ? rawType : 'NONE'
+  const cfg = (value?.config ?? {}) as Record<string, unknown>
+
+  const mapping = (cfg.mapping as Record<string, unknown>) ?? {}
+  const statusM = (mapping.status as Record<string, unknown>) ?? {}
+  const statusField = (statusM.field as string) ?? ''
+  const statusValues = (statusM.values as Record<string, string>) ?? {}
+
+  const url = (cfg.url as string) ?? ''
+  const method = (cfg.method as string) ?? 'GET'
+  const headersObj = (cfg.headers as Record<string, string>) ?? {}
+  const body = (cfg.body as string) ?? ''
+  const intervalSeconds = (cfg.interval_seconds as number) ?? 60
+
+  function emit(newType: StatusDriverType, newCfg: Record<string, unknown>) {
+    if (newType === 'NONE') { onChange(null); return }
+    onChange({ type: newType as ActionConfig['type'], config: newCfg })
+  }
+
+  function setCfgField(key: string, val: unknown) {
+    emit(type, { ...cfg, [key]: val })
+  }
+
+  function setMapping(patch: Record<string, unknown>) {
+    emit(type, { ...cfg, mapping: { ...mapping, ...patch } })
+  }
+
+  function setStatusM(patch: Record<string, unknown>) {
+    setMapping({ status: { ...statusM, ...patch } })
+  }
+
+  const svEntries = Object.entries(statusValues)
+  const hEntries = Object.entries(headersObj)
+
+  return (
+    <Stack gap="sm">
+      <Select
+        label={t('gates.statusMode')}
+        value={type}
+        allowDeselect={false}
+        onChange={(v) => {
+          const nt = (v ?? 'NONE') as StatusDriverType
+          if (nt === 'NONE') { onChange(null); return }
+          onChange({ type: nt as ActionConfig['type'], config: cfg })
+        }}
+        data={[
+          { value: 'NONE', label: t('gates.statusNone') },
+          { value: 'MQTT_GATIE', label: t('gates.statusMqttGatie') },
+          { value: 'MQTT_CUSTOM', label: t('gates.statusMqttCustom') },
+          { value: 'HTTP_INBOUND', label: t('gates.statusHttpInbound') },
+          { value: 'HTTP_WEBHOOK', label: t('gates.statusHttpWebhook') },
+        ]}
+      />
+
+      {type === 'HTTP_WEBHOOK' && (
+        <Stack gap="xs">
+          <TextInput
+            label={t('gates.httpUrl')}
+            value={url}
+            onChange={(e) => setCfgField('url', e.target.value)}
+            placeholder="http://192.168.1.100/api/status"
+          />
+          <Group grow>
+            <Select
+              label={t('gates.httpMethod')}
+              value={method}
+              onChange={(v) => setCfgField('method', v ?? 'GET')}
+              data={['GET', 'POST', 'PUT', 'PATCH']}
+            />
+            <NumberInput
+              label={t('gates.webhookInterval')}
+              value={intervalSeconds}
+              onChange={(v) => setCfgField('interval_seconds', typeof v === 'number' ? v : 60)}
+              min={1}
+              placeholder={t('gates.webhookIntervalPlaceholder')}
+            />
+          </Group>
+
+          <div>
+            <Group justify="space-between" mb={4}>
+              <Text size="sm" fw={500}>{t('gates.httpHeaders')}</Text>
+              <Button size="xs" variant="subtle" leftSection={<Plus size={12} />}
+                onClick={() => setCfgField('headers', { ...headersObj, [`Header-${hEntries.length + 1}`]: '' })}>
+                {t('common.add')}
+              </Button>
+            </Group>
+            <Stack gap={4}>
+              {hEntries.map(([k, v], idx) => (
+                <Group key={idx} gap="xs">
+                  <TextInput
+                    placeholder="Authorization"
+                    defaultValue={k}
+                    onBlur={(e) => {
+                      if (e.target.value === k) return
+                      const newH: Record<string, string> = {}
+                      for (const [hk, hv] of Object.entries(headersObj)) newH[hk === k ? e.target.value : hk] = hv
+                      setCfgField('headers', newH)
+                    }}
+                    style={{ flex: 1 }}
+                    styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+                  />
+                  <TextInput
+                    placeholder="Bearer …"
+                    value={v}
+                    onChange={(e) => setCfgField('headers', { ...headersObj, [k]: e.target.value })}
+                    style={{ flex: 2 }}
+                  />
+                  <ActionIcon variant="subtle" color="red" onClick={() => {
+                    const newH = { ...headersObj }; delete newH[k]; setCfgField('headers', newH)
+                  }}>
+                    <Trash2 size={14} />
+                  </ActionIcon>
+                </Group>
+              ))}
+            </Stack>
+          </div>
+
+          <TextInput
+            label={t('gates.httpBody')}
+            value={body}
+            onChange={(e) => setCfgField('body', e.target.value)}
+            placeholder='{"action": "status"}'
+            styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+          />
+        </Stack>
+      )}
+
+      {type === 'MQTT_GATIE' && (
+        <Text size="xs" c="dimmed">{t('gates.mqttGatieInfo')}</Text>
+      )}
+
+      {type !== 'NONE' && type !== 'MQTT_GATIE' && (
+        <Stack gap="sm">
+          <TextInput
+            label={t('gates.statusField')}
+            description={t('gates.statusFieldHint')}
+            value={statusField}
+            onChange={(e) => setStatusM({ field: e.target.value })}
+            placeholder={t('gates.statusFieldPlaceholder')}
+            styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+          />
+
+          {/* Status value mappings */}
+          <div>
+            <Group justify="space-between" mb={4}>
+              <div>
+                <Text size="sm" fw={500}>{t('gates.statusValues')}</Text>
+                <Text size="xs" c="dimmed">{t('gates.statusValuesDesc')}</Text>
+              </div>
+              <Button size="xs" variant="subtle" leftSection={<Plus size={12} />}
+                onClick={() => setStatusM({ values: { ...statusValues, [`val_${svEntries.length + 1}`]: '' } })}>
+                {t('gates.statusValuesAdd')}
+              </Button>
+            </Group>
+            <Stack gap={4}>
+              {svEntries.map(([raw, mapped], idx) => (
+                <Group key={idx} gap="xs" align="flex-end">
+                  <TextInput
+                    label={idx === 0 ? t('gates.statusValuesRaw') : undefined}
+                    placeholder={t('gates.statusValuesRawPlaceholder')}
+                    defaultValue={raw}
+                    onBlur={(e) => {
+                      if (e.target.value === raw) return
+                      const newV: Record<string, string> = {}
+                      for (const [vk, vv] of Object.entries(statusValues)) newV[vk === raw ? e.target.value : vk] = vv
+                      setStatusM({ values: newV })
+                    }}
+                    style={{ flex: 1 }}
+                    styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+                  />
+                  <Text size="lg" c="dimmed" mb={idx === 0 ? 2 : 6}>→</Text>
+                  <Select
+                    label={idx === 0 ? t('gates.statusValuesMapped') : undefined}
+                    value={mapped}
+                    onChange={(v) => setStatusM({ values: { ...statusValues, [raw]: v ?? '' } })}
+                    data={allStatuses.map(s => ({ value: s, label: s }))}
+                    searchable
+                    allowDeselect={false}
+                    style={{ flex: 2 }}
+                  />
+                  <ActionIcon variant="subtle" color="red" mb={idx === 0 ? 2 : 0}
+                    onClick={() => { const nv = { ...statusValues }; delete nv[raw]; setStatusM({ values: nv }) }}>
+                    <Trash2 size={14} />
+                  </ActionIcon>
+                </Group>
+              ))}
+            </Stack>
+          </div>
+
+        </Stack>
       )}
     </Stack>
   )
@@ -445,7 +680,7 @@ export default function GatePage() {
     return parseInt(pinSessionDuration, 10)
   }
 
-  const { data: gate } = useQuery<Gate>({
+  const { data: gate, isError: gateError, error: gateFetchError } = useQuery<Gate>({
     queryKey: ['gate', wsId, gateId],
     queryFn: () => gatesApi.get(wsId!, gateId!),
     refetchInterval: 15_000,
@@ -700,6 +935,8 @@ export default function GatePage() {
         {t('common.back')}
       </Button>
 
+      {gateError && <QueryError error={gateFetchError} />}
+
       {/* Header */}
       <Group justify="space-between" mb="xl">
         <div>
@@ -819,19 +1056,15 @@ export default function GatePage() {
         opened={tokenWarningOpened}
         onClose={closeTokenWarning}
         title={t('gates.tokenRotate')}
-        size="sm"
+        size="lg"
       >
-        <Stack>
-          <Alert color="orange" variant="light" icon={<Info size={14} />}>
+        <Stack gap="lg">
+          <Alert color="orange" variant="light" icon={<Info size={16} />} p="md">
             <Text size="sm">{t('gates.tokenRotateWarning')}</Text>
           </Alert>
-          <Group justify="flex-end">
-            <Button variant="default" onClick={closeTokenWarning}>{t('common.cancel')}</Button>
-            <Button
-              color="orange"
-              loading={rotateToken.isPending}
-              onClick={() => rotateToken.mutate()}
-            >
+          <Group grow gap="sm">
+            <Button size="md" variant="default" onClick={closeTokenWarning}>{t('common.cancel')}</Button>
+            <Button size="md" color="orange" loading={rotateToken.isPending} onClick={() => rotateToken.mutate()}>
               {t('gates.tokenRotate')}
             </Button>
           </Group>
@@ -846,27 +1079,32 @@ export default function GatePage() {
         size="lg"
       >
         <form onSubmit={(e) => { e.preventDefault(); updateConfig.mutate() }}>
-          <Stack>
-            <ActionConfigForm
-              label={t('gates.openAction')}
-              value={editOpenConfig}
-              onChange={setEditOpenConfig}
-            />
-            <ActionConfigForm
-              label={t('gates.closeAction')}
-              value={editCloseConfig}
-              onChange={setEditCloseConfig}
-            />
-            <ActionConfigForm
-              label={t('gates.statusAction')}
-              value={editStatusConfig}
-              onChange={setEditStatusConfig}
-            />
-            <Divider />
+          <Stack gap="xl">
+            <div>
+              <Text fw={600} mb="sm">{t('gates.actionsSection')}</Text>
+              <Stack gap="md">
+                <ActionConfigForm
+                  label={t('gates.openAction')}
+                  value={editOpenConfig}
+                  onChange={setEditOpenConfig}
+                />
+                <ActionConfigForm
+                  label={t('gates.closeAction')}
+                  value={editCloseConfig}
+                  onChange={setEditCloseConfig}
+                />
+              </Stack>
+            </div>
+            <div>
+              <Text fw={600} mb="sm">{t('gates.statusAction')}</Text>
+              <StatusConfigForm
+                value={editStatusConfig}
+                onChange={setEditStatusConfig}
+                allStatuses={allStatuses}
+              />
+            </div>
             <MetaConfigEditor value={editMetaConfig} onChange={setEditMetaConfig} />
-            <Divider />
             <CustomStatusesEditor value={editCustomStatuses} onChange={setEditCustomStatuses} />
-            <Divider />
             <StatusRulesEditor value={editStatusRules} onChange={setEditStatusRules} allStatuses={allStatuses} />
             <Group justify="flex-end">
               <Button variant="default" onClick={closeConfigModal}>{t('common.cancel')}</Button>
@@ -960,111 +1198,122 @@ export default function GatePage() {
             pinModalMode === 'edit' ? updatePin.mutate() : createPin.mutate()
           }}
         >
-          <Stack>
-            <TextInput
-              label={t('pins.label')}
-              value={pinLabel}
-              onChange={(e) => setPinLabel(e.target.value)}
-              placeholder={t('pins.labelPlaceholder')}
-              required
-            />
-            <Select
-              label={t('pins.codeType')}
-              value={pinCodeType}
-              onChange={(v) => { setPinCodeType((v as 'pin' | 'password') ?? 'pin'); setPinValue('') }}
-              data={[
-                { value: 'pin', label: t('pins.codeTypePin') },
-                { value: 'password', label: t('pins.codeTypePassword') },
-              ]}
-            />
-            <Alert color="blue" variant="light" icon={<Info size={14} />} p="xs">
-              <Text size="xs">
-                {pinCodeType === 'pin' ? t('pins.methodWarningPin') : t('pins.methodWarningPassword')}
-              </Text>
-            </Alert>
-            {pinModalMode === 'create' && (
-              <PasswordInput
-                label={t('pins.code')}
-                value={pinValue}
-                onChange={(e) => {
-                  const v = e.target.value
-                  setPinValue(pinCodeType === 'pin' ? v.replace(/\D/g, '') : v)
-                }}
-                required
-                minLength={1}
-                inputMode={pinCodeType === 'pin' ? 'numeric' : undefined}
-                styles={
-                  pinCodeType === 'pin'
-                    ? { input: { fontFamily: 'monospace', letterSpacing: '0.2em' } }
-                    : undefined
-                }
-              />
-            )}
-            <Stack gap="xs">
-              <Select
-                label={t('pins.sessionDuration')}
-                description={t('pins.sessionDurationDesc')}
-                value={pinSessionDuration}
-                onChange={(v) => setPinSessionDuration(v ?? '')}
-                data={PIN_SESSION_PRESETS}
-              />
-              {pinSessionDuration === 'custom' && (
-                <Group gap="xs" grow>
-                  <NumberInput
-                    label={t('members.sessionCustomValue')}
-                    value={pinCustomValue}
-                    onChange={setPinCustomValue}
-                    min={1}
-                    step={1}
+          <Stack gap="xl">
+            <div>
+              <Text fw={600} mb="sm">{t('pins.identification')}</Text>
+              <Stack gap="md">
+                <TextInput
+                  label={t('pins.label')}
+                  value={pinLabel}
+                  onChange={(e) => setPinLabel(e.target.value)}
+                  placeholder={t('pins.labelPlaceholder')}
+                  required
+                />
+                <Select
+                  label={t('pins.codeType')}
+                  value={pinCodeType}
+                  allowDeselect={false}
+                  onChange={(v) => { setPinCodeType((v as 'pin' | 'password') ?? 'pin'); setPinValue('') }}
+                  data={[
+                    { value: 'pin', label: t('pins.codeTypePin') },
+                    { value: 'password', label: t('pins.codeTypePassword') },
+                  ]}
+                />
+                <Alert color="blue" variant="light" icon={<Info size={14} />}>
+                  {pinCodeType === 'pin' ? t('pins.methodWarningPin') : t('pins.methodWarningPassword')}
+                </Alert>
+                {pinModalMode === 'create' && (
+                  <PasswordInput
+                    label={t('pins.code')}
+                    value={pinValue}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setPinValue(pinCodeType === 'pin' ? v.replace(/\D/g, '') : v)
+                    }}
+                    required
+                    minLength={1}
+                    inputMode={pinCodeType === 'pin' ? 'numeric' : undefined}
+                    styles={
+                      pinCodeType === 'pin'
+                        ? { input: { fontFamily: 'monospace', letterSpacing: '0.2em' } }
+                        : undefined
+                    }
                   />
-                  <Select
-                    label={t('members.sessionCustomUnit')}
-                    value={pinCustomUnit}
-                    onChange={(v) => setPinCustomUnit(v ?? 'days')}
-                    data={[
-                      { value: 'minutes', label: t('members.sessionUnitMinutes') },
-                      { value: 'hours', label: t('members.sessionUnitHours') },
-                      { value: 'days', label: t('members.sessionUnitDays') },
-                    ]}
-                  />
-                </Group>
-              )}
-            </Stack>
-            <NumberInput
-              label={t('pins.maxUses')}
-              description={t('pins.maxUsesDesc')}
-              value={pinMaxUses}
-              onChange={setPinMaxUses}
-              min={1}
-              step={1}
-              allowDecimal={false}
-            />
-            <Checkbox.Group
-              label={t('pins.permissions')}
-              value={pinPermissions}
-              onChange={setPinPermissions}
-            >
-              <Stack gap="xs" mt={4}>
-                <Checkbox value="gate:trigger_open" label={t('permissions.triggerOpen')} />
-                <Checkbox value="gate:trigger_close" label={t('permissions.triggerClose')} />
-                <Checkbox value="gate:read_status" label={t('permissions.viewStatus')} />
+                )}
               </Stack>
-            </Checkbox.Group>
-            <TextInput
-              label={t('pins.expires')}
-              description={t('common.optional')}
-              type="datetime-local"
-              value={pinExpiresAt}
-              onChange={(e) => setPinExpiresAt(e.target.value)}
-            />
-            <Select
-              label={t('pins.schedule')}
-              description={t('pins.scheduleDesc')}
-              value={pinScheduleId}
-              onChange={(v) => setPinScheduleId(v ?? '')}
-              data={scheduleSelectData}
-              clearable
-            />
+            </div>
+
+            <div>
+              <Text fw={600} mb="sm">{t('pins.accessRules')}</Text>
+              <Stack gap="md">
+                <Stack gap="xs">
+                  <Select
+                    label={t('pins.sessionDuration')}
+                    description={t('pins.sessionDurationDesc')}
+                    value={pinSessionDuration}
+                    onChange={(v) => setPinSessionDuration(v ?? '')}
+                    data={PIN_SESSION_PRESETS}
+                  />
+                  {pinSessionDuration === 'custom' && (
+                    <Group gap="xs" grow>
+                      <NumberInput
+                        label={t('members.sessionCustomValue')}
+                        value={pinCustomValue}
+                        onChange={setPinCustomValue}
+                        min={1}
+                        step={1}
+                      />
+                      <Select
+                        label={t('members.sessionCustomUnit')}
+                        value={pinCustomUnit}
+                        onChange={(v) => setPinCustomUnit(v ?? 'days')}
+                        data={[
+                          { value: 'minutes', label: t('members.sessionUnitMinutes') },
+                          { value: 'hours', label: t('members.sessionUnitHours') },
+                          { value: 'days', label: t('members.sessionUnitDays') },
+                        ]}
+                      />
+                    </Group>
+                  )}
+                </Stack>
+                <NumberInput
+                  label={t('pins.maxUses')}
+                  description={t('pins.maxUsesDesc')}
+                  value={pinMaxUses}
+                  onChange={setPinMaxUses}
+                  min={1}
+                  step={1}
+                  allowDecimal={false}
+                />
+                <Checkbox.Group
+                  label={t('pins.permissions')}
+                  value={pinPermissions}
+                  onChange={setPinPermissions}
+                >
+                  <Stack gap="xs" mt={4}>
+                    <Checkbox value="gate:trigger_open" label={t('permissions.triggerOpen')} />
+                    <Checkbox value="gate:trigger_close" label={t('permissions.triggerClose')} />
+                    <Checkbox value="gate:read_status" label={t('permissions.viewStatus')} />
+                  </Stack>
+                </Checkbox.Group>
+                <TextInput
+                  label={t('pins.expires')}
+                  description={t('common.optional')}
+                  type="datetime-local"
+                  value={pinExpiresAt}
+                  onChange={(e) => setPinExpiresAt(e.target.value)}
+                />
+                <Select
+                  label={t('pins.schedule')}
+                  description={t('pins.scheduleDesc')}
+                  value={pinScheduleId}
+                  onChange={(v) => setPinScheduleId(v ?? '')}
+                  data={scheduleSelectData}
+                  clearable
+                />
+              </Stack>
+            </div>
+
             <Group justify="flex-end">
               <Button variant="default" onClick={() => { closePinModal(); resetPinForm() }}>
                 {t('common.cancel')}

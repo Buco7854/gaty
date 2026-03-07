@@ -60,7 +60,7 @@ func (h *CustomDomainHandler) ensureGateInWorkspace(ctx context.Context, gateID,
 			return huma.Error404NotFound("gate not found")
 		}
 		slog.Error("ensureGateInWorkspace", "gate_id", gateID, "ws_id", wsID, "error", err)
-		return huma.Error500InternalServerError("internal error")
+		return huma.Error500InternalServerError("internal error", err)
 	}
 	return nil
 }
@@ -95,7 +95,7 @@ func (h *CustomDomainHandler) addDomain(ctx context.Context, in *addDomainInput)
 			return nil, huma.Error409Conflict("domain already registered")
 		}
 		slog.Error("create custom domain", "error", err)
-		return nil, huma.Error500InternalServerError("internal error")
+		return nil, huma.Error500InternalServerError("internal error", err)
 	}
 	return &addDomainOutput{Body: toDomainView(d)}, nil
 }
@@ -119,7 +119,7 @@ func (h *CustomDomainHandler) listDomains(ctx context.Context, in *listDomainsIn
 	list, err := h.domains.ListByGate(ctx, in.GateID)
 	if err != nil {
 		slog.Error("list custom domains", "error", err)
-		return nil, huma.Error500InternalServerError("internal error")
+		return nil, huma.Error500InternalServerError("internal error", err)
 	}
 
 	views := make([]customDomainView, 0, len(list))
@@ -147,7 +147,7 @@ func (h *CustomDomainHandler) deleteDomain(ctx context.Context, in *deleteDomain
 			return nil, huma.Error404NotFound("domain not found")
 		}
 		slog.Error("delete custom domain", "error", err)
-		return nil, huma.Error500InternalServerError("internal error")
+		return nil, huma.Error500InternalServerError("internal error", err)
 	}
 	return nil, nil
 }
@@ -177,7 +177,7 @@ func (h *CustomDomainHandler) verifyDomain(ctx context.Context, in *verifyDomain
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, huma.Error404NotFound("domain not found")
 		}
-		return nil, huma.Error500InternalServerError("internal error")
+		return nil, huma.Error500InternalServerError("internal error", err)
 	}
 
 	// DNS TXT lookup: _gatie.<domain> must contain the challenge token.
@@ -207,7 +207,7 @@ func (h *CustomDomainHandler) verifyDomain(ctx context.Context, in *verifyDomain
 	now := time.Now().UTC()
 	if err := h.domains.SetVerified(ctx, d.ID, now); err != nil {
 		slog.Error("set domain verified", "error", err)
-		return nil, huma.Error500InternalServerError("internal error")
+		return nil, huma.Error500InternalServerError("internal error", err)
 	}
 	return &verifyDomainOutput{Body: struct {
 		Verified bool   `json:"verified"`
@@ -263,7 +263,7 @@ func (h *CustomDomainHandler) resolveDomain(ctx context.Context, in *resolveDoma
 			return nil, huma.Error404NotFound("domain not found or not verified")
 		}
 		slog.Error("resolve domain", "error", err)
-		return nil, huma.Error500InternalServerError("internal error")
+		return nil, huma.Error500InternalServerError("internal error", err)
 	}
 	out := &resolveDomainOutput{}
 	out.Body.GateID = res.GateID
@@ -291,7 +291,7 @@ func (h *CustomDomainHandler) publicDomainsList(ctx context.Context, _ *struct{}
 	list, err := h.domains.ListAllVerified(ctx)
 	if err != nil {
 		slog.Error("list verified domains", "error", err)
-		return nil, huma.Error500InternalServerError("internal error")
+		return nil, huma.Error500InternalServerError("internal error", err)
 	}
 
 	domains := make([]string, 0, len(list))
@@ -316,7 +316,7 @@ func (h *CustomDomainHandler) resolveGate(ctx context.Context, in *resolveGateIn
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, huma.Error404NotFound("gate not found")
 		}
-		return nil, huma.Error500InternalServerError("internal error")
+		return nil, huma.Error500InternalServerError("internal error", err)
 	}
 	out := &resolveDomainOutput{}
 	out.Body.GateID = res.GateID

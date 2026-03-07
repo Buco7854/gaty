@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Buco7854/gatie/internal/model"
 	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/Buco7854/gatie/internal/service"
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
@@ -28,20 +29,6 @@ func CommandTopic(wsID, gateID uuid.UUID) string {
 	return fmt.Sprintf("workspace_%s/gates/%s/command", wsID, gateID)
 }
 
-// statusPayload is the message a gate publishes on its status topic.
-//
-// Required fields:
-//   - token  — the gate's JWT token (gate_token column)
-//   - status — system-level state string (e.g. "open", "closed", "online", "offline")
-//
-// Optional field:
-//   - meta — arbitrary metadata (e.g. {"lora.snr": -10.5, "battery": 85})
-type statusPayload struct {
-	Token  string         `json:"token"`
-	Status string         `json:"status"`
-	Meta   map[string]any `json:"meta,omitempty"`
-}
-
 // SubscribeGateStatuses subscribes to all gate status topics, authenticates the gate,
 // and delegates status processing to service.ProcessGateStatus (rule evaluation,
 // DB persistence, SSE pub/sub).
@@ -50,6 +37,9 @@ type statusPayload struct {
 // Authentication is two-step:
 //  1. Verify JWT signature with jwtSecret (prevents forgery).
 //  2. DB lookup by gateID + token (detects rotation — old JWTs are invalid after SetToken).
+//
+// Payload: JSON object. "token" is always required. Status and meta are extracted using
+// the gate's MQTT StatusConfig PayloadMapping (status_config.config.mapping).
 func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redisClient *redis.Client, jwtSecret []byte) error {
 	return c.Subscribe("+/gates/+/status", func(_ pahomqtt.Client, msg pahomqtt.Message) {
 		_, topicGateID, err := parseTopicIDs(msg.Topic())
@@ -58,23 +48,25 @@ func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redis
 			return
 		}
 
-		var p statusPayload
-		if err := json.Unmarshal(msg.Payload(), &p); err != nil {
-			slog.Warn("mqtt: invalid status payload", "topic", msg.Topic())
+		// Unmarshal as raw map to support arbitrary device payload shapes.
+		var raw map[string]any
+		if err := json.Unmarshal(msg.Payload(), &raw); err != nil {
+			slog.Warn("mqtt: invalid JSON payload", "topic", msg.Topic())
 			return
 		}
-		if p.Token == "" {
+
+		token, _ := raw["token"].(string)
+		if token == "" {
 			slog.Warn("mqtt: status payload missing token", "gate_id", topicGateID)
 			return
 		}
 
 		// Step 1: verify JWT signature and extract claimed gate identity.
-		claimedGateID, _, err := service.ParseGateToken(p.Token, jwtSecret)
+		claimedGateID, _, err := service.ParseGateToken(token, jwtSecret)
 		if err != nil {
 			slog.Warn("mqtt: invalid gate token signature, rejected", "gate_id", topicGateID)
 			return
 		}
-		// Claimed gateID must match the MQTT topic to prevent cross-gate attacks.
 		if claimedGateID != topicGateID {
 			slog.Warn("mqtt: token gate_id mismatch with topic", "topic_gate_id", topicGateID, "token_gate_id", claimedGateID)
 			return
@@ -84,7 +76,7 @@ func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redis
 		defer cancel()
 
 		// Step 2: DB lookup by gateID — confirms token is current (not rotated).
-		gate, err := gateRepo.GetByToken(ctx, topicGateID, p.Token)
+		gate, err := gateRepo.GetByToken(ctx, topicGateID, token)
 		if err != nil {
 			if errors.Is(err, repository.ErrUnauthorized) {
 				slog.Warn("mqtt: gate token rotated or invalid, rejected", "gate_id", topicGateID)
@@ -94,10 +86,50 @@ func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redis
 			return
 		}
 
-		if err := service.ProcessGateStatus(ctx, gateRepo, redisClient, gate, p.Status, p.Meta); err != nil {
+		status, meta, err := resolveMQTTPayload(gate, raw)
+		if err != nil {
+			slog.Warn("mqtt: payload mapping failed", "gate_id", topicGateID, "error", err)
+			return
+		}
+
+		if err := service.ProcessGateStatus(ctx, gateRepo, redisClient, gate, status, meta); err != nil {
 			slog.Error("mqtt: failed to process gate status", "gate_id", topicGateID, "error", err)
 		}
 	})
+}
+
+// resolveMQTTPayload extracts status and metadata from a raw MQTT JSON payload.
+// Handles both MQTT_GATIE (fixed format, meta extracted by MetaConfig keys) and MQTT_CUSTOM (user mapping).
+func resolveMQTTPayload(gate *model.Gate, raw map[string]any) (status string, meta map[string]any, err error) {
+	if gate.StatusConfig == nil {
+		return "", nil, fmt.Errorf("no MQTT status_config configured")
+	}
+	switch gate.StatusConfig.Type {
+	case model.DriverTypeMQTTGatie:
+		// Native Gaty protocol: {"token":"...","status":"...",...}
+		// Meta extracted via gate.MetaConfig keys from root.
+		s, _ := raw["status"].(string)
+		if s == "" {
+			return "", nil, fmt.Errorf("mqtt_gatie: missing or empty 'status' field in payload")
+		}
+		return s, model.ExtractMeta(gate.MetaConfig, raw), nil
+	case model.DriverTypeMQTTCustom:
+		// MQTT_CUSTOM: status extracted via PayloadMapping; meta via gate.MetaConfig.
+		if len(gate.StatusConfig.Config) == 0 {
+			return "", nil, fmt.Errorf("no MQTT_CUSTOM status_config mapping configured")
+		}
+		mapping, ok := model.ExtractPayloadMapping(gate.StatusConfig.Config)
+		if !ok {
+			return "", nil, fmt.Errorf("status_config.config.mapping missing or invalid")
+		}
+		status, err := model.ApplyMapping(*mapping, raw)
+		if err != nil {
+			return "", nil, err
+		}
+		return status, model.ExtractMeta(gate.MetaConfig, raw), nil
+	default:
+		return "", nil, fmt.Errorf("unsupported MQTT status_config type: %q", gate.StatusConfig.Type)
+	}
 }
 
 // parseTopicIDs extracts workspace UUID and gate UUID from topics like
