@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/safenet"
 )
 
 // httpClient is a dedicated client for gate HTTP drivers.
@@ -45,9 +46,15 @@ func NewHTTPDriver(cfg map[string]any) (*HTTPDriver, error) {
 	if url == "" {
 		return nil, fmt.Errorf("http driver: missing required field 'url'")
 	}
+	if err := safenet.ValidateURL(url); err != nil {
+		return nil, fmt.Errorf("http driver: %w", err)
+	}
 	method := "POST"
 	if m, ok := cfg["method"].(string); ok && m != "" {
 		method = strings.ToUpper(m)
+	}
+	if err := safenet.ValidateHTTPMethod(method); err != nil {
+		return nil, fmt.Errorf("http driver: %w", err)
 	}
 	headers := map[string]string{}
 	if h, ok := cfg["headers"].(map[string]any); ok {

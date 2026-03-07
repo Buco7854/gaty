@@ -75,6 +75,9 @@ type GrantPolicyInput struct {
 }
 
 func (h *PolicyHandler) Grant(ctx context.Context, input *GrantPolicyInput) (*struct{}, error) {
+	if err := validatePermissionCode(input.Body.PermissionCode); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
 	if err := h.policies.Grant(ctx, input.Body.MembershipID, input.GateID, input.Body.PermissionCode); err != nil {
 		return nil, huma.Error500InternalServerError("failed to grant policy", err)
 	}

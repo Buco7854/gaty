@@ -278,6 +278,12 @@ func (h *CredentialHandler) CreateMyWorkspaceMemberAPIToken(ctx context.Context,
 		return nil, huma.Error500InternalServerError("failed to generate token", err)
 	}
 
+	for _, p := range input.Body.Policies {
+		if err := validatePermissionCode(p.PermissionCode); err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+	}
+
 	label := input.Body.Label
 	cred, err := h.memberCredRepo.Create(ctx, membershipID, model.CredAPIToken, hash, &label, input.Body.ExpiresAt, nil)
 	if err != nil {
@@ -372,6 +378,12 @@ func (h *CredentialHandler) CreateMyMemberAPIToken(ctx context.Context, input *c
 
 	if err := h.checkAPITokenEnabled(ctx, membershipID, workspaceID); err != nil {
 		return nil, err
+	}
+
+	for _, p := range input.Body.Policies {
+		if err := validatePermissionCode(p.PermissionCode); err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
 	}
 
 	rawToken, hash, err := generateAPIToken()

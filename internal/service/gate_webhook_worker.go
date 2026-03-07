@@ -14,8 +14,12 @@ import (
 
 	"github.com/Buco7854/gatie/internal/model"
 	"github.com/Buco7854/gatie/internal/repository"
+	"github.com/Buco7854/gatie/internal/safenet"
 	"github.com/redis/go-redis/v9"
 )
+
+// maxWebhookResponseBytes limits the size of webhook response bodies to prevent memory exhaustion.
+const maxWebhookResponseBytes = 1 << 20 // 1 MiB
 
 const webhookCheckInterval = 10 * time.Second
 
@@ -125,10 +129,18 @@ func (w *GateWebhookWorker) pollGate(ctx context.Context, gate *model.Gate) {
 		slog.Warn("webhook: gate has no url configured", "gate_id", gate.ID)
 		return
 	}
+	if err := safenet.ValidateURL(url); err != nil {
+		slog.Warn("webhook: gate has unsafe url", "gate_id", gate.ID, "error", err)
+		return
+	}
 
 	method := "GET"
 	if m, ok := cfg["method"].(string); ok && m != "" {
 		method = strings.ToUpper(m)
+	}
+	if err := safenet.ValidateHTTPMethod(method); err != nil {
+		slog.Warn("webhook: gate has invalid method", "gate_id", gate.ID, "error", err)
+		return
 	}
 
 	headers := map[string]string{}
@@ -220,7 +232,8 @@ func fetchJSON(ctx context.Context, method, url string, headers map[string]strin
 	}
 
 	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	limited := io.LimitReader(resp.Body, maxWebhookResponseBytes)
+	if err := json.NewDecoder(limited).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode JSON response: %w", err)
 	}
 	return result, nil

@@ -5,6 +5,15 @@ import (
 	"strings"
 
 	"github.com/Buco7854/gatie/internal/model"
+	"github.com/Buco7854/gatie/internal/safenet"
+)
+
+const (
+	maxCustomStatuses    = 20
+	maxCustomStatusLen   = 50
+	maxStatusRules       = 50
+	maxMetaFields        = 30
+	maxPermissionCodeLen = 64
 )
 
 var validStatusRuleOps = map[string]bool{
@@ -29,6 +38,14 @@ func validateActionConfig(field string, cfg *model.ActionConfig) error {
 		url, _ := cfg.Config["url"].(string)
 		if strings.TrimSpace(url) == "" {
 			return fmt.Errorf("%s: HTTP driver requires a non-empty url", field)
+		}
+		if err := safenet.ValidateURL(url); err != nil {
+			return fmt.Errorf("%s: %w", field, err)
+		}
+		if m, ok := cfg.Config["method"].(string); ok && m != "" {
+			if err := safenet.ValidateHTTPMethod(m); err != nil {
+				return fmt.Errorf("%s: %w", field, err)
+			}
 		}
 	default:
 		return fmt.Errorf("%s: driver type %q is not valid for open/close actions (allowed: MQTT_GATIE, MQTT_CUSTOM, HTTP, NONE)", field, cfg.Type)
@@ -61,6 +78,26 @@ func validateStatusActionConfig(cfg *model.ActionConfig) error {
 		if strings.TrimSpace(url) == "" {
 			return fmt.Errorf("status_config: HTTP_WEBHOOK driver requires a non-empty url")
 		}
+		if err := safenet.ValidateURL(url); err != nil {
+			return fmt.Errorf("status_config: %w", err)
+		}
+		if m, ok := cfg.Config["method"].(string); ok && m != "" {
+			if err := safenet.ValidateHTTPMethod(m); err != nil {
+				return fmt.Errorf("status_config: %w", err)
+			}
+		}
+		if v, ok := cfg.Config["interval_seconds"]; ok {
+			var interval float64
+			switch n := v.(type) {
+			case float64:
+				interval = n
+			case int:
+				interval = float64(n)
+			}
+			if interval < 10 || interval > 3600 {
+				return fmt.Errorf("status_config: interval_seconds must be between 10 and 3600")
+			}
+		}
 	}
 
 	// All active modes require a complete payload mapping (field mandatory).
@@ -92,6 +129,9 @@ func validateStatusActionConfig(cfg *model.ActionConfig) error {
 // validateCustomStatuses checks that user-defined statuses do not collide with
 // built-in statuses and contain no duplicates or empty entries.
 func validateCustomStatuses(statuses []string) error {
+	if len(statuses) > maxCustomStatuses {
+		return fmt.Errorf("custom_statuses: cannot define more than %d custom statuses", maxCustomStatuses)
+	}
 	defaultSet := make(map[string]bool, len(model.DefaultGateStatuses))
 	for _, s := range model.DefaultGateStatuses {
 		defaultSet[s] = true
@@ -100,6 +140,9 @@ func validateCustomStatuses(statuses []string) error {
 	for _, s := range statuses {
 		if strings.TrimSpace(s) == "" {
 			return fmt.Errorf("custom_statuses: status name must not be empty")
+		}
+		if len(s) > maxCustomStatusLen {
+			return fmt.Errorf("custom_statuses: status name must not exceed %d characters", maxCustomStatusLen)
 		}
 		if defaultSet[s] {
 			return fmt.Errorf("custom_statuses: %q is a built-in status and cannot be redefined", s)
@@ -115,6 +158,9 @@ func validateCustomStatuses(statuses []string) error {
 // validateStatusRules checks that each rule has a valid operator, a non-empty key,
 // and a set_status that resolves to a known status (defaults + custom).
 func validateStatusRules(rules []model.StatusRule, customStatuses []string) error {
+	if len(rules) > maxStatusRules {
+		return fmt.Errorf("status_rules: cannot define more than %d rules", maxStatusRules)
+	}
 	known := make(map[string]bool, len(model.DefaultGateStatuses)+len(customStatuses))
 	for _, s := range model.DefaultGateStatuses {
 		known[s] = true
@@ -135,6 +181,33 @@ func validateStatusRules(rules []model.StatusRule, customStatuses []string) erro
 		if !known[rule.SetStatus] {
 			return fmt.Errorf("status_rules[%d]: set_status %q is not a known status", i, rule.SetStatus)
 		}
+	}
+	return nil
+}
+
+// ValidPermissionCodes is the set of permission codes defined in the database.
+var ValidPermissionCodes = map[string]bool{
+	"gate:read_status":   true,
+	"gate:trigger_open":  true,
+	"gate:trigger_close": true,
+	"gate:manage":        true,
+}
+
+// validatePermissionCode checks that a permission code is known and within length limits.
+func validatePermissionCode(code string) error {
+	if len(code) > maxPermissionCodeLen {
+		return fmt.Errorf("permission_code must not exceed %d characters", maxPermissionCodeLen)
+	}
+	if !ValidPermissionCodes[code] {
+		return fmt.Errorf("permission_code %q is not a valid permission", code)
+	}
+	return nil
+}
+
+// validateMetaConfig checks bounds on meta_config entries.
+func validateMetaConfig(fields []model.MetaField) error {
+	if len(fields) > maxMetaFields {
+		return fmt.Errorf("meta_config: cannot define more than %d fields", maxMetaFields)
 	}
 	return nil
 }

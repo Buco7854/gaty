@@ -86,6 +86,9 @@ func (h *GateHandler) Create(ctx context.Context, input *CreateGateInput) (*Gate
 	if err := validateStatusActionConfig(b.StatusConfig); err != nil {
 		return nil, gateFieldErr("status_config", err)
 	}
+	if err := validateMetaConfig(b.MetaConfig); err != nil {
+		return nil, gateFieldErr("meta_config", err)
+	}
 	if err := validateCustomStatuses(b.CustomStatuses); err != nil {
 		return nil, gateFieldErr("custom_statuses", err)
 	}
@@ -163,6 +166,11 @@ func (h *GateHandler) Update(ctx context.Context, input *UpdateGateInput) (*Gate
 	if b.StatusConfig.Sent && !b.StatusConfig.Null {
 		if err := validateStatusActionConfig(&b.StatusConfig.Value); err != nil {
 			return nil, gateFieldErr("status_config", err)
+		}
+	}
+	if b.MetaConfig != nil {
+		if err := validateMetaConfig(b.MetaConfig); err != nil {
+			return nil, gateFieldErr("meta_config", err)
 		}
 	}
 	if b.CustomStatuses != nil {
