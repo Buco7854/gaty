@@ -208,6 +208,11 @@ func (h *SSOHandler) UpdateSettings(ctx context.Context, input *UpdateSSOSetting
 		return nil, huma.Error500InternalServerError("failed to preserve existing secrets", err)
 	}
 
+	// Validate the settings structure before storing.
+	if err := service.ValidateSSOSettings(body); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+
 	ws, err := h.wsRepo.UpdateSSOSettings(ctx, input.WorkspaceID, body)
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, huma.Error404NotFound("workspace not found")

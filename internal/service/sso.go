@@ -96,6 +96,62 @@ func parseWorkspaceSSOSettings(raw map[string]any) ([]SSOProviderConfig, error) 
 	return ws.Providers, nil
 }
 
+// ValidateSSOSettings validates the SSO settings structure before storing.
+func ValidateSSOSettings(raw map[string]any) error {
+	if raw == nil {
+		return nil
+	}
+	providersRaw, ok := raw["providers"]
+	if !ok {
+		return nil
+	}
+	b, err := json.Marshal(providersRaw)
+	if err != nil {
+		return fmt.Errorf("invalid providers format")
+	}
+	var providers []SSOProviderConfig
+	if err := json.Unmarshal(b, &providers); err != nil {
+		return fmt.Errorf("invalid providers format: %w", err)
+	}
+
+	seenIDs := make(map[string]bool, len(providers))
+	for i, p := range providers {
+		if p.ID == "" {
+			return fmt.Errorf("provider %d: id is required", i)
+		}
+		if seenIDs[p.ID] {
+			return fmt.Errorf("duplicate provider id: %q", p.ID)
+		}
+		seenIDs[p.ID] = true
+
+		if p.Type != "" && p.Type != "oidc" {
+			return fmt.Errorf("provider %q: unsupported type %q", p.ID, p.Type)
+		}
+		if p.ClientID == "" {
+			return fmt.Errorf("provider %q: client_id is required", p.ID)
+		}
+		// Manual mode requires all three endpoints.
+		if p.AuthEndpoint != "" || p.TokenEndpoint != "" || p.JwksURL != "" {
+			if p.AuthEndpoint == "" || p.TokenEndpoint == "" || p.JwksURL == "" {
+				return fmt.Errorf("provider %q: manual mode requires auth_endpoint, token_endpoint, and jwks_uri together", p.ID)
+			}
+		} else if p.Issuer == "" {
+			return fmt.Errorf("provider %q: issuer is required (or use manual endpoints)", p.ID)
+		}
+		// Validate default_role if set.
+		if p.DefaultRole != "" && !validProvisionRoles[p.DefaultRole] {
+			return fmt.Errorf("provider %q: default_role must be ADMIN or MEMBER, got %q", p.ID, p.DefaultRole)
+		}
+		// Validate role_mapping values.
+		for claim, role := range p.RoleMapping {
+			if !validProvisionRoles[model.WorkspaceRole(role)] {
+				return fmt.Errorf("provider %q: role_mapping[%q] must be ADMIN or MEMBER, got %q", p.ID, claim, role)
+			}
+		}
+	}
+	return nil
+}
+
 // SSOService orchestrates workspace SSO flows.
 // It is provider-agnostic: concrete backends are instantiated by newProvider.
 type SSOService struct {
@@ -240,6 +296,13 @@ func (s *SSOService) ConsumeState(ctx context.Context, state string) (gateID, wo
 	return stateData.GateID, stateData.WorkspaceID
 }
 
+// validProvisionRoles are the roles that SSO auto-provisioning may assign.
+// OWNER is excluded — it must be granted manually.
+var validProvisionRoles = map[model.WorkspaceRole]bool{
+	model.RoleAdmin:  true,
+	model.RoleMember: true,
+}
+
 // resolveOrProvision finds or creates the workspace membership for a verified SSO identity.
 func (s *SSOService) resolveOrProvision(ctx context.Context, workspaceID uuid.UUID, cfg *SSOProviderConfig, identity *SSOIdentity) (*model.WorkspaceMembership, error) {
 	role := cfg.DefaultRole
@@ -249,6 +312,10 @@ func (s *SSOService) resolveOrProvision(ctx context.Context, workspaceID uuid.UU
 				role = model.WorkspaceRole(mapped)
 			}
 		}
+	}
+	// Ensure the resolved role is valid and not an escalation to OWNER.
+	if !validProvisionRoles[role] {
+		role = model.RoleMember
 	}
 
 	existingCred, err := s.memberCreds.FindBySSOIdentity(ctx, workspaceID, identity.Subject)

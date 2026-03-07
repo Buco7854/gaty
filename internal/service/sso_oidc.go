@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -17,6 +19,7 @@ import (
 
 // oidcHTTPClient forces HTTP/1.1 to avoid issues with HTTP/2 on some OIDC providers.
 var oidcHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
 	Transport: &http.Transport{
 		TLSNextProto:    make(map[string]func(string, *tls.Conn) http.RoundTripper),
 		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
@@ -24,8 +27,10 @@ var oidcHTTPClient = &http.Client{
 }
 
 type ssoState struct {
-	GateID      string `json:"gate_id,omitempty"`
-	WorkspaceID string `json:"workspace_id,omitempty"`
+	GateID       string `json:"gate_id,omitempty"`
+	WorkspaceID  string `json:"workspace_id,omitempty"`
+	Nonce        string `json:"nonce,omitempty"`
+	PKCEVerifier string `json:"pkce_verifier,omitempty"`
 }
 
 const (
@@ -135,14 +140,34 @@ func (p *oidcProvider) AuthURL(ctx context.Context, gateID, workspaceID string) 
 	if err != nil {
 		return "", "", fmt.Errorf("generate state: %w", err)
 	}
-	stateJSON, err := json.Marshal(ssoState{GateID: gateID, WorkspaceID: workspaceID})
+	nonce, err := newRandomState()
+	if err != nil {
+		return "", "", fmt.Errorf("generate nonce: %w", err)
+	}
+	pkceVerifier, err := newPKCEVerifier()
+	if err != nil {
+		return "", "", fmt.Errorf("generate PKCE verifier: %w", err)
+	}
+	stateJSON, err := json.Marshal(ssoState{
+		GateID:       gateID,
+		WorkspaceID:  workspaceID,
+		Nonce:        nonce,
+		PKCEVerifier: pkceVerifier,
+	})
 	if err != nil {
 		return "", "", fmt.Errorf("marshal state: %w", err)
 	}
 	if err := p.svc.redis.Set(ctx, ssoStatePrefix+state, string(stateJSON), ssoStateTTL).Err(); err != nil {
 		return "", "", fmt.Errorf("store SSO state: %w", err)
 	}
-	return p.cfg.AuthCodeURL(state, oauth2.AccessTypeOnline), state, nil
+
+	challenge := pkceS256Challenge(pkceVerifier)
+	return p.cfg.AuthCodeURL(state,
+		oauth2.AccessTypeOnline,
+		oauth2.SetAuthURLParam("nonce", nonce),
+		oauth2.SetAuthURLParam("code_challenge", challenge),
+		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
+	), state, nil
 }
 
 func (p *oidcProvider) Exchange(ctx context.Context, code, state string) (*SSOIdentity, string, string, error) {
@@ -154,7 +179,12 @@ func (p *oidcProvider) Exchange(ctx context.Context, code, state string) (*SSOId
 	var stateData ssoState
 	_ = json.Unmarshal([]byte(stateJSON), &stateData)
 
-	token, err := p.cfg.Exchange(ctx, code)
+	// Exchange authorization code with PKCE verifier (RFC 7636).
+	var exchangeOpts []oauth2.AuthCodeOption
+	if stateData.PKCEVerifier != "" {
+		exchangeOpts = append(exchangeOpts, oauth2.SetAuthURLParam("code_verifier", stateData.PKCEVerifier))
+	}
+	token, err := p.cfg.Exchange(ctx, code, exchangeOpts...)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("exchange code: %w", err)
 	}
@@ -167,6 +197,11 @@ func (p *oidcProvider) Exchange(ctx context.Context, code, state string) (*SSOId
 	idToken, err := p.verifier.Verify(ctx, rawIDToken)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("verify id_token: %w", err)
+	}
+
+	// Validate nonce to prevent ID token replay attacks (OIDC Core 3.1.3.7).
+	if stateData.Nonce != "" && idToken.Nonce != stateData.Nonce {
+		return nil, "", "", fmt.Errorf("nonce mismatch: possible replay attack")
 	}
 
 	var claims map[string]any
@@ -191,4 +226,19 @@ func newRandomState() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// newPKCEVerifier generates a cryptographically random PKCE code verifier (RFC 7636 §4.1).
+func newPKCEVerifier() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// pkceS256Challenge computes the S256 code challenge for a given verifier (RFC 7636 §4.2).
+func pkceS256Challenge(verifier string) string {
+	h := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(h[:])
 }
