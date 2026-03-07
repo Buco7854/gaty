@@ -74,11 +74,15 @@ type ExprNode struct {
 //
 // Expr is the root of the expression tree. nil means always allowed.
 // Access is granted when Expr evaluates to true. Use a NOT node to invert.
+//
+// MembershipID IS NULL  → workspace schedule (admin-managed, assignable to PINs/members).
+// MembershipID IS NOT NULL → member personal schedule (only usable by that member on their own tokens).
 type AccessSchedule struct {
-	ID          uuid.UUID `json:"id"`
-	WorkspaceID uuid.UUID `json:"workspace_id"`
-	Name        string    `json:"name"`
-	Description *string   `json:"description,omitempty"`
-	Expr        *ExprNode `json:"expr"` // nil = no restriction (always allowed)
-	CreatedAt   time.Time `json:"created_at"`
+	ID           uuid.UUID  `json:"id"`
+	WorkspaceID  uuid.UUID  `json:"workspace_id"`
+	MembershipID *uuid.UUID `json:"membership_id,omitempty"`
+	Name         string     `json:"name"`
+	Description  *string    `json:"description,omitempty"`
+	Expr         *ExprNode  `json:"expr"` // nil = no restriction (always allowed)
+	CreatedAt    time.Time  `json:"created_at"`
 }

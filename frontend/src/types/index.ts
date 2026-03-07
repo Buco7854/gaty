@@ -134,6 +134,8 @@ export interface ExprNode {
 export interface AccessSchedule {
   id: string
   workspace_id: string
+  /** Present only for member personal schedules; absent for workspace-level schedules. */
+  membership_id?: string
   name: string
   description?: string
   expr: ExprNode | null  // null = always allowed

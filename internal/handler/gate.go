@@ -68,22 +68,29 @@ type GateOutput struct {
 	Body *model.Gate
 }
 
+func gateFieldErr(field string, err error) error {
+	return huma.Error400BadRequest("validation failed", &huma.ErrorDetail{
+		Message:  err.Error(),
+		Location: "/body/" + field,
+	})
+}
+
 func (h *GateHandler) Create(ctx context.Context, input *CreateGateInput) (*GateOutput, error) {
 	b := input.Body
 	if err := validateActionConfig("open_config", b.OpenConfig); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, gateFieldErr("open_config", err)
 	}
 	if err := validateActionConfig("close_config", b.CloseConfig); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, gateFieldErr("close_config", err)
 	}
 	if err := validateStatusActionConfig(b.StatusConfig); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, gateFieldErr("status_config", err)
 	}
 	if err := validateCustomStatuses(b.CustomStatuses); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, gateFieldErr("custom_statuses", err)
 	}
 	if err := validateStatusRules(b.StatusRules, b.CustomStatuses); err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, gateFieldErr("status_rules", err)
 	}
 	gate, err := h.gates.Create(ctx, input.WorkspaceID, service.CreateGateParams{
 		Name:              input.Body.Name,
@@ -145,27 +152,27 @@ func (h *GateHandler) Update(ctx context.Context, input *UpdateGateInput) (*Gate
 	b := input.Body
 	if b.OpenConfig.Sent && !b.OpenConfig.Null {
 		if err := validateActionConfig("open_config", &b.OpenConfig.Value); err != nil {
-			return nil, huma.Error400BadRequest(err.Error())
+			return nil, gateFieldErr("open_config", err)
 		}
 	}
 	if b.CloseConfig.Sent && !b.CloseConfig.Null {
 		if err := validateActionConfig("close_config", &b.CloseConfig.Value); err != nil {
-			return nil, huma.Error400BadRequest(err.Error())
+			return nil, gateFieldErr("close_config", err)
 		}
 	}
 	if b.StatusConfig.Sent && !b.StatusConfig.Null {
 		if err := validateStatusActionConfig(&b.StatusConfig.Value); err != nil {
-			return nil, huma.Error400BadRequest(err.Error())
+			return nil, gateFieldErr("status_config", err)
 		}
 	}
 	if b.CustomStatuses != nil {
 		if err := validateCustomStatuses(b.CustomStatuses); err != nil {
-			return nil, huma.Error400BadRequest(err.Error())
+			return nil, gateFieldErr("custom_statuses", err)
 		}
 	}
 	if b.StatusRules != nil {
 		if err := validateStatusRules(b.StatusRules, b.CustomStatuses); err != nil {
-			return nil, huma.Error400BadRequest(err.Error())
+			return nil, gateFieldErr("status_rules", err)
 		}
 	}
 	gate, err := h.gates.Update(ctx, input.GateID, input.WorkspaceID, service.UpdateGateParams{

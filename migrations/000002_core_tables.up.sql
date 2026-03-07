@@ -100,16 +100,20 @@ CREATE INDEX idx_membership_creds_type ON membership_credentials(membership_id, 
 -- expr is a JSONB boolean expression tree (ExprNode). NULL means always allowed.
 -- Nodes: { "op":"and"|"or"|"not", "children":[...] } or { "op":"rule", "rule":{...} }
 -- Access is granted when expr evaluates to true. Use NOT node to invert.
+-- membership_id IS NULL  → workspace schedule (admin-managed, shared, assignable to pins/members)
+-- membership_id IS NOT NULL → member schedule (personal, only usable by that member on their own tokens)
 CREATE TABLE access_schedules (
-    id           UUID        PRIMARY KEY DEFAULT uuidv7(),
-    workspace_id UUID        NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    name         TEXT        NOT NULL,
-    description  TEXT,
-    expr         JSONB,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id            UUID        PRIMARY KEY DEFAULT uuidv7(),
+    workspace_id  UUID        NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    membership_id UUID        REFERENCES workspace_memberships(id) ON DELETE CASCADE,
+    name          TEXT        NOT NULL,
+    description   TEXT,
+    expr          JSONB,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_access_schedules_workspace ON access_schedules(workspace_id);
+CREATE INDEX idx_access_schedules_workspace   ON access_schedules(workspace_id);
+CREATE INDEX idx_access_schedules_membership  ON access_schedules(membership_id) WHERE membership_id IS NOT NULL;
 
 -- Access codes for gates (PINs and passwords, separate concept from user/member credentials)
 CREATE TABLE gate_access_codes (
@@ -188,10 +192,10 @@ ALTER TABLE gates
     ADD COLUMN close_config  JSONB,
     ADD COLUMN status_config JSONB;
 
--- Migrate existing MQTT gates: open and status use MQTT by default
+-- Migrate existing MQTT gates: open and status use MQTT_GATIE by default
 UPDATE gates
-SET open_config   = '{"type": "MQTT"}'::jsonb,
-    status_config = '{"type": "MQTT"}'::jsonb
+SET open_config   = '{"type": "MQTT_GATIE"}'::jsonb,
+    status_config = '{"type": "MQTT_GATIE"}'::jsonb
 WHERE integration_type = 'MQTT';
 
 -- Gate token: unique authentication token per gate.
