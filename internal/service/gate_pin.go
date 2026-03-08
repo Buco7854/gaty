@@ -14,14 +14,14 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// Default PIN rate-limit and timing constants.
+// These can be overridden at construction time via GatePinConfig.
 const (
-	maxPINAttempts     = 5
-	maxGatePINAttempts = 50
-	pinRateLimitTTL    = 15 * time.Minute
-
-	// MinUnlockDuration is the minimum response time for unlock endpoints.
-	// Enforced in the handler to prevent timing attacks on PIN validation.
-	MinUnlockDuration = 400 * time.Millisecond
+	DefaultMaxPINAttempts     = 5
+	DefaultMaxGatePINAttempts = 50
+	DefaultPINRateLimitTTL    = 15 * time.Minute
+	DefaultMinUnlockDuration  = 400 * time.Millisecond
+	DefaultPINMinLength       = 4
 )
 
 var (
@@ -71,6 +71,15 @@ type OpenResult struct {
 	Permissions []string
 }
 
+// GatePinConfig groups tuneable parameters for the PIN service.
+type GatePinConfig struct {
+	MaxAttempts     int64
+	MaxGateAttempts int64
+	RateLimitTTL    time.Duration
+	MinUnlockDuration time.Duration
+	PINMinLength    int
+}
+
 type GatePinService struct {
 	pins      repository.GatePinRepository
 	gates     repository.GateRepository
@@ -78,6 +87,12 @@ type GatePinService struct {
 	auth      *AuthService
 	trigger   GateTriggerFn
 	redis     *redis.Client
+	cfg       GatePinConfig
+}
+
+// MinUnlockDuration returns the configured minimum response time for unlock endpoints.
+func (s *GatePinService) MinUnlockDuration() time.Duration {
+	return s.cfg.MinUnlockDuration
 }
 
 func NewGatePinService(
@@ -87,7 +102,23 @@ func NewGatePinService(
 	auth *AuthService,
 	trigger GateTriggerFn,
 	redis *redis.Client,
+	cfg GatePinConfig,
 ) *GatePinService {
+	if cfg.MaxAttempts <= 0 {
+		cfg.MaxAttempts = DefaultMaxPINAttempts
+	}
+	if cfg.MaxGateAttempts <= 0 {
+		cfg.MaxGateAttempts = DefaultMaxGatePINAttempts
+	}
+	if cfg.RateLimitTTL <= 0 {
+		cfg.RateLimitTTL = DefaultPINRateLimitTTL
+	}
+	if cfg.MinUnlockDuration <= 0 {
+		cfg.MinUnlockDuration = DefaultMinUnlockDuration
+	}
+	if cfg.PINMinLength <= 0 {
+		cfg.PINMinLength = DefaultPINMinLength
+	}
 	return &GatePinService{
 		pins:      pins,
 		gates:     gates,
@@ -95,6 +126,7 @@ func NewGatePinService(
 		auth:      auth,
 		trigger:   trigger,
 		redis:     redis,
+		cfg:       cfg,
 	}
 }
 
@@ -104,8 +136,8 @@ func (s *GatePinService) Create(ctx context.Context, gateID uuid.UUID, params Cr
 		codeType = "pin"
 	}
 	if codeType == "pin" {
-		if len(params.PIN) < 4 {
-			return nil, fmt.Errorf("pin code must be at least 4 digits")
+		if len(params.PIN) < s.cfg.PINMinLength {
+			return nil, fmt.Errorf("pin code must be at least %d digits", s.cfg.PINMinLength)
 		}
 		for _, ch := range params.PIN {
 			if ch < '0' || ch > '9' {
@@ -256,14 +288,14 @@ func (s *GatePinService) validatePIN(ctx context.Context, gateID uuid.UUID, pin,
 	gateKey := fmt.Sprintf("rl:unlock:gate:%s", gateID)
 	pipe := s.redis.TxPipeline()
 	incrIPCmd := pipe.Incr(ctx, ipKey)
-	pipe.ExpireNX(ctx, ipKey, pinRateLimitTTL)
+	pipe.ExpireNX(ctx, ipKey, s.cfg.RateLimitTTL)
 	incrGateCmd := pipe.Incr(ctx, gateKey)
-	pipe.ExpireNX(ctx, gateKey, pinRateLimitTTL)
+	pipe.ExpireNX(ctx, gateKey, s.cfg.RateLimitTTL)
 	if _, err := pipe.Exec(ctx); err != nil {
 		slog.Error("pin validate: redis rate limit unavailable, denying request", "error", err)
 		return nil, pinMetadata{}, ErrTooManyAttempts
 	}
-	if incrIPCmd.Val() > maxPINAttempts || incrGateCmd.Val() > maxGatePINAttempts {
+	if incrIPCmd.Val() > s.cfg.MaxAttempts || incrGateCmd.Val() > s.cfg.MaxGateAttempts {
 		return nil, pinMetadata{}, ErrTooManyAttempts
 	}
 

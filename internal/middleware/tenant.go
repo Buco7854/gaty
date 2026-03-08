@@ -25,22 +25,25 @@ const (
 	TenantTypeGate      = "GATE"
 )
 
-// tenant cache keys and TTLs.
-// A negative-result TTL of 30s prevents repeated DB hits for regular API clients
-// whose Host header is never a custom domain.
 const (
-	tenantCachePrefix      = "tenant:domain:"
-	tenantCacheTTL         = 5 * time.Minute  // found + verified
-	tenantCacheNotFoundTTL = 30 * time.Second // not found or not yet verified
-	tenantCacheNotFound    = "\x00"           // sentinel stored for negative results
+	tenantCachePrefix   = "tenant:domain:"
+	tenantCacheNotFound = "\x00" // sentinel stored for negative results
 )
 
 // TenantResolver is a chi middleware that resolves the custom domain from the Host header.
 // On a cache hit (Redis), the domain→gate mapping is served without a DB round-trip.
 // On a cache miss it queries the DB and caches the result for subsequent requests.
 //
+// cacheTTL is the TTL for verified domain entries (default 5 min).
+// notFoundTTL is the TTL for negative-result entries (default 30 s).
 // redisClient may be nil — the middleware falls back to DB-only mode.
-func TenantResolver(pool *pgxpool.Pool, redisClient *redis.Client) func(http.Handler) http.Handler {
+func TenantResolver(pool *pgxpool.Pool, redisClient *redis.Client, cacheTTL, notFoundTTL time.Duration) func(http.Handler) http.Handler {
+	if cacheTTL <= 0 {
+		cacheTTL = 5 * time.Minute
+	}
+	if notFoundTTL <= 0 {
+		notFoundTTL = 30 * time.Second
+	}
 	domainRepo := repopg.NewCustomDomainRepository(pool)
 
 	return func(next http.Handler) http.Handler {
@@ -70,14 +73,14 @@ func TenantResolver(pool *pgxpool.Pool, redisClient *redis.Client) func(http.Han
 			case err == nil && d.IsVerified():
 				gateIDStr := d.GateID.String()
 				if redisClient != nil {
-					_ = redisClient.Set(context.Background(), cacheKey, gateIDStr, tenantCacheTTL).Err()
+					_ = redisClient.Set(context.Background(), cacheKey, gateIDStr, cacheTTL).Err()
 				}
 				r = injectGateTenant(r, gateIDStr)
 
 			case errors.Is(err, repository.ErrNotFound) || (err == nil && !d.IsVerified()):
 				// Cache negative result briefly to avoid hammering DB on every normal API request.
 				if redisClient != nil {
-					_ = redisClient.Set(context.Background(), cacheKey, tenantCacheNotFound, tenantCacheNotFoundTTL).Err()
+					_ = redisClient.Set(context.Background(), cacheKey, tenantCacheNotFound, notFoundTTL).Err()
 				}
 
 			default:

@@ -6,6 +6,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/Buco7854/gatie/internal/model"
 	internalmqtt "github.com/Buco7854/gatie/internal/mqtt"
@@ -19,23 +20,25 @@ type Driver interface {
 
 // NewOpenDriver builds the driver to use for opening a gate.
 // Returns a NoopDriver if open_config is nil (no action configured).
-func NewOpenDriver(gate *model.Gate, mqtt *internalmqtt.Client) (Driver, error) {
+// httpClient must be built via NewHTTPClient to guarantee SSRF protection.
+func NewOpenDriver(gate *model.Gate, mqtt *internalmqtt.Client, httpClient *http.Client) (Driver, error) {
 	if gate.OpenConfig == nil {
 		return &NoopDriver{}, nil
 	}
-	return newDriver(gate.OpenConfig, "open", mqtt)
+	return newDriver(gate.OpenConfig, "open", mqtt, httpClient)
 }
 
 // NewCloseDriver builds the driver for closing a gate.
 // Returns a NoopDriver if close_config is nil (no action configured).
-func NewCloseDriver(gate *model.Gate, mqtt *internalmqtt.Client) (Driver, error) {
+// httpClient must be built via NewHTTPClient to guarantee SSRF protection.
+func NewCloseDriver(gate *model.Gate, mqtt *internalmqtt.Client, httpClient *http.Client) (Driver, error) {
 	if gate.CloseConfig == nil {
 		return &NoopDriver{}, nil
 	}
-	return newDriver(gate.CloseConfig, "close", mqtt)
+	return newDriver(gate.CloseConfig, "close", mqtt, httpClient)
 }
 
-func newDriver(cfg *model.ActionConfig, defaultAction string, mqtt *internalmqtt.Client) (Driver, error) {
+func newDriver(cfg *model.ActionConfig, defaultAction string, mqtt *internalmqtt.Client, httpClient *http.Client) (Driver, error) {
 	switch cfg.Type {
 	case model.DriverTypeMQTTGatie:
 		// MQTT_GATIE: Gaty native protocol, sends {"action":"open|close"}.
@@ -51,7 +54,7 @@ func newDriver(cfg *model.ActionConfig, defaultAction string, mqtt *internalmqtt
 		payload, _ := cfg.Config["payload"].(map[string]any)
 		return &MQTTCustomDriver{client: mqtt, payload: payload}, nil
 	case model.DriverTypeHTTP:
-		return NewHTTPDriver(cfg.Config)
+		return NewHTTPDriver(cfg.Config, httpClient)
 	case model.DriverTypeNone:
 		return &NoopDriver{}, nil
 	default:

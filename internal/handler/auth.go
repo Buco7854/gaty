@@ -25,7 +25,7 @@ func setAuthCookies(tokens *service.TokenPair, secure bool) [2]string {
 	if secure {
 		secureFlag = "; Secure"
 	}
-	accessMaxAge := int(service.AccessTokenTTL.Seconds())
+	accessMaxAge := int(tokens.AccessTokenTTL.Seconds())
 	refreshMaxAge := int(tokens.SessionDuration.Seconds())
 	if refreshMaxAge <= 0 {
 		// "infinite" session: cap cookie at 90 days (browser max varies).

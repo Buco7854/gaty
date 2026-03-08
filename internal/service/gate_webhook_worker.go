@@ -19,21 +19,6 @@ import (
 
 const webhookCheckInterval = 10 * time.Second
 
-// webhookHTTPClient is a dedicated client for outbound webhook status polls.
-var webhookHTTPClient = &http.Client{
-	Transport: &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   5 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		TLSHandshakeTimeout:   5 * time.Second,
-		ResponseHeaderTimeout: 10 * time.Second,
-		MaxIdleConns:          32,
-		MaxIdleConnsPerHost:   4,
-		IdleConnTimeout:       90 * time.Second,
-	},
-}
-
 // GateWebhookWorker periodically polls all HTTP_WEBHOOK-configured gates for their status.
 // It respects the per-gate interval_seconds setting and retries failed requests according
 // to the global max_retries / retry_delay configuration.
@@ -42,15 +27,33 @@ type GateWebhookWorker struct {
 	redis      *redis.Client
 	maxRetries int
 	retryDelay time.Duration
+	httpClient *http.Client
 }
 
 // NewGateWebhookWorker creates a worker with the given retry settings.
-func NewGateWebhookWorker(gates repository.GateRepository, redis *redis.Client, maxRetries int, retryDelay time.Duration) *GateWebhookWorker {
+// httpClient should be built with SSRF protection; pass nil to use a safe default.
+func NewGateWebhookWorker(gates repository.GateRepository, redis *redis.Client, maxRetries int, retryDelay time.Duration, httpClient *http.Client) *GateWebhookWorker {
+	if httpClient == nil {
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout:   5 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				TLSHandshakeTimeout:   5 * time.Second,
+				ResponseHeaderTimeout: 10 * time.Second,
+				MaxIdleConns:          32,
+				MaxIdleConnsPerHost:   4,
+				IdleConnTimeout:       90 * time.Second,
+			},
+		}
+	}
 	return &GateWebhookWorker{
 		gates:      gates,
 		redis:      redis,
 		maxRetries: maxRetries,
 		retryDelay: retryDelay,
+		httpClient: httpClient,
 	}
 }
 
@@ -179,7 +182,7 @@ func (w *GateWebhookWorker) fetchWithRetry(ctx context.Context, method, url stri
 			}
 		}
 
-		result, err := fetchJSON(ctx, method, url, headers, body)
+		result, err := fetchJSON(ctx, w.httpClient, method, url, headers, body)
 		if err == nil {
 			return result, nil
 		}
@@ -189,7 +192,7 @@ func (w *GateWebhookWorker) fetchWithRetry(ctx context.Context, method, url stri
 	return nil, fmt.Errorf("all %d attempts failed: %w", w.maxRetries+1, lastErr)
 }
 
-func fetchJSON(ctx context.Context, method, url string, headers map[string]string, body string) (map[string]any, error) {
+func fetchJSON(ctx context.Context, client *http.Client, method, url string, headers map[string]string, body string) (map[string]any, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -209,7 +212,7 @@ func fetchJSON(ctx context.Context, method, url string, headers map[string]strin
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := webhookHTTPClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request: %w", err)
 	}
