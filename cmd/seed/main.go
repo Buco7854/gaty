@@ -121,23 +121,83 @@ func main() {
 	gateID2, _ := g2["id"].(string)
 	slog.Info("gate créée", "name", "Garage", "id", gateID2)
 
+	// ── 6. Gate 3 : Interphone — MQTT_GATIE ──────────────────────────────────
+	// Protocole natif Gaty : commandes {"action":"open|close"}, status {"token":"...","status":"..."}.
+	// Compatible avec gatesim --mode=mqtt.
+	g3 := c.must(http.MethodPost, fmt.Sprintf("/api/workspaces/%s/gates", wsID), map[string]any{
+		"name":             "Interphone",
+		"integration_type": "MQTT",
+		"open_config":      map[string]any{"type": "MQTT_GATIE"},
+		"close_config":     map[string]any{"type": "MQTT_GATIE"},
+		"status_config":    map[string]any{"type": "MQTT_GATIE"},
+	}, http.StatusCreated)
+	token3, _ := g3["gate_token"].(string)
+	gateID3, _ := g3["id"].(string)
+	slog.Info("gate créée", "name", "Interphone", "id", gateID3)
+
+	// ── 7. Gate 4 : Barrière — MQTT_CUSTOM ───────────────────────────────────
+	// Device tiers qui envoie {"state":"open","voltage":12.3,"temp":22.5}.
+	// Commandes open/close publient un payload JSON personnalisé.
+	g4 := c.must(http.MethodPost, fmt.Sprintf("/api/workspaces/%s/gates", wsID), map[string]any{
+		"name":             "Barrière",
+		"integration_type": "MQTT",
+		"open_config": map[string]any{
+			"type":   "MQTT_CUSTOM",
+			"config": map[string]any{"payload": map[string]any{"cmd": "OPEN"}},
+		},
+		"close_config": map[string]any{
+			"type":   "MQTT_CUSTOM",
+			"config": map[string]any{"payload": map[string]any{"cmd": "CLOSE"}},
+		},
+		"status_config": map[string]any{
+			"type": "MQTT_CUSTOM",
+			"config": map[string]any{
+				"mapping": map[string]any{
+					"status": map[string]any{"field": "state"},
+				},
+			},
+		},
+		"meta_config": []map[string]any{
+			{"key": "voltage", "label": "Tension batterie", "unit": "V"},
+			{"key": "temp", "label": "Température", "unit": "°C"},
+		},
+	}, http.StatusCreated)
+	token4, _ := g4["gate_token"].(string)
+	gateID4, _ := g4["id"].(string)
+	slog.Info("gate créée", "name", "Barrière", "id", gateID4)
+
 	// ── Résumé ────────────────────────────────────────────────────────────────
 	fmt.Println()
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println("  DONNÉES DÉMO CRÉÉES")
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	fmt.Printf("  Email    : %s\n", demoEmail)
-	fmt.Printf("  Mot de passe : %s\n", demoPassword)
-	fmt.Printf("  Workspace  : Demo (%s)\n", wsID)
+	fmt.Printf("  Email       : %s\n", demoEmail)
+	fmt.Printf("  Mot de passe: %s\n", demoPassword)
+	fmt.Printf("  Workspace   : Demo (%s)\n", wsID)
 	fmt.Println()
-	fmt.Printf("  [1] Portail Principal  id=%s\n", gateID1)
+	fmt.Printf("  [1] Portail Principal  (HTTP_INBOUND)  id=%s\n", gateID1)
 	fmt.Printf("      token : %s\n", token1)
 	fmt.Println()
-	fmt.Printf("  [2] Garage             id=%s\n", gateID2)
+	fmt.Printf("  [2] Garage             (NONE)          id=%s\n", gateID2)
 	fmt.Printf("      token : %s\n", token2)
 	fmt.Println()
-	fmt.Println("  Simuler le portail (HTTP_INBOUND, pousse des statuts) :")
+	fmt.Printf("  [3] Interphone         (MQTT_GATIE)    id=%s\n", gateID3)
+	fmt.Printf("      token : %s\n", token3)
+	fmt.Println()
+	fmt.Printf("  [4] Barrière           (MQTT_CUSTOM)   id=%s\n", gateID4)
+	fmt.Printf("      token : %s\n", token4)
+	fmt.Println()
+	fmt.Println("  ── Simulation ──────────────────────────────────────────────")
+	fmt.Println()
+	fmt.Println("  [1] HTTP_INBOUND — gatesim pousse les statuts via POST /api/inbound/status :")
 	fmt.Printf("    go run ./cmd/gatesim --mode=http --token=%s\n", token1)
+	fmt.Println()
+	fmt.Println("  [3] MQTT_GATIE — gatesim écoute les commandes et publie les statuts via MQTT :")
+	fmt.Printf("    go run ./cmd/gatesim --mode=mqtt --token=%s\n", token3)
+	fmt.Println()
+	fmt.Println("  [4] MQTT_CUSTOM — publie manuellement sur le broker :")
+	fmt.Printf("    # topic status : workspace_%s/gates/%s/status\n", wsID, gateID4)
+	fmt.Println(`    # payload      : {"token":"<token4>","state":"open","voltage":12.3,"temp":22.5}`)
 	fmt.Println()
 	fmt.Println("  Ouvre l'UI : http://localhost:5173")
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
