@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Buco7854/gatie/internal/middleware"
@@ -15,11 +14,12 @@ import (
 )
 
 type GatePinHandler struct {
-	pins *service.GatePinService
+	pins         *service.GatePinService
+	cookieSecure bool
 }
 
-func NewGatePinHandler(pins *service.GatePinService) *GatePinHandler {
-	return &GatePinHandler{pins: pins}
+func NewGatePinHandler(pins *service.GatePinService, cookieSecure bool) *GatePinHandler {
+	return &GatePinHandler{pins: pins, cookieSecure: cookieSecure}
 }
 
 // --- Admin: Create PIN ---
@@ -28,7 +28,7 @@ type CreatePINInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	GateID      uuid.UUID `path:"gate_id"`
 	Body        struct {
-		PIN        string         `json:"pin" minLength:"1"`
+		PIN        string         `json:"pin" minLength:"1" maxLength:"72"`
 		CodeType   string         `json:"code_type,omitempty" enum:"pin,password" default:"pin"`
 		Label      string         `json:"label" minLength:"1" maxLength:"100"`
 		Metadata   map[string]any `json:"metadata,omitempty"`
@@ -49,7 +49,7 @@ func (h *GatePinHandler) CreatePIN(ctx context.Context, input *CreatePINInput) (
 		ScheduleID: input.Body.ScheduleID,
 	})
 	if err != nil {
-		return nil, huma.Error400BadRequest(err.Error())
+		return nil, huma.Error400BadRequest("invalid pin configuration")
 	}
 	return &GatePinOutput{Body: pin}, nil
 }
@@ -159,7 +159,7 @@ func (h *GatePinHandler) DeletePIN(ctx context.Context, input *DeletePINInput) (
 type UnlockInput struct {
 	Body struct {
 		GateID uuid.UUID `json:"gate_id"`
-		PIN    string    `json:"pin" minLength:"1"`
+		PIN    string    `json:"pin" minLength:"1" maxLength:"72"`
 	}
 }
 
@@ -180,14 +180,17 @@ func (h *GatePinHandler) Unlock(ctx context.Context, input *UnlockInput) (*struc
 type OpenGateInput struct {
 	Body struct {
 		GateID uuid.UUID `json:"gate_id"`
-		PIN    string    `json:"pin" minLength:"1"`
+		PIN    string    `json:"pin" minLength:"1" maxLength:"72"`
 	}
 }
 
 type OpenGateOutput struct {
-	Body struct {
-		// Session is nil for one-shot PINs; populated for session PINs.
-		Session *service.TokenPair `json:"session,omitempty"`
+	SetCookie  string `header:"Set-Cookie"`
+	SetCookie2 string `header:"Set-Cookie2"`
+	Body       struct {
+		HasSession  bool     `json:"has_session"`
+		GateID      string   `json:"gate_id,omitempty"`
+		Permissions []string `json:"permissions,omitempty"`
 	}
 }
 
@@ -205,21 +208,31 @@ func (h *GatePinHandler) OpenGate(ctx context.Context, input *OpenGateInput) (*O
 		return nil, mapPINError(err)
 	}
 	out := &OpenGateOutput{}
-	out.Body.Session = result.Tokens
+	if result.Tokens != nil {
+		cookies := setAuthCookies(result.Tokens, h.cookieSecure)
+		out.SetCookie = cookies[0]
+		out.SetCookie2 = cookies[1]
+		out.Body.HasSession = true
+		out.Body.GateID = input.Body.GateID.String()
+		out.Body.Permissions = result.Permissions
+	}
 	return out, nil
 }
 
-// --- Public: Trigger (use stored pin_session JWT) ---
+// --- Public: Trigger (use stored pin_session cookie) ---
 
 type PublicTriggerInput struct {
-	Authorization string `header:"Authorization" required:"true"`
-	Body          struct {
+	AccessCookie string `cookie:"gatie_access"`
+	Body         struct {
 		Action string `json:"action,omitempty" enum:"open,close" default:"open"`
 	}
 }
 
 func (h *GatePinHandler) PublicTrigger(ctx context.Context, input *PublicTriggerInput) (*struct{}, error) {
-	tokenStr := strings.TrimPrefix(input.Authorization, "Bearer ")
+	tokenStr := input.AccessCookie
+	if tokenStr == "" {
+		return nil, huma.Error401Unauthorized("missing session")
+	}
 	action := input.Body.Action
 	if action == "" {
 		action = "open"

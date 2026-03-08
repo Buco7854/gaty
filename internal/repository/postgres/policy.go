@@ -130,6 +130,24 @@ func (r *policyRepository) RevokePermission(ctx context.Context, membershipID, g
 	return nil
 }
 
+func (r *policyRepository) HasPermissionInWorkspace(ctx context.Context, membershipID uuid.UUID, workspaceID uuid.UUID, permCode string) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS(
+			SELECT 1 FROM access_policies ap
+			JOIN gates g ON g.id = ap.gate_id
+			WHERE ap.subject_type = 'membership' AND ap.subject_id = $1
+			  AND g.workspace_id = $2
+			  AND ap.permission_code = $3
+		)`,
+		membershipID, workspaceID, permCode,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check workspace permission: %w", err)
+	}
+	return exists, nil
+}
+
 func (r *policyRepository) SetMemberGateSchedule(ctx context.Context, membershipID, gateID, scheduleID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO schedule_links (subject_type, subject_id, gate_id, schedule_id)

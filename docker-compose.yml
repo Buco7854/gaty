@@ -19,9 +19,13 @@ services:
     image: eclipse-mosquitto:2
     ports:
       - "1883:1883"
+    environment:
+      MQTT_USERNAME: ${MQTT_USERNAME:-gatie}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-gatie}
     volumes:
-      - ./configs/mosquitto.conf:/mosquitto/config/mosquitto.conf
-      - ./configs/mosquitto.acl:/mosquitto/config/mosquitto.acl
+      - ./configs/mosquitto.conf:/mosquitto/host-config/mosquitto.conf:ro
+      - ./configs/mosquitto.acl:/mosquitto/host-config/mosquitto.acl:ro
+    entrypoint: ["/bin/sh", "-c", "cp /mosquitto/host-config/mosquitto.conf /mosquitto/config/ && cp /mosquitto/host-config/mosquitto.acl /mosquitto/config/ && mosquitto_passwd -c -b /mosquitto/config/passwd \"$MQTT_USERNAME\" \"$MQTT_PASSWORD\" && chown mosquitto:mosquitto /mosquitto/config/passwd && chmod 600 /mosquitto/config/passwd && exec /usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf"]
 
   # Caddy reverse proxy with On-Demand TLS for custom gate domains.
   # Uses configs/Caddyfile.prod — set APP_DOMAIN env var before starting.

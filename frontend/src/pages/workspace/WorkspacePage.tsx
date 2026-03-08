@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { gatesApi, policiesApi } from '@/api'
@@ -16,7 +16,6 @@ import { Plus, DoorOpen, Zap, ChevronRight } from 'lucide-react'
 import { notifySuccess, notifyError } from '@/lib/notify'
 import { QueryError } from '@/components/QueryError'
 import { useAuthStore } from '@/store/auth'
-import { findLocalSession } from '@/utils/session'
 
 
 function getStatusColor(status: GateStatus | undefined): string {
@@ -107,14 +106,9 @@ export default function WorkspacePage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { t } = useTranslation()
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
-  const globalAuth = isAuthenticated()
-
-  const localSession = useMemo(
-    () => (!globalAuth ? findLocalSession(wsId!) : null),
-    [wsId, globalAuth]
-  )
-  const localToken = localSession?.access_token
+  const session = useAuthStore((s) => s.session)
+  const globalAuth = session?.type === 'global'
+  const localSession = !globalAuth && session?.type === 'local' ? session : null
 
   const ws = qc.getQueryData<WorkspaceWithRole[]>(['workspaces'])?.find((w) => w.id === wsId)
   const effectiveRole = globalAuth ? ws?.role : localSession?.role
@@ -132,13 +126,13 @@ export default function WorkspacePage() {
     queryKey: ['gates', wsId],
     queryFn: () => gatesApi.list(wsId!),
     refetchInterval: globalAuth ? 15_000 : false,
-    enabled: globalAuth || !!localToken,
+    enabled: globalAuth || !!localSession,
   })
 
   const { data: myPolicies } = useQuery({
     queryKey: ['policies-me', wsId],
     queryFn: () => policiesApi.listMine(wsId!),
-    enabled: !canManage && (globalAuth || !!localToken),
+    enabled: !canManage && (globalAuth || !!localSession),
   })
 
   const canManageGate = (gateId: string) =>

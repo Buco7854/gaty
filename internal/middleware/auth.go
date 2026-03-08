@@ -42,35 +42,59 @@ func ClientIPFromContext(ctx context.Context) string {
 }
 
 // AuthExtractor is a global Huma middleware (applied via api.UseMiddleware).
-// It silently extracts the Bearer token and injects the identity into context.
-// Tries local member token first (has explicit "type":"local" claim), then global user token,
-// then API tokens (gatie_* prefix, SHA-256 hashed and looked up in membership_credentials).
+// It silently extracts authentication and injects the identity into context.
+// Priority: 1) gatie_access cookie (JWT), 2) Authorization: Bearer with gatie_* API token.
 // Always calls next — never rejects on its own.
 func AuthExtractor(authSvc *service.AuthService, memberCredRepo repository.MembershipCredentialRepository, wsRepo repository.WorkspaceRepository) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
-		if token := bearerToken(ctx); token != "" {
-			if memberID, wsID, role, err := authSvc.ValidateMemberToken(token); err == nil {
-				ctx = huma.WithValue(ctx, memberIDKey, memberID)
-				ctx = huma.WithValue(ctx, memberWorkspaceIDKey, wsID)
-				ctx = huma.WithValue(ctx, memberRoleKey, role)
-			} else if userID, err := authSvc.ValidateAccessToken(token); err == nil {
-				ctx = huma.WithValue(ctx, userIDKey, userID)
-			} else if strings.HasPrefix(token, "gatie_") {
-				h := sha256.Sum256([]byte(token))
-				hash := hex.EncodeToString(h[:])
-				if cred, membership, err := memberCredRepo.FindByHashedAPIToken(ctx.Context(), hash); err == nil {
-					ws, wsErr := wsRepo.GetByID(ctx.Context(), membership.WorkspaceID)
-					if wsErr == nil && apiTokenEnabled(membership.AuthConfig, ws.MemberAuthConfig) {
-						ctx = huma.WithValue(ctx, memberIDKey, membership.ID)
-						ctx = huma.WithValue(ctx, memberWorkspaceIDKey, membership.WorkspaceID)
-						ctx = huma.WithValue(ctx, memberRoleKey, membership.Role)
-						ctx = huma.WithValue(ctx, credentialIDKey, cred.ID)
-					}
+		// 1. Try the HttpOnly access cookie (contains JWT for all session types).
+		if token := cookieValue(ctx, "gatie_access"); token != "" {
+			ctx = extractJWT(ctx, authSvc, token)
+		} else if token := bearerToken(ctx); token != "" && strings.HasPrefix(token, "gatie_") {
+			// 2. Fallback: API tokens only (gatie_* prefix, looked up via SHA-256 hash).
+			h := sha256.Sum256([]byte(token))
+			hash := hex.EncodeToString(h[:])
+			if cred, membership, err := memberCredRepo.FindByHashedAPIToken(ctx.Context(), hash); err == nil {
+				ws, wsErr := wsRepo.GetByID(ctx.Context(), membership.WorkspaceID)
+				if wsErr == nil && apiTokenEnabled(membership.AuthConfig, ws.MemberAuthConfig) {
+					ctx = huma.WithValue(ctx, memberIDKey, membership.ID)
+					ctx = huma.WithValue(ctx, memberWorkspaceIDKey, membership.WorkspaceID)
+					ctx = huma.WithValue(ctx, memberRoleKey, membership.Role)
+					ctx = huma.WithValue(ctx, credentialIDKey, cred.ID)
 				}
 			}
 		}
 		next(ctx)
 	}
+}
+
+// extractJWT validates a JWT (local member or global user) and injects identity into context.
+func extractJWT(ctx huma.Context, authSvc *service.AuthService, token string) huma.Context {
+	if memberID, wsID, role, err := authSvc.ValidateMemberToken(token); err == nil {
+		ctx = huma.WithValue(ctx, memberIDKey, memberID)
+		ctx = huma.WithValue(ctx, memberWorkspaceIDKey, wsID)
+		ctx = huma.WithValue(ctx, memberRoleKey, role)
+	} else if userID, err := authSvc.ValidateAccessToken(token); err == nil {
+		ctx = huma.WithValue(ctx, userIDKey, userID)
+	}
+	return ctx
+}
+
+// cookieValue reads a named cookie from the request.
+func cookieValue(ctx huma.Context, name string) string {
+	header := ctx.Header("Cookie")
+	if header == "" {
+		return ""
+	}
+	for _, part := range strings.Split(header, ";") {
+		part = strings.TrimSpace(part)
+		if eq := strings.IndexByte(part, '='); eq > 0 {
+			if part[:eq] == name {
+				return part[eq+1:]
+			}
+		}
+	}
+	return ""
 }
 
 // apiTokenEnabled returns true if API token authentication is allowed for a member.

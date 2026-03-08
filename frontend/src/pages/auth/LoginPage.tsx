@@ -12,7 +12,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const setAuth = useAuthStore((s) => s.setAuth)
+  const setGlobalSession = useAuthStore((s) => s.setGlobalSession)
   const navigate = useNavigate()
   const { t } = useTranslation()
 
@@ -22,7 +22,7 @@ export default function LoginPage() {
     setLoading(true)
     try {
       const data = await authApi.login(email, password)
-      setAuth(data.user, data.access_token, data.refresh_token)
+      setGlobalSession(data.user)
       navigate('/workspaces')
     } catch (err: unknown) {
       setError(extractApiError(err, t('auth.invalidCredentials')))

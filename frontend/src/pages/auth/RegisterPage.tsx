@@ -13,7 +13,7 @@ export default function RegisterPage() {
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const setAuth = useAuthStore((s) => s.setAuth)
+  const setGlobalSession = useAuthStore((s) => s.setGlobalSession)
   const navigate = useNavigate()
   const { t } = useTranslation()
 
@@ -27,7 +27,7 @@ export default function RegisterPage() {
     setLoading(true)
     try {
       const data = await authApi.register(email, password)
-      setAuth(data.user, data.access_token, data.refresh_token)
+      setGlobalSession(data.user)
       navigate('/workspaces')
     } catch (err: unknown) {
       setError(extractApiError(err, t('auth.registrationFailed')))

@@ -210,7 +210,7 @@ func (h *AccessScheduleHandler) GetMine(ctx context.Context, input *SchedulePath
 
 // --- Routes ---
 
-func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsMember func(huma.Context, func(huma.Context)), wsAdmin func(huma.Context, func(huma.Context))) {
+func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsMember func(huma.Context, func(huma.Context)), wsAdmin func(huma.Context, func(huma.Context)), adminOrGateManager func(huma.Context, func(huma.Context))) {
 	// Workspace-level schedules (admin-managed)
 	huma.Register(api, huma.Operation{
 		OperationID:   "schedule-create",
@@ -228,7 +228,7 @@ func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsMember func(huma.
 		Path:        "/api/workspaces/{ws_id}/schedules",
 		Summary:     "List workspace time-restriction schedules",
 		Tags:        []string{"Schedules"},
-		Middlewares: huma.Middlewares{wsMember},
+		Middlewares: huma.Middlewares{adminOrGateManager},
 	}, h.List)
 
 	huma.Register(api, huma.Operation{
@@ -237,7 +237,7 @@ func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsMember func(huma.
 		Path:        "/api/workspaces/{ws_id}/schedules/{schedule_id}",
 		Summary:     "Get a time-restriction schedule",
 		Tags:        []string{"Schedules"},
-		Middlewares: huma.Middlewares{wsMember},
+		Middlewares: huma.Middlewares{adminOrGateManager},
 	}, h.Get)
 
 	huma.Register(api, huma.Operation{
@@ -262,7 +262,7 @@ func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsMember func(huma.
 	huma.Register(api, huma.Operation{
 		OperationID:   "my-schedule-create",
 		Method:        http.MethodPost,
-		Path:          "/api/workspaces/{ws_id}/my-schedules",
+		Path:          "/api/workspaces/{ws_id}/members/me/schedules",
 		Summary:       "Create a personal time-restriction schedule",
 		Tags:          []string{"Schedules"},
 		DefaultStatus: http.StatusCreated,
@@ -272,7 +272,7 @@ func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsMember func(huma.
 	huma.Register(api, huma.Operation{
 		OperationID: "my-schedule-list",
 		Method:      http.MethodGet,
-		Path:        "/api/workspaces/{ws_id}/my-schedules",
+		Path:        "/api/workspaces/{ws_id}/members/me/schedules",
 		Summary:     "List my personal time-restriction schedules",
 		Tags:        []string{"Schedules"},
 		Middlewares: huma.Middlewares{wsMember},
@@ -281,7 +281,7 @@ func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsMember func(huma.
 	huma.Register(api, huma.Operation{
 		OperationID: "my-schedule-get",
 		Method:      http.MethodGet,
-		Path:        "/api/workspaces/{ws_id}/my-schedules/{schedule_id}",
+		Path:        "/api/workspaces/{ws_id}/members/me/schedules/{schedule_id}",
 		Summary:     "Get a personal time-restriction schedule",
 		Tags:        []string{"Schedules"},
 		Middlewares: huma.Middlewares{wsMember},
@@ -290,7 +290,7 @@ func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsMember func(huma.
 	huma.Register(api, huma.Operation{
 		OperationID: "my-schedule-update",
 		Method:      http.MethodPut,
-		Path:        "/api/workspaces/{ws_id}/my-schedules/{schedule_id}",
+		Path:        "/api/workspaces/{ws_id}/members/me/schedules/{schedule_id}",
 		Summary:     "Replace a personal time-restriction schedule",
 		Tags:        []string{"Schedules"},
 		Middlewares: huma.Middlewares{wsMember},
@@ -299,7 +299,7 @@ func (h *AccessScheduleHandler) RegisterRoutes(api huma.API, wsMember func(huma.
 	huma.Register(api, huma.Operation{
 		OperationID: "my-schedule-delete",
 		Method:      http.MethodDelete,
-		Path:        "/api/workspaces/{ws_id}/my-schedules/{schedule_id}",
+		Path:        "/api/workspaces/{ws_id}/members/me/schedules/{schedule_id}",
 		Summary:     "Delete a personal time-restriction schedule",
 		Tags:        []string{"Schedules"},
 		Middlewares: huma.Middlewares{wsMember},

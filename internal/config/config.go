@@ -22,6 +22,13 @@ type Config struct {
 	BaseURL               string        // public base URL of this API, e.g. https://api.example.com
 	FrontendURL           string        // public URL of the frontend SPA, for post-SSO redirects
 	GlobalSessionDuration time.Duration // refresh token TTL for platform users (0 = infinite)
+	CookieSecure          bool          // set Secure flag on auth cookies (true when BASE_URL is https)
+
+	// Password policy
+	PasswordMinLength    int  // minimum password length (default 8)
+	PasswordRequireUpper bool // require uppercase letter (default true)
+	PasswordRequireLower bool // require lowercase letter (default true)
+	PasswordRequireDigit bool // require digit (default true)
 
 	// Webhook poller settings (HTTP_WEBHOOK status mode).
 	WebhookMaxRetries int           // max retry attempts per poll (default 3)
@@ -66,9 +73,19 @@ func Load() (*Config, error) {
 	if cfg.JWTSecret == "" {
 		return nil, fmt.Errorf("JWT_SECRET is required")
 	}
+	if len(cfg.JWTSecret) < 32 {
+		return nil, fmt.Errorf("JWT_SECRET must be at least 32 characters")
+	}
 
 	if v := os.Getenv("CORS_ORIGINS"); v != "" {
-		cfg.CORSOrigins = strings.Split(v, ",")
+		origins := strings.Split(v, ",")
+		for _, o := range origins {
+			o = strings.TrimSpace(o)
+			if o == "*" {
+				return nil, fmt.Errorf("CORS_ORIGINS must not contain wildcard '*' (credentials mode requires explicit origins)")
+			}
+		}
+		cfg.CORSOrigins = origins
 	}
 
 	cfg.BaseURL = os.Getenv("BASE_URL")
@@ -79,6 +96,30 @@ func Load() (*Config, error) {
 	cfg.FrontendURL = os.Getenv("FRONTEND_URL")
 	if cfg.FrontendURL == "" {
 		cfg.FrontendURL = "http://localhost:5173"
+	}
+
+	cfg.CookieSecure = strings.HasPrefix(cfg.BaseURL, "https://")
+
+	// Password policy: defaults are strict; relax via env vars.
+	cfg.PasswordMinLength = 8
+	cfg.PasswordRequireUpper = true
+	cfg.PasswordRequireLower = true
+	cfg.PasswordRequireDigit = true
+	if v := os.Getenv("AUTH_PASSWORD_MIN_LENGTH"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid AUTH_PASSWORD_MIN_LENGTH: %w", err)
+		}
+		cfg.PasswordMinLength = n
+	}
+	if v := os.Getenv("AUTH_PASSWORD_REQUIRE_UPPER"); v != "" {
+		cfg.PasswordRequireUpper = v == "true" || v == "1"
+	}
+	if v := os.Getenv("AUTH_PASSWORD_REQUIRE_LOWER"); v != "" {
+		cfg.PasswordRequireLower = v == "true" || v == "1"
+	}
+	if v := os.Getenv("AUTH_PASSWORD_REQUIRE_DIGIT"); v != "" {
+		cfg.PasswordRequireDigit = v == "true" || v == "1"
 	}
 
 	// AUTH_SESSION_DURATION: refresh token lifetime for platform users, in seconds.

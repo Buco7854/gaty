@@ -29,7 +29,7 @@ type WorkspacePathParam struct {
 
 type CreateWorkspaceInput struct {
 	Body struct {
-		Name string `json:"name" minLength:"1" maxLength:"100"`
+		Name string `json:"name" minLength:"1" maxLength:"100" pattern:"^[\\p{L}\\p{N} _\\-\\.]+$"`
 	}
 }
 
@@ -92,7 +92,7 @@ func (h *WorkspaceHandler) Get(ctx context.Context, input *WorkspacePathParam) (
 type RenameWorkspaceInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	Body        struct {
-		Name string `json:"name" minLength:"1" maxLength:"100"`
+		Name string `json:"name" minLength:"1" maxLength:"100" pattern:"^[\\p{L}\\p{N} _\\-\\.]+$"`
 	}
 }
 

@@ -32,6 +32,7 @@ const fr: Translations = {
     optional: 'optionnel',
     grant: 'Accorder',
     revoke: 'Révoquer',
+    administration: 'Administration',
     saved: 'Enregistré',
     created: 'Créé',
     deleted: 'Supprimé',

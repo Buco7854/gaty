@@ -8,13 +8,12 @@ import { useTranslation } from 'react-i18next'
 import {
   Container, Title, Text, Stack, Paper, Group, Button, TextInput, ActionIcon,
   Badge, Modal, Select, NumberInput, Divider, Alert, Loader, Center,
-  SimpleGrid, SegmentedControl, Checkbox,
+  SimpleGrid, SegmentedControl, Checkbox, Tabs,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { Plus, Trash2, Pencil, CalendarClock, Lock, User } from 'lucide-react'
 import { QueryError } from '@/components/QueryError'
 import { useAuthStore } from '@/store/auth'
-import { findLocalSession } from '@/utils/session'
 
 // 0=Sun, 1=Mon, …, 6=Sat (Go's time.Weekday)
 const WEEKDAY_OPTIONS = [
@@ -530,9 +529,9 @@ export default function SchedulesPage() {
   const qc = useQueryClient()
 
   // Determine current user's role (same pattern as WorkspacePage)
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
-  const globalAuth = isAuthenticated()
-  const localSession = globalAuth ? null : findLocalSession(wsId!)
+  const session = useAuthStore((s) => s.session)
+  const globalAuth = session?.type === 'global'
+  const localSession = !globalAuth && session?.type === 'local' ? session : null
   const ws = qc.getQueryData<WorkspaceWithRole[]>(['workspaces'])?.find((w) => w.id === wsId)
   const effectiveRole = globalAuth ? ws?.role : localSession?.role
   const isAdmin = effectiveRole === 'ADMIN' || effectiveRole === 'OWNER'
@@ -582,25 +581,25 @@ export default function SchedulesPage() {
   const myForm = useScheduleForm()
 
   const { data: mySchedules = [], isLoading: myLoading, isError: myError, error: myErr } = useQuery<AccessSchedule[]>({
-    queryKey: ['my-schedules', wsId],
+    queryKey: ['member-schedules', wsId],
     queryFn: () => schedulesApi.listMine(wsId!),
   })
 
   const myCreateMut = useMutation({
     mutationFn: () => schedulesApi.createMine(wsId!, { name: myForm.name.trim(), description: myForm.description.trim() || undefined, expr: myForm.expr }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['my-schedules', wsId] }); myForm.closeModal() },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['member-schedules', wsId] }); myForm.closeModal() },
     onError: (err) => myForm.setSaveError(extractApiError(err)),
   })
 
   const myUpdateMut = useMutation({
     mutationFn: () => schedulesApi.updateMine(wsId!, myForm.editing!.id, { name: myForm.name.trim(), description: myForm.description.trim() || undefined, expr: myForm.expr }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['my-schedules', wsId] }); myForm.closeModal() },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['member-schedules', wsId] }); myForm.closeModal() },
     onError: (err) => myForm.setSaveError(extractApiError(err)),
   })
 
   const myDeleteMut = useMutation({
     mutationFn: (id: string) => schedulesApi.deleteMine(wsId!, id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['my-schedules', wsId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['member-schedules', wsId] }),
   })
 
   function handleMySave(e: React.FormEvent) {
@@ -612,69 +611,63 @@ export default function SchedulesPage() {
 
   return (
     <Container size="sm" py="xl">
-      <Stack gap="xl">
-
-        {/* My Schedules section */}
+      <Group justify="space-between" mb="md">
         <div>
-          <Group justify="space-between" mb="md">
-            <div>
-              <Group gap="xs" mb={2}>
-                <User size={16} />
-                <Title order={4}>{t('schedules.mySchedulesTitle')}</Title>
-              </Group>
-              <Text size="sm" c="dimmed">{t('schedules.mySchedulesSubtitle')}</Text>
-            </div>
-            <Button leftSection={<Plus size={14} />} size="sm" variant="default" onClick={myForm.openCreate}>
-              {t('schedules.add')}
-            </Button>
-          </Group>
-
-          {myLoading ? (
-            <Center py="md"><Loader size="sm" /></Center>
-          ) : myError ? (
-            <QueryError error={myErr} />
-          ) : mySchedules.length === 0 ? (
-            <Paper withBorder p="lg" radius="md">
-              <Center>
-                <Stack align="center" gap="xs">
-                  <CalendarClock size={28} opacity={0.3} />
-                  <Text c="dimmed" size="sm">{t('schedules.noSchedules')}</Text>
-                  <Text c="dimmed" size="xs">{t('schedules.mySchedulesHint')}</Text>
-                </Stack>
-              </Center>
-            </Paper>
-          ) : (
-            <Stack gap="xs">
-              {mySchedules.map((s) => (
-                <ScheduleCard
-                  key={s.id}
-                  s={s}
-                  onEdit={myForm.openEdit}
-                  onDelete={(id) => myDeleteMut.mutate(id)}
-                  isDeleting={myDeleteMut.isPending}
-                  t={t}
-                />
-              ))}
-            </Stack>
-          )}
+          <Title order={2}>{t('schedules.title')}</Title>
+          <Text size="sm" c="dimmed">{t('schedules.subtitle')}</Text>
         </div>
+      </Group>
 
-        {/* Workspace Schedules section (admin only) */}
-        {isAdmin && (
-          <div>
-            <Group justify="space-between" mb="md">
-              <div>
-                <Group gap="xs" mb={2}>
-                  <Lock size={16} />
-                  <Title order={4}>{t('schedules.workspaceSchedulesTitle')}</Title>
-                </Group>
-                <Text size="sm" c="dimmed">{t('schedules.workspaceSchedulesSubtitle')}</Text>
-              </div>
-              <Button leftSection={<Plus size={14} />} size="sm" onClick={wsForm.openCreate}>
+      <Tabs defaultValue="personal">
+        <Tabs.List mb="lg">
+          <Tabs.Tab value="personal" leftSection={<User size={14} />}>
+            {t('schedules.mySchedulesTitle')}
+          </Tabs.Tab>
+          <Tabs.Tab value="workspace" leftSection={<Lock size={14} />} disabled={!isAdmin}>
+            {t('schedules.workspaceSchedulesTitle')}
+          </Tabs.Tab>
+        </Tabs.List>
+
+        <Tabs.Panel value="personal">
+          <Stack gap="md">
+            <Group justify="space-between">
+              <Text size="sm" c="dimmed">{t('schedules.mySchedulesSubtitle')}</Text>
+              <Button leftSection={<Plus size={14} />} size="sm" variant="default" onClick={myForm.openCreate}>
                 {t('schedules.add')}
               </Button>
             </Group>
+            {myLoading ? (
+              <Center py="md"><Loader size="sm" /></Center>
+            ) : myError ? (
+              <QueryError error={myErr} />
+            ) : mySchedules.length === 0 ? (
+              <Paper withBorder p="lg" radius="md">
+                <Center>
+                  <Stack align="center" gap="xs">
+                    <CalendarClock size={28} opacity={0.3} />
+                    <Text c="dimmed" size="sm">{t('schedules.noSchedules')}</Text>
+                    <Text c="dimmed" size="xs">{t('schedules.mySchedulesHint')}</Text>
+                  </Stack>
+                </Center>
+              </Paper>
+            ) : (
+              <Stack gap="xs">
+                {mySchedules.map((s) => (
+                  <ScheduleCard key={s.id} s={s} onEdit={myForm.openEdit} onDelete={(id) => myDeleteMut.mutate(id)} isDeleting={myDeleteMut.isPending} t={t} />
+                ))}
+              </Stack>
+            )}
+          </Stack>
+        </Tabs.Panel>
 
+        <Tabs.Panel value="workspace">
+          <Stack gap="md">
+            <Group justify="space-between">
+              <Text size="sm" c="dimmed">{t('schedules.workspaceSchedulesSubtitle')}</Text>
+              <Button leftSection={<Plus size={14} />} size="sm" variant="default" onClick={wsForm.openCreate}>
+                {t('schedules.add')}
+              </Button>
+            </Group>
             {wsLoading ? (
               <Center py="md"><Loader size="sm" /></Center>
             ) : wsError ? (
@@ -692,20 +685,13 @@ export default function SchedulesPage() {
             ) : (
               <Stack gap="xs">
                 {wsSchedules.map((s) => (
-                  <ScheduleCard
-                    key={s.id}
-                    s={s}
-                    onEdit={wsForm.openEdit}
-                    onDelete={(id) => wsDeleteMut.mutate(id)}
-                    isDeleting={wsDeleteMut.isPending}
-                    t={t}
-                  />
+                  <ScheduleCard key={s.id} s={s} onEdit={wsForm.openEdit} onDelete={(id) => wsDeleteMut.mutate(id)} isDeleting={wsDeleteMut.isPending} t={t} />
                 ))}
               </Stack>
             )}
-          </div>
-        )}
-      </Stack>
+          </Stack>
+        </Tabs.Panel>
+      </Tabs>
 
       {/* My schedules modal */}
       <ScheduleModal

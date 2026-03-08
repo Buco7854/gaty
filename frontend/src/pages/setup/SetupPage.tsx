@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { TextInput, PasswordInput, Button, Stack, Text, Alert, Title } from '@mantine/core'
 import { AlertCircle } from 'lucide-react'
-import { setupApi, authApi } from '@/api'
+import { setupApi } from '@/api'
 import { useAuthStore } from '@/store/auth'
 import { extractApiError } from '@/lib/notify'
 
@@ -13,7 +13,7 @@ export default function SetupPage() {
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const setAuth = useAuthStore((s) => s.setAuth)
+  const setGlobalSession = useAuthStore((s) => s.setGlobalSession)
   const qc = useQueryClient()
   const { t } = useTranslation()
 
@@ -26,11 +26,8 @@ export default function SetupPage() {
     setError(null)
     setLoading(true)
     try {
-      const tokens = await setupApi.init(email, password)
-      localStorage.setItem('access_token', tokens.access_token)
-      localStorage.setItem('refresh_token', tokens.refresh_token)
-      const user = await authApi.me()
-      setAuth(user, tokens.access_token, tokens.refresh_token)
+      const data = await setupApi.init(email, password)
+      setGlobalSession(data.user)
       qc.setQueryData(['setup-status'], { setup_required: false })
     } catch (err: unknown) {
       setError(extractApiError(err, t('setup.failed')))

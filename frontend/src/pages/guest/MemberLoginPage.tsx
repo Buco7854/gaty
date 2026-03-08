@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router'
 import { publicApi, authApi } from '@/api'
 import type { DomainResolveResult } from '@/types'
-import type { GateSession } from '@/api/public'
-import { getRoleFromJWT } from '@/utils/session'
+import { useAuthStore } from '@/store/auth'
 import { useTranslation } from 'react-i18next'
 import {
   Center, Stack, Group, Text, Title, Loader, Button,
@@ -14,10 +13,6 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
 
 type PageState = 'idle' | 'loading' | 'success' | 'error'
-
-function sessionKey(gateId: string) {
-  return `gatie_session_${gateId}`
-}
 
 export default function MemberLoginPage() {
   const { wsId } = useParams<{ wsId: string }>()
@@ -39,7 +34,6 @@ export default function MemberLoginPage() {
   const [errorMsg, setErrorMsg] = useState(errorParam ? t('pinpad.ssoError') : '')
 
   useEffect(() => {
-    // Always fetch SSO providers using wsId — available immediately from URL params.
     if (wsId) {
       publicApi.ssoProviders(wsId)
         .then((providers) => setSsoProviders(providers))
@@ -52,18 +46,20 @@ export default function MemberLoginPage() {
     }
     publicApi.resolveByGateId(gateId)
       .then((data) => setResolved(data))
-      .catch(() => {/* gate info unavailable, show login form anyway */})
+      .catch(() => {})
       .finally(() => setResolving(false))
   }, [gateId, wsId, navigate])
 
-  function redirectAfterLogin(accessToken: string) {
+  function isSafeRedirect(path: string | null): path is string {
+    return !!path && path.startsWith('/') && !path.startsWith('//')
+  }
+
+  function redirectAfterLogin(role: string) {
     const authState = { state: { justAuthenticated: true } }
-    // Explicit redirect param takes priority
-    if (redirectParam) {
+    if (isSafeRedirect(redirectParam)) {
       navigate(redirectParam, authState)
       return
     }
-    const role = getRoleFromJWT(accessToken)
     if (role === 'ADMIN' || role === 'OWNER') {
       navigate(`/workspaces/${wsId}`, authState)
     } else {
@@ -71,11 +67,11 @@ export default function MemberLoginPage() {
     }
   }
 
-  function showFeedback(result: 'success' | 'error', msg = '', accessToken?: string) {
+  function showFeedback(result: 'success' | 'error', msg = '', role?: string) {
     setState(result)
     setErrorMsg(msg)
-    if (result === 'success' && accessToken) {
-      setTimeout(() => redirectAfterLogin(accessToken), 1500)
+    if (result === 'success' && role) {
+      setTimeout(() => redirectAfterLogin(role), 1500)
     } else if (result === 'error') {
       setTimeout(() => {
         setState('idle')
@@ -89,15 +85,9 @@ export default function MemberLoginPage() {
     if (!resolved || state !== 'idle') return
     setState('loading')
     try {
-      const auth = await authApi.loginLocal(resolved.workspace_id, username, password)
-      const session: GateSession = {
-        type: 'member',
-        access_token: auth.access_token,
-        refresh_token: auth.refresh_token,
-        workspace_id: wsId,
-      }
-      localStorage.setItem(sessionKey(gateId!), JSON.stringify(session))
-      showFeedback('success', '', auth.access_token)
+      const data = await authApi.loginLocal(resolved.workspace_id, username, password)
+      useAuthStore.getState().setLocalSession(data.membership_id, data.workspace_id, data.role, data.display_name)
+      showFeedback('success', '', data.role)
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status
       if (status === 401 || status === 403) showFeedback('error', t('pinpad.invalidCredentials'))
@@ -195,7 +185,7 @@ export default function MemberLoginPage() {
                   type="button"
                   size="xs"
                   c="dimmed"
-                  onClick={() => navigate(redirectParam ?? `/workspaces/${wsId}/gates/${gateId}/public`)}
+                  onClick={() => navigate(isSafeRedirect(redirectParam) ? redirectParam : `/workspaces/${wsId}/gates/${gateId}/public`)}
                 >
                   {t('pinpad.useAnotherMethod')}
                 </Anchor>

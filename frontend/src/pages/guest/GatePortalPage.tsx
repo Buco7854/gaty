@@ -2,9 +2,7 @@ import { useEffect, useRef, useMemo } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { publicApi, policiesApi } from '@/api'
-import type { GateSession } from '@/api/public'
 import type { DomainResolveResult } from '@/types'
-import { getPermissionsFromJWT, getRoleFromJWT } from '@/utils/session'
 import { useTranslation } from 'react-i18next'
 import { notifySuccess, notifyError } from '@/lib/notify'
 import { Center, Stack, Group, Text, Title, Loader, Button, Anchor, Paper, Badge } from '@mantine/core'
@@ -15,10 +13,6 @@ import { LangToggle } from '@/components/LangToggle'
 import { useAuthStore } from '@/store/auth'
 import { useState } from 'react'
 
-/**
- * Resolve a dot-notated key path against a nested object.
- * Flat keys containing dots are tried first for backwards compatibility.
- */
 function getNestedValue(obj: Record<string, unknown>, key: string): unknown {
   if (key in obj) return obj[key]
   if (!key.includes('.')) return undefined
@@ -47,29 +41,26 @@ function getStatusColor(status: GateStatus | undefined): string {
   }
 }
 
-function sessionKey(gateId: string) {
-  return `gatie_session_${gateId}`
-}
-
 export default function GatePortalPage() {
   const { wsId: wsIdParam, gateId: gateIdParam } = useParams<{ wsId?: string; gateId?: string }>()
   const navigate = useNavigate()
   const location = useLocation()
   const { t } = useTranslation()
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const session = useAuthStore((s) => s.session)
+  const clearSession = useAuthStore((s) => s.clearSession)
 
   const [resolving, setResolving] = useState(true)
   const [resolved, setResolved] = useState<DomainResolveResult | null>(null)
 
-  const [session, setSession] = useState<GateSession | null>(null)
   const autoTriggeredRef = useRef(false)
 
-  // Resolve gate info: by gateId param or by custom domain
+  // Resolve gate info
   useEffect(() => {
     if (gateIdParam) {
       publicApi.resolveByGateId(gateIdParam)
         .then((data) => setResolved(data))
-        .catch(() => {/* gate info unavailable, gateIdParam still works for PIN */})
+        .catch(() => {})
         .finally(() => setResolving(false))
       return
     }
@@ -85,48 +76,28 @@ export default function GatePortalPage() {
       .finally(() => setResolving(false))
   }, [gateIdParam])
 
-
   const effectiveGateId = gateIdParam ?? resolved?.gate_id
   const effectiveWsId = wsIdParam ?? resolved?.workspace_id
 
-  // Load stored session
-  useEffect(() => {
-    if (!effectiveGateId) return
-    const raw = localStorage.getItem(sessionKey(effectiveGateId))
-    if (!raw) return
-    try {
-      setSession(JSON.parse(raw) as GateSession)
-    } catch {
-      localStorage.removeItem(sessionKey(effectiveGateId))
-    }
-  }, [effectiveGateId])
-
-  function storeSession(sess: GateSession) {
-    if (!effectiveGateId) return
-    localStorage.setItem(sessionKey(effectiveGateId), JSON.stringify(sess))
-    setSession(sess)
-  }
-
-  function clearSession() {
-    if (!effectiveGateId) return
-    localStorage.removeItem(sessionKey(effectiveGateId))
-    setSession(null)
-    autoTriggeredRef.current = false
-  }
+  // Determine if we have an active session for this gate
+  const hasSession = session?.type === 'pin_session' || session?.type === 'local'
 
   // Permission derivation for member sessions
   const { data: myPolicies } = useQuery({
-    queryKey: ['policies-me', session?.workspace_id],
-    queryFn: () => policiesApi.listMine(session!.workspace_id!),
-    enabled: session?.type === 'member' && !!session.workspace_id,
+    queryKey: ['policies-me', session?.workspaceId],
+    queryFn: () => policiesApi.listMine(session!.workspaceId!),
+    enabled: session?.type === 'local' && !!session.workspaceId,
   })
 
   const permissions = useMemo(() => {
     if (!session) return []
-    if (session.type === 'pin') return getPermissionsFromJWT(session.access_token)
-    return myPolicies
-      ?.filter((p) => p.gate_id === effectiveGateId)
-      .map((p) => p.permission_code) ?? []
+    if (session.type === 'pin_session') return session.permissions ?? []
+    if (session.type === 'local') {
+      return myPolicies
+        ?.filter((p) => p.gate_id === effectiveGateId)
+        .map((p) => p.permission_code) ?? []
+    }
+    return []
   }, [session, myPolicies, effectiveGateId])
 
   const gateHasOpen = resolved?.has_open_action ?? true
@@ -134,11 +105,9 @@ export default function GatePortalPage() {
   const canOpen = permissions.includes('gate:trigger_open') && gateHasOpen
   const canClose = permissions.includes('gate:trigger_close') && gateHasClose
   const canViewStatus = permissions.includes('gate:read_status')
-  const sessionRole = session?.type === 'member' ? getRoleFromJWT(session.access_token) : null
-  const isAdminSession = sessionRole === 'ADMIN' || sessionRole === 'OWNER'
-  const policiesReady = session?.type === 'pin' || !!myPolicies
+  const isAdminSession = session?.type === 'local' && (session.role === 'ADMIN' || session.role === 'OWNER')
+  const policiesReady = session?.type === 'pin_session' || !!myPolicies
 
-  // Build metadata display rows from resolved gate info (mapped fields only on public page)
   const metaRows = useMemo(() => {
     if (!resolved?.status_metadata || !resolved?.meta_config) return []
     const meta = resolved.status_metadata as Record<string, unknown>
@@ -151,30 +120,16 @@ export default function GatePortalPage() {
       }))
   }, [resolved])
 
-  async function triggerWithSession(sess: GateSession, action: 'open' | 'close') {
-    try {
-      if (sess.type === 'pin') {
-        await publicApi.triggerWithPinSession(sess.access_token, action)
-      } else {
-        await publicApi.triggerAsLocal(sess.workspace_id!, effectiveGateId!, sess.access_token, action)
-      }
-    } catch (err: unknown) {
-      const status = (err as { response?: { status?: number } })?.response?.status
-      if (status !== 401) throw err
-      // Try refresh
-      const newTokens = await publicApi.refreshSession(sess.refresh_token)
-      const updated: GateSession = { ...sess, access_token: newTokens.access_token, refresh_token: newTokens.refresh_token }
-      storeSession(updated)
-      if (updated.type === 'pin') {
-        await publicApi.triggerWithPinSession(updated.access_token, action)
-      } else {
-        await publicApi.triggerAsLocal(updated.workspace_id!, effectiveGateId!, updated.access_token, action)
-      }
+  async function triggerGate(action: 'open' | 'close') {
+    if (session?.type === 'pin_session') {
+      await publicApi.triggerWithPinSession(action)
+    } else if (session?.type === 'local' && session.workspaceId && effectiveGateId) {
+      await publicApi.triggerAsLocal(session.workspaceId, effectiveGateId, action)
     }
   }
 
   const triggerMutation = useMutation({
-    mutationFn: (action: 'open' | 'close') => triggerWithSession(session!, action),
+    mutationFn: (action: 'open' | 'close') => triggerGate(action),
     onSuccess: () => {
       notifySuccess(t('pinpad.gateOpened'))
     },
@@ -193,13 +148,13 @@ export default function GatePortalPage() {
   useEffect(() => {
     if (!location.state?.justAuthenticated) return
     if (autoTriggeredRef.current) return
-    if (!session) return
-    if (session.type === 'member' && !myPolicies) return // wait for policies
+    if (!hasSession) return
+    if (session?.type === 'local' && !myPolicies) return
     if (!canOpen) return
     autoTriggeredRef.current = true
     triggerMutation.mutate('open')
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, policiesReady, canOpen])
+  }, [hasSession, policiesReady, canOpen])
 
   function navigateToPin() {
     if (!effectiveGateId || !effectiveWsId) return
@@ -217,6 +172,11 @@ export default function GatePortalPage() {
     navigate(`/workspaces/${effectiveWsId}/login?${params.toString()}`)
   }
 
+  function handleClearSession() {
+    clearSession()
+    autoTriggeredRef.current = false
+  }
+
   if (resolving) {
     return (
       <Center mih="100vh">
@@ -224,7 +184,6 @@ export default function GatePortalPage() {
       </Center>
     )
   }
-
 
   const gateName = resolved?.gate_name ?? 'Gate'
   const isPending = triggerMutation.isPending
@@ -249,12 +208,12 @@ export default function GatePortalPage() {
               )}
             </Group>
             <Text size="sm" c="dimmed">
-              {session ? t('pinpad.sessionActive') : t('pinpad.chooseMethod')}
+              {hasSession ? t('pinpad.sessionActive') : t('pinpad.chooseMethod')}
             </Text>
           </Stack>
 
           {/* Session active: gate controls */}
-          {session && (
+          {hasSession && (
             <Stack align="center" w="100%" gap="sm">
               {canOpen && (
                 <Button
@@ -279,12 +238,12 @@ export default function GatePortalPage() {
                   {t('gates.close')}
                 </Button>
               )}
-              {isAdminSession && session.workspace_id && (
+              {isAdminSession && session?.workspaceId && (
                 <Button
                   variant="subtle"
                   size="xs"
                   leftSection={<LayoutGrid size={14} />}
-                  onClick={() => navigate(`/workspaces/${session.workspace_id}`)}
+                  onClick={() => navigate(`/workspaces/${session.workspaceId}`)}
                 >
                   {t('pinpad.myWorkspace')}
                 </Button>
@@ -307,14 +266,14 @@ export default function GatePortalPage() {
                   </Stack>
                 </Paper>
               )}
-              <Anchor component="button" type="button" size="xs" c="dimmed" onClick={clearSession}>
+              <Anchor component="button" type="button" size="xs" c="dimmed" onClick={handleClearSession}>
                 {t('pinpad.useAnotherMethod')}
               </Anchor>
             </Stack>
           )}
 
           {/* No session: auth options */}
-          {!session && effectiveGateId && (
+          {!hasSession && effectiveGateId && (
             <Stack align="center" w="100%" gap="sm">
               <Button
                 size="lg"

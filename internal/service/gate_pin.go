@@ -67,7 +67,8 @@ type UpdatePINParams struct {
 
 // OpenResult is returned by Open: tokens are nil for a one-shot PIN.
 type OpenResult struct {
-	Tokens *TokenPair
+	Tokens      *TokenPair
+	Permissions []string
 }
 
 type GatePinService struct {
@@ -103,6 +104,9 @@ func (s *GatePinService) Create(ctx context.Context, gateID uuid.UUID, params Cr
 		codeType = "pin"
 	}
 	if codeType == "pin" {
+		if len(params.PIN) < 4 {
+			return nil, fmt.Errorf("pin code must be at least 4 digits")
+		}
 		for _, ch := range params.PIN {
 			if ch < '0' || ch > '9' {
 				return nil, fmt.Errorf("pin code must contain digits only")
@@ -211,7 +215,7 @@ func (s *GatePinService) Open(ctx context.Context, gateID uuid.UUID, pin, ip str
 	}
 
 	s.triggerGate(ctx, gateID)
-	return &OpenResult{Tokens: tokens}, nil
+	return &OpenResult{Tokens: tokens, Permissions: filtered}, nil
 }
 
 // TriggerWithSession validates a pin_session JWT and triggers the requested gate action.
@@ -256,8 +260,10 @@ func (s *GatePinService) validatePIN(ctx context.Context, gateID uuid.UUID, pin,
 	incrGateCmd := pipe.Incr(ctx, gateKey)
 	pipe.ExpireNX(ctx, gateKey, pinRateLimitTTL)
 	if _, err := pipe.Exec(ctx); err != nil {
-		slog.Warn("pin validate: redis rate limit error, continuing without limiting", "error", err)
-	} else if incrIPCmd.Val() > maxPINAttempts || incrGateCmd.Val() > maxGatePINAttempts {
+		slog.Error("pin validate: redis rate limit unavailable, denying request", "error", err)
+		return nil, pinMetadata{}, ErrTooManyAttempts
+	}
+	if incrIPCmd.Val() > maxPINAttempts || incrGateCmd.Val() > maxGatePINAttempts {
 		return nil, pinMetadata{}, ErrTooManyAttempts
 	}
 

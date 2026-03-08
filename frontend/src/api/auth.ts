@@ -1,18 +1,15 @@
 import { api } from '@/lib/api'
-import type { AuthResponse, RefreshResponse, User } from '@/types'
+import type { GlobalAuthResponse, LocalAuthResponse, User } from '@/types'
 
 export const authApi = {
   login: (email: string, password: string) =>
-    api.post<AuthResponse>('/auth/login', { email, password }).then((r) => r.data),
+    api.post<GlobalAuthResponse>('/auth/login', { email, password }).then((r) => r.data),
 
   loginLocal: (workspaceId: string, localUsername: string, password: string) =>
-    api.post<AuthResponse>('/auth/login/local', { workspace_id: workspaceId, local_username: localUsername, password }).then((r) => r.data),
+    api.post<LocalAuthResponse>('/auth/login/local', { workspace_id: workspaceId, local_username: localUsername, password }).then((r) => r.data),
 
   register: (email: string, password: string) =>
-    api.post<AuthResponse>('/auth/register', { email, password }).then((r) => r.data),
-
-  refresh: (refreshToken: string) =>
-    api.post<RefreshResponse>('/auth/refresh', { refresh_token: refreshToken }).then((r) => r.data),
+    api.post<GlobalAuthResponse>('/auth/register', { email, password }).then((r) => r.data),
 
   me: () =>
     api.get<User>('/auth/me').then((r) => r.data),

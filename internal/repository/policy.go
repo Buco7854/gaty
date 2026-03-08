@@ -16,6 +16,7 @@ type PolicyRepository interface {
 	HasAnyPermission(ctx context.Context, membershipID, gateID uuid.UUID) (bool, error)
 	Revoke(ctx context.Context, membershipID, gateID uuid.UUID) error
 	RevokePermission(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) error
+	HasPermissionInWorkspace(ctx context.Context, membershipID uuid.UUID, workspaceID uuid.UUID, permCode string) (bool, error)
 	SetMemberGateSchedule(ctx context.Context, membershipID, gateID, scheduleID uuid.UUID) error
 	RemoveMemberGateSchedule(ctx context.Context, membershipID, gateID uuid.UUID) error
 	GetMemberGateScheduleID(ctx context.Context, membershipID, gateID uuid.UUID) (uuid.UUID, error)

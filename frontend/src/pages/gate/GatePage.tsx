@@ -5,7 +5,6 @@ import { gatesApi, pinsApi, domainsApi, policiesApi, schedulesApi } from '@/api'
 import type { ActionConfig, PinMetadata } from '@/api'
 import type { Gate, GatePin, CustomDomain, WorkspaceWithRole, AccessSchedule, MetaField, StatusRule, GateStatus } from '@/types'
 import { useAuthStore } from '@/store/auth'
-import { findLocalSession } from '@/utils/session'
 import { useTranslation } from 'react-i18next'
 import { notifySuccess, notifyError } from '@/lib/notify'
 import { QueryError } from '@/components/QueryError'
@@ -603,12 +602,9 @@ export default function GatePage() {
   const clipboard = useClipboard({ timeout: 2000 })
   const tokenClipboard = useClipboard({ timeout: 2000 })
 
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
-  const globalAuth = isAuthenticated()
-  const localSession = useMemo(
-    () => (!globalAuth && wsId ? findLocalSession(wsId) : null),
-    [wsId, globalAuth]
-  )
+  const session = useAuthStore((s) => s.session)
+  const globalAuth = session?.type === 'global'
+  const localSession = !globalAuth && session?.type === 'local' ? session : null
   const ws = qc.getQueryData<WorkspaceWithRole[]>(['workspaces'])?.find((w) => w.id === wsId)
   const effectiveRole = globalAuth ? ws?.role : localSession?.role
   const canManage = effectiveRole === 'ADMIN' || effectiveRole === 'OWNER'

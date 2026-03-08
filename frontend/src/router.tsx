@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate, Outlet, useLocation } from 'react-router'
+import { createBrowserRouter, Navigate, Outlet } from 'react-router'
 import { useAuthStore } from '@/store/auth'
 import AppLayout from '@/layouts/AppLayout'
 import AuthLayout from '@/layouts/AuthLayout'
@@ -16,27 +16,12 @@ import PasswordAccessPage from '@/pages/guest/PasswordAccessPage'
 import MemberLoginPage from '@/pages/guest/MemberLoginPage'
 import SsoCallbackPage from '@/pages/auth/SsoCallbackPage'
 
-function hasLocalMemberSession(wsId: string): boolean {
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i)
-    if (!key?.startsWith('gatie_session_')) continue
-    try {
-      const s = JSON.parse(localStorage.getItem(key)!)
-      if (s?.type === 'member' && s?.workspace_id === wsId && s?.access_token) return true
-    } catch { /* ignore */ }
-  }
-  return false
-}
-
 function RequireAuth() {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
-  const { pathname } = useLocation()
-  if (!isAuthenticated()) {
-    // Allow local members to access all workspace sub-paths
-    const m = pathname.match(/^\/workspaces\/([^/]+)/)
-    if (m && hasLocalMemberSession(m[1])) return <Outlet />
+  const session = useAuthStore((s) => s.session)
+  if (!session) {
     return <Navigate to="/login" replace />
   }
+  // Allow global users and local members (cookies handle actual auth)
   return <Outlet />
 }
 

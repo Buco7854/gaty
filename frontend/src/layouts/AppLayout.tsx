@@ -50,16 +50,16 @@ import {
   CalendarClock,
   User,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { findLocalSession } from '@/utils/session'
+import { useEffect, useState } from 'react'
 
 export default function AppLayout() {
   const { wsId } = useParams<{ wsId?: string }>()
   const { t } = useTranslation()
   const tokenPermissions = useGatePermissions()
-  const user = useAuthStore((s) => s.user)
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const session = useAuthStore((s) => s.session)
   const logout = useAuthStore((s) => s.logout)
+  const user = session?.type === 'global' ? session.user : null
+  const isGlobalAuth = session?.type === 'global'
   const navigate = useNavigate()
   const [wsMenuOpen, setWsMenuOpen] = useState(false)
   const [navOpened, setNavOpened] = useState(false)
@@ -76,12 +76,9 @@ export default function AppLayout() {
   const [tokenRestrictPerms, setTokenRestrictPerms] = useState(false)
   const [tokenPolicies, setTokenPolicies] = useState<{ gate_id: string; permission_code: string }[]>([])
 
-  const isAdmin = isAuthenticated()
+  const isAdmin = isGlobalAuth
 
-  const localSession = useMemo(
-    () => (!isAdmin && wsId ? findLocalSession(wsId) : null),
-    [wsId, isAdmin]
-  )
+  const localSession = !isAdmin && wsId && session?.type === 'local' ? session : null
 
   const { data: workspaces } = useQuery<WorkspaceWithRole[]>({
     queryKey: ['workspaces'],
@@ -91,36 +88,21 @@ export default function AppLayout() {
 
   const currentWs = workspaces?.find((w) => w.id === wsId)
 
-  function handleLogout() {
-    logout()
+  async function handleLogout() {
+    await logout()
     navigate('/login')
   }
 
   function handleMemberLogout() {
-    const gateId = localSession?.gateId
-    if (gateId) {
-      localStorage.removeItem(`gatie_session_${gateId}`)
-      const isWorkspaceSession = gateId === localSession?.workspace_id
-      if (isWorkspaceSession) {
-        navigate(wsId ? `/workspaces/${wsId}/login` : '/login')
-      } else {
-        navigate(wsId ? `/workspaces/${wsId}/gates/${gateId}/public` : '/login')
-      }
-    } else {
-      navigate('/login')
-    }
+    useAuthStore.getState().clearSession()
+    navigate(wsId ? `/workspaces/${wsId}/login` : '/login')
   }
 
   function handleLogoClick() {
     if (isAdmin) {
       navigate('/workspaces')
-    } else if (wsId && localSession?.gateId) {
-      const isWorkspaceSession = localSession.gateId === localSession.workspace_id
-      if (isWorkspaceSession) {
-        navigate(`/workspaces/${wsId}`)
-      } else {
-        navigate(`/workspaces/${wsId}/gates/${localSession.gateId}/public`)
-      }
+    } else if (wsId) {
+      navigate(`/workspaces/${wsId}`)
     }
   }
 
@@ -134,19 +116,19 @@ export default function AppLayout() {
         workspaceCredApi.listTokens(wsId),
         workspaceCredApi.getMyAuthConfig(wsId).catch(() => null),
         gatesApi.list(wsId).catch(() => []),
-        schedulesApi.list(wsId).catch(() => []),
+        schedulesApi.listMine(wsId).catch(() => []),
       ]).then(([tks, cfg, gates, schedules]) => {
         setTokens(tks)
         setMemberAuthConfig(cfg)
         setTokenGates(gates as Gate[])
         setTokenSchedules(schedules as AccessSchedule[])
       }).finally(() => setTokensLoading(false))
-    } else if (localSession?.access_token && wsId) {
+    } else if (localSession && wsId) {
       Promise.all([
-        memberCredApi.listTokens(localSession.access_token),
-        workspaceCredApi.getMyAuthConfig(wsId, localSession.access_token).catch(() => null),
-        gatesApi.list(wsId, localSession.access_token).catch(() => []),
-        schedulesApi.list(wsId, localSession.access_token).catch(() => []),
+        memberCredApi.listTokens(),
+        workspaceCredApi.getMyAuthConfig(wsId).catch(() => null),
+        gatesApi.list(wsId).catch(() => []),
+        schedulesApi.listMine(wsId).catch(() => []),
       ]).then(([tks, cfg, gates, schedules]) => {
         setTokens(tks)
         setMemberAuthConfig(cfg)
@@ -156,7 +138,7 @@ export default function AppLayout() {
     } else {
       setTokensLoading(false)
     }
-  }, [tokenModalOpened, isAdmin, wsId, localSession?.access_token])
+  }, [tokenModalOpened, isAdmin, wsId, localSession])
 
   function resetTokenForm() {
     setTokenLabel('')
@@ -183,10 +165,10 @@ export default function AppLayout() {
       created = await workspaceCredApi.createToken(wsId, tokenLabel, tokenExpiresAt || undefined, policies, tokenScheduleId || undefined)
       const updated = await workspaceCredApi.listTokens(wsId)
       setTokens(updated)
-    } else if (localSession?.access_token) {
+    } else if (localSession) {
       const policies = tokenRestrictPerms && tokenPolicies.length > 0 ? tokenPolicies : undefined
-      created = await memberCredApi.createToken(localSession.access_token, tokenLabel, tokenExpiresAt || undefined, policies, tokenScheduleId || undefined)
-      const updated = await memberCredApi.listTokens(localSession.access_token)
+      created = await memberCredApi.createToken(tokenLabel, tokenExpiresAt || undefined, policies, tokenScheduleId || undefined)
+      const updated = await memberCredApi.listTokens()
       setTokens(updated)
     } else {
       return
@@ -198,8 +180,8 @@ export default function AppLayout() {
   async function handleDeleteToken(credId: string) {
     if (isAdmin && wsId) {
       await workspaceCredApi.deleteToken(wsId, credId)
-    } else if (localSession?.access_token) {
-      await memberCredApi.deleteToken(localSession.access_token, credId)
+    } else if (localSession) {
+      await memberCredApi.deleteToken(credId)
     } else {
       return
     }
@@ -290,21 +272,22 @@ export default function AppLayout() {
               onClick={() => setNavOpened(false)}
               styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
             />
+            <NavLink
+              component={RouterNavLink as React.FC}
+              to={`/workspaces/${wsId}/schedules`}
+              label={t('schedules.title')}
+              leftSection={<CalendarClock size={18} />}
+              onClick={() => setNavOpened(false)}
+              styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
+            />
             {(isAdmin || localSession?.role === 'ADMIN' || localSession?.role === 'OWNER') && (
               <>
+                <Divider my={4} label={<Text size="xs" c="dimmed" fw={500}>{t('common.administration')}</Text>} />
                 <NavLink
                   component={RouterNavLink as React.FC}
                   to={`/workspaces/${wsId}/members`}
                   label={t('members.title')}
                   leftSection={<Users size={18} />}
-                  onClick={() => setNavOpened(false)}
-                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
-                />
-                <NavLink
-                  component={RouterNavLink as React.FC}
-                  to={`/workspaces/${wsId}/schedules`}
-                  label={t('schedules.title')}
-                  leftSection={<CalendarClock size={18} />}
                   onClick={() => setNavOpened(false)}
                   styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
                 />

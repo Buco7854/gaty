@@ -99,7 +99,12 @@ func main() {
 	}
 
 	// Services
-	authSvc := service.NewAuthService(userRepo, credRepo, membershipRepo, memberCredRepo, wsRepo, redisClient, cfg.JWTSecret, cfg.GlobalSessionDuration)
+	authSvc := service.NewAuthService(userRepo, credRepo, membershipRepo, memberCredRepo, wsRepo, redisClient, cfg.JWTSecret, cfg.GlobalSessionDuration, service.PasswordPolicy{
+		MinLength:    cfg.PasswordMinLength,
+		RequireUpper: cfg.PasswordRequireUpper,
+		RequireLower: cfg.PasswordRequireLower,
+		RequireDigit: cfg.PasswordRequireDigit,
+	})
 	membershipSvc := service.NewMembershipService(membershipRepo, memberCredRepo, wsRepo, gateRepo, policyRepo)
 	ssoSvc := service.NewSSOService(wsRepo, membershipRepo, memberCredRepo, redisClient, cfg.BaseURL)
 	workspaceSvc := service.NewWorkspaceService(wsRepo)
@@ -160,12 +165,17 @@ func main() {
 	// Global soft auth middleware: silently extracts Bearer token and injects identity into context.
 	api.UseMiddleware(middleware.AuthExtractor(authSvc, memberCredRepo, wsRepo))
 
+	// Rate limiters (fail-closed via Redis)
+	authRateLimit := middleware.RateLimiter(api, redisClient, "auth", 10, 10*time.Minute)
+	ssoExchangeRateLimit := middleware.RateLimiter(api, redisClient, "sso-exchange", 10, 10*time.Minute)
+
 	// Per-operation middlewares
 	requireAuth := middleware.RequireAuth(api)
 	requireMembership := middleware.RequireMembership(api)
 	wsMember := middleware.WorkspaceMember(api, wsRepo, membershipRepo)
 	wsAdmin := middleware.WorkspaceAdmin(api, wsRepo, membershipRepo)
 	wsGateManager := middleware.GateManager(api, policyRepo)
+	adminOrGateManager := middleware.AdminOrGateManager(api, wsRepo, membershipRepo, policyRepo)
 
 	huma.Get(api, "/api/health", func(ctx context.Context, _ *struct{}) (*struct {
 		Body struct {
@@ -198,17 +208,17 @@ func main() {
 	})
 
 	// Setup (public, no auth)
-	handler.NewSetupHandler(userRepo, authSvc).RegisterRoutes(api)
+	handler.NewSetupHandler(userRepo, authSvc, cfg.CookieSecure).RegisterRoutes(api)
 
 	// Register route groups
-	handler.NewAuthHandler(authSvc, userRepo).RegisterRoutes(api, requireAuth)
+	handler.NewAuthHandler(authSvc, userRepo, cfg.CookieSecure).RegisterRoutes(api, requireAuth, authRateLimit)
 	handler.NewWorkspaceHandler(workspaceSvc).RegisterRoutes(api, requireAuth, wsAdmin)
 	handler.NewGateHandler(gateSvc).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
 	handler.NewPolicyHandler(policySvc).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
 	handler.NewMemberHandler(membershipSvc).RegisterRoutes(api, wsAdmin)
-	handler.NewGatePinHandler(gatePinSvc).RegisterRoutes(api, wsMember, wsGateManager)
-	handler.NewAccessScheduleHandler(scheduleSvc).RegisterRoutes(api, wsMember, wsAdmin)
-	handler.NewSSOHandler(ssoSvc, authSvc, wsRepo, cfg.FrontendURL).RegisterRoutes(api, wsAdmin)
+	handler.NewGatePinHandler(gatePinSvc, cfg.CookieSecure).RegisterRoutes(api, wsMember, wsGateManager)
+	handler.NewAccessScheduleHandler(scheduleSvc).RegisterRoutes(api, wsMember, wsAdmin, adminOrGateManager)
+	handler.NewSSOHandler(ssoSvc, authSvc, wsRepo, redisClient, cfg.FrontendURL, cfg.CookieSecure).RegisterRoutes(api, wsAdmin, ssoExchangeRateLimit)
 	handler.NewCredentialHandler(credRepo, memberCredRepo, membershipRepo, credPolicyRepo, wsRepo).RegisterRoutes(api, requireAuth, requireMembership, wsMember, wsAdmin)
 	handler.NewCustomDomainHandler(domainRepo, gateRepo).RegisterRoutes(api, wsMember, wsGateManager)
 
@@ -219,11 +229,12 @@ func main() {
 	handler.NewSSEHandler(authSvc, redisClient).RegisterRoutes(router)
 
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      router,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:           fmt.Sprintf(":%d", cfg.Port),
+		Handler:        router,
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   30 * time.Second,
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 1 << 20, // 1 MB
 	}
 
 	go func() {

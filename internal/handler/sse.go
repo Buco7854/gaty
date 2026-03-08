@@ -1,15 +1,23 @@
 package handler
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Buco7854/gatie/internal/service"
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
+)
+
+const (
+	sseTicketPrefix = "sse:ticket:"
+	sseTicketTTL    = 30 * time.Second
 )
 
 // SSEHandler streams gate events to authenticated clients via Server-Sent Events.
@@ -24,14 +32,15 @@ func NewSSEHandler(authSvc *service.AuthService, redisClient *redis.Client) *SSE
 }
 
 func (h *SSEHandler) RegisterRoutes(r chi.Router) {
+	r.Post("/api/workspaces/{ws_id}/events/ticket", h.issueTicket)
 	r.Get("/api/workspaces/{ws_id}/events", h.stream)
 }
 
-func (h *SSEHandler) stream(w http.ResponseWriter, r *http.Request) {
-	// Extract token from Authorization header or ?token= query param.
-	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if token == "" {
-		token = r.URL.Query().Get("token")
+// issueTicket authenticates via gatie_access cookie and returns a one-time ticket for SSE.
+func (h *SSEHandler) issueTicket(w http.ResponseWriter, r *http.Request) {
+	var token string
+	if c, err := r.Cookie("gatie_access"); err == nil {
+		token = c.Value
 	}
 	if token == "" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -48,10 +57,71 @@ func (h *SSEHandler) stream(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		// Local token: workspace must match.
 		if tokenWSID.String() != wsID {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
+		}
+	}
+
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	ticket := hex.EncodeToString(b)
+
+	if err := h.redis.Set(r.Context(), sseTicketPrefix+ticket, wsID, sseTicketTTL).Err(); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"ticket": ticket})
+}
+
+func (h *SSEHandler) stream(w http.ResponseWriter, r *http.Request) {
+	wsID := chi.URLParam(r, "ws_id")
+
+	// Authenticate via one-time ticket (preferred) or Authorization header.
+	authenticated := false
+	if ticket := r.URL.Query().Get("ticket"); ticket != "" {
+		ticketWSID, err := h.redis.GetDel(r.Context(), sseTicketPrefix+ticket).Result()
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+			} else {
+				slog.Error("sse: redis error during ticket validation", "error", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
+			return
+		}
+		if ticketWSID != wsID {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		authenticated = true
+	}
+
+	if !authenticated {
+		var token string
+		if c, err := r.Cookie("gatie_access"); err == nil {
+			token = c.Value
+		}
+		if token == "" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_, globalErr := h.authSvc.ValidateAccessToken(token)
+		if globalErr != nil {
+			_, tokenWSID, _, localErr := h.authSvc.ValidateMemberToken(token)
+			if localErr != nil {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			if tokenWSID.String() != wsID {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
 		}
 	}
 

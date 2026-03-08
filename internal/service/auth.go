@@ -3,11 +3,14 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
+
+	"unicode"
 
 	"github.com/Buco7854/gatie/internal/model"
 	"github.com/Buco7854/gatie/internal/repository"
@@ -22,17 +25,38 @@ var (
 	ErrEmailTaken         = errors.New("email already taken")
 	ErrInvalidToken       = errors.New("invalid or expired token")
 	ErrAlreadyMerged      = errors.New("membership already linked to a user account")
+	ErrWeakPassword       = errors.New("password must contain at least one uppercase letter, one lowercase letter, and one digit")
 )
 
 const (
-	accessTokenTTL      = 15 * time.Minute
-	defaultSessionTTL   = 7 * 24 * time.Hour
-	refreshKeyPrefix    = "refresh:"
+	AccessTokenTTL    = 15 * time.Minute
+	defaultSessionTTL = 7 * 24 * time.Hour
+	refreshKeyPrefix  = "refresh:"
 )
 
 type TokenPair struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
+	AccessToken     string
+	RefreshToken    string
+	SessionDuration time.Duration
+}
+
+// RefreshResult carries the new tokens plus session metadata so the handler
+// can populate the response body without additional DB lookups.
+type RefreshResult struct {
+	Tokens      *TokenPair
+	Type        string                     // "global", "local", "pin_session"
+	User        *model.User                // global
+	Membership  *model.WorkspaceMembership // local
+	GateID      uuid.UUID                  // pin_session
+	Permissions []string                   // pin_session
+}
+
+// PasswordPolicy configures password complexity requirements.
+type PasswordPolicy struct {
+	MinLength    int
+	RequireUpper bool
+	RequireLower bool
+	RequireDigit bool
 }
 
 type AuthService struct {
@@ -44,6 +68,7 @@ type AuthService struct {
 	redis                 *redis.Client
 	jwtSecret             []byte
 	globalSessionDuration time.Duration // 0 = infinite
+	passwordPolicy        PasswordPolicy
 }
 
 func NewAuthService(
@@ -55,6 +80,7 @@ func NewAuthService(
 	redisClient *redis.Client,
 	jwtSecret string,
 	globalSessionDuration time.Duration,
+	passwordPolicy PasswordPolicy,
 ) *AuthService {
 	return &AuthService{
 		users:                 users,
@@ -65,11 +91,43 @@ func NewAuthService(
 		redis:                 redisClient,
 		jwtSecret:             []byte(jwtSecret),
 		globalSessionDuration: globalSessionDuration,
+		passwordPolicy:        passwordPolicy,
 	}
+}
+
+func (s *AuthService) validatePassword(password string) error {
+	if len(password) < s.passwordPolicy.MinLength {
+		return fmt.Errorf("%w: minimum %d characters", ErrWeakPassword, s.passwordPolicy.MinLength)
+	}
+	var hasUpper, hasLower, hasDigit bool
+	for _, r := range password {
+		switch {
+		case unicode.IsUpper(r):
+			hasUpper = true
+		case unicode.IsLower(r):
+			hasLower = true
+		case unicode.IsDigit(r):
+			hasDigit = true
+		}
+	}
+	if s.passwordPolicy.RequireUpper && !hasUpper {
+		return fmt.Errorf("%w: must contain an uppercase letter", ErrWeakPassword)
+	}
+	if s.passwordPolicy.RequireLower && !hasLower {
+		return fmt.Errorf("%w: must contain a lowercase letter", ErrWeakPassword)
+	}
+	if s.passwordPolicy.RequireDigit && !hasDigit {
+		return fmt.Errorf("%w: must contain a digit", ErrWeakPassword)
+	}
+	return nil
 }
 
 // Register creates a new platform user with a password credential and issues a global token pair.
 func (s *AuthService) Register(ctx context.Context, email, password string) (*TokenPair, *model.User, error) {
+	if err := s.validatePassword(password); err != nil {
+		return nil, nil, err
+	}
+
 	_, err := s.users.GetByEmail(ctx, email)
 	if err == nil {
 		return nil, nil, ErrEmailTaken
@@ -171,8 +229,8 @@ func (s *AuthService) LoginLocal(ctx context.Context, workspaceID uuid.UUID, loc
 
 // Refresh redeems a refresh token and issues a new token pair of the same type,
 // preserving the original session duration.
-func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenPair, error) {
-	val, err := s.redis.GetDel(ctx, refreshKeyPrefix+refreshToken).Result()
+func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
+	val, err := s.redis.GetDel(ctx, refreshKey(refreshToken)).Result()
 	if err != nil {
 		return nil, ErrInvalidToken
 	}
@@ -200,12 +258,16 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenP
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
-			roleStr, ok := payload["role"].(string)
-			if !ok {
+			// Re-read role from DB to pick up any changes since the token was issued.
+			membership, err := s.memberships.GetByID(ctx, membershipID, workspaceID)
+			if err != nil {
 				return nil, ErrInvalidToken
 			}
-			role := model.WorkspaceRole(roleStr)
-			return s.issueLocalTokenPair(ctx, membershipID, workspaceID, role, sessionDuration)
+			tokens, err := s.issueLocalTokenPair(ctx, membershipID, workspaceID, membership.Role, sessionDuration)
+			if err != nil {
+				return nil, err
+			}
+			return &RefreshResult{Tokens: tokens, Type: "local", Membership: membership}, nil
 
 		case "global":
 			sub, ok := payload["sub"].(string)
@@ -216,7 +278,15 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenP
 			if err != nil {
 				return nil, ErrInvalidToken
 			}
-			return s.issueGlobalTokenPair(ctx, userID, sessionDuration)
+			tokens, err := s.issueGlobalTokenPair(ctx, userID, sessionDuration)
+			if err != nil {
+				return nil, err
+			}
+			user, err := s.users.GetByID(ctx, userID)
+			if err != nil {
+				return nil, ErrInvalidToken
+			}
+			return &RefreshResult{Tokens: tokens, Type: "global", User: user}, nil
 
 		case "pin_session":
 			sub, ok := payload["sub"].(string)
@@ -243,7 +313,11 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenP
 					}
 				}
 			}
-			return s.IssueGatePinSession(ctx, pinID, gateID, sessionDuration, perms)
+			tokens, err := s.IssueGatePinSession(ctx, pinID, gateID, sessionDuration, perms)
+			if err != nil {
+				return nil, err
+			}
+			return &RefreshResult{Tokens: tokens, Type: "pin_session", GateID: gateID, Permissions: perms}, nil
 		}
 	}
 
@@ -252,7 +326,12 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenP
 	if err != nil {
 		return nil, ErrInvalidToken
 	}
-	return s.issueGlobalTokenPair(ctx, userID, s.globalSessionDuration)
+	tokens, err := s.issueGlobalTokenPair(ctx, userID, s.globalSessionDuration)
+	if err != nil {
+		return nil, err
+	}
+	user, _ := s.users.GetByID(ctx, userID)
+	return &RefreshResult{Tokens: tokens, Type: "global", User: user}, nil
 }
 
 // Merge links a local membership to the authenticated platform user.
@@ -291,6 +370,11 @@ func (s *AuthService) Merge(ctx context.Context, userID uuid.UUID, workspaceID u
 	}
 
 	return s.memberships.MergeUser(ctx, membership.ID, userID)
+}
+
+// RevokeRefreshToken deletes a refresh token from Redis, invalidating the session.
+func (s *AuthService) RevokeRefreshToken(ctx context.Context, token string) {
+	s.redis.Del(ctx, refreshKey(token))
 }
 
 // ValidateAccessToken validates a global (platform user) JWT and returns the user ID.
@@ -365,7 +449,7 @@ func (s *AuthService) IssueGatePinSession(ctx context.Context, pinID, gateID uui
 		"gate_id":     gateID.String(),
 		"permissions": permissions,
 		"iat":         time.Now().Unix(),
-		"exp":         time.Now().Add(accessTokenTTL).Unix(),
+		"exp":         time.Now().Add(AccessTokenTTL).Unix(),
 	}).SignedString(s.jwtSecret)
 	if err != nil {
 		return nil, fmt.Errorf("sign pin session access token: %w", err)
@@ -383,7 +467,7 @@ func (s *AuthService) IssueGatePinSession(ctx context.Context, pinID, gateID uui
 		"permissions":      permissions,
 		"session_duration": sessionDuration.Seconds(),
 	})
-	if err := s.redis.Set(ctx, refreshKeyPrefix+refreshToken, string(payload), sessionDuration).Err(); err != nil {
+	if err := s.redis.Set(ctx, refreshKey(refreshToken), string(payload), sessionDuration).Err(); err != nil {
 		return nil, fmt.Errorf("store pin session refresh token: %w", err)
 	}
 
@@ -452,7 +536,7 @@ func (s *AuthService) issueGlobalTokenPair(ctx context.Context, userID uuid.UUID
 		"sub":  userID.String(),
 		"type": "global",
 		"iat":  time.Now().Unix(),
-		"exp":  time.Now().Add(accessTokenTTL).Unix(),
+		"exp":  time.Now().Add(AccessTokenTTL).Unix(),
 	}).SignedString(s.jwtSecret)
 	if err != nil {
 		return nil, fmt.Errorf("sign access token: %w", err)
@@ -468,11 +552,11 @@ func (s *AuthService) issueGlobalTokenPair(ctx context.Context, userID uuid.UUID
 		"sub":              userID.String(),
 		"session_duration": sessionDuration.Seconds(),
 	})
-	if err := s.redis.Set(ctx, refreshKeyPrefix+refreshToken, string(payload), sessionDuration).Err(); err != nil {
+	if err := s.redis.Set(ctx, refreshKey(refreshToken), string(payload), sessionDuration).Err(); err != nil {
 		return nil, fmt.Errorf("store refresh token: %w", err)
 	}
 
-	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken}, nil
+	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken, SessionDuration: sessionDuration}, nil
 }
 
 func (s *AuthService) issueLocalTokenPair(ctx context.Context, membershipID, workspaceID uuid.UUID, role model.WorkspaceRole, sessionDuration time.Duration) (*TokenPair, error) {
@@ -482,7 +566,7 @@ func (s *AuthService) issueLocalTokenPair(ctx context.Context, membershipID, wor
 		"workspace_id":  workspaceID.String(),
 		"role": string(role),
 		"iat":  time.Now().Unix(),
-		"exp":  time.Now().Add(accessTokenTTL).Unix(),
+		"exp":  time.Now().Add(AccessTokenTTL).Unix(),
 	}).SignedString(s.jwtSecret)
 	if err != nil {
 		return nil, fmt.Errorf("sign local access token: %w", err)
@@ -500,11 +584,11 @@ func (s *AuthService) issueLocalTokenPair(ctx context.Context, membershipID, wor
 		"role":             string(role),
 		"session_duration": sessionDuration.Seconds(),
 	})
-	if err := s.redis.Set(ctx, refreshKeyPrefix+refreshToken, string(payload), sessionDuration).Err(); err != nil {
+	if err := s.redis.Set(ctx, refreshKey(refreshToken), string(payload), sessionDuration).Err(); err != nil {
 		return nil, fmt.Errorf("store refresh token: %w", err)
 	}
 
-	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken}, nil
+	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken, SessionDuration: sessionDuration}, nil
 }
 
 // resolveSessionDuration reads session_duration (in seconds) from the workspace-level
@@ -553,4 +637,11 @@ func newRefreshToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// refreshKey returns the Redis key for a refresh token by hashing it with SHA-256.
+// The raw token is never stored in Redis — only the hash is used as key.
+func refreshKey(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return refreshKeyPrefix + hex.EncodeToString(h[:])
 }

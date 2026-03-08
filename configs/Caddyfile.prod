@@ -10,6 +10,14 @@
 
 # Main app domain — standard ACME cert, serves both API and frontend.
 {$APP_DOMAIN} {
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'"
+        -Server
+    }
     handle /api/* {
         reverse_proxy app:8080
     }
@@ -25,5 +33,17 @@
     tls {
         on_demand
     }
-    reverse_proxy app:8080
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+    handle /api/* {
+        reverse_proxy app:8080
+    }
+    handle {
+        reverse_proxy frontend:3000
+    }
 }

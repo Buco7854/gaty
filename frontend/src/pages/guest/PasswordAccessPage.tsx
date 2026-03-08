@@ -1,16 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { publicApi } from '@/api'
-import type { GateSession } from '@/api/public'
+import { useAuthStore } from '@/store/auth'
 import { useTranslation } from 'react-i18next'
 import { Center, Stack, Group, Text, Title, Button, Anchor, PasswordInput } from '@mantine/core'
 import { notifyError } from '@/lib/notify'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
-
-function sessionKey(gateId: string) {
-  return `gatie_session_${gateId}`
-}
 
 export default function PasswordAccessPage() {
   const { wsId, gateId } = useParams<{ wsId?: string; gateId: string }>()
@@ -27,15 +23,11 @@ export default function PasswordAccessPage() {
 
   useEffect(() => {
     if (!gateId) return
-    const raw = localStorage.getItem(sessionKey(gateId))
-    if (raw) {
-      try {
-        const s = JSON.parse(raw) as GateSession
-        if (s?.access_token) {
-          navigate(portalPath, { replace: true })
-          return
-        }
-      } catch { /* ignore */ }
+    // If we already have a pin session, redirect to portal
+    const session = useAuthStore.getState().session
+    if (session?.type === 'pin_session') {
+      navigate(portalPath, { replace: true })
+      return
     }
     publicApi.resolveByGateId(gateId)
       .then((data) => setGateName(data.gate_name))
@@ -47,9 +39,8 @@ export default function PasswordAccessPage() {
     setSubmitting(true)
     try {
       const result = await publicApi.open(gateId, password)
-      if (result.session) {
-        const session: GateSession = { type: 'pin', ...result.session }
-        localStorage.setItem(sessionKey(gateId), JSON.stringify(session))
+      if (result.has_session && result.gate_id && result.permissions) {
+        useAuthStore.getState().setPinSession(result.gate_id, result.permissions)
       }
       navigate(portalPath, { replace: true, state: { justAuthenticated: true } })
     } catch (err: unknown) {

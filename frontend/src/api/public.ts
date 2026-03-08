@@ -2,13 +2,6 @@ import axios from 'axios'
 import { api } from '@/lib/api'
 import type { DomainResolveResult } from '@/types'
 
-export interface GateSession {
-  type: 'pin' | 'member'
-  access_token: string
-  refresh_token: string
-  workspace_id?: string // member sessions only
-}
-
 export const publicApi = {
   resolve: (domain: string) =>
     api.get<DomainResolveResult>(`/public/resolve?domain=${encodeURIComponent(domain)}`).then((r) => r.data),
@@ -21,33 +14,22 @@ export const publicApi = {
     api.post('/public/unlock', { gate_id: gateId, pin }),
 
   /**
-   * Smart open: triggers the gate and, if the PIN is type=session, returns session tokens.
-   * response.session is undefined for one-shot PINs.
+   * Smart open: triggers the gate and, if the PIN is type=session, sets session cookies.
+   * Response body indicates whether a session was created and its permissions.
    */
   open: (gateId: string, pin: string) =>
-    api.post<{ session?: { access_token: string; refresh_token: string } }>(
+    api.post<{ has_session: boolean; gate_id?: string; permissions?: string[] }>(
       '/public/open',
       { gate_id: gateId, pin },
     ).then((r) => r.data),
 
-  /** Trigger gate with a stored pin_session JWT (bypasses global-token interceptor). */
-  triggerWithPinSession: (accessToken: string, action: 'open' | 'close' = 'open') =>
-    axios.post('/api/public/trigger', { action }, { headers: { Authorization: `Bearer ${accessToken}` } }),
+  /** Trigger gate with a stored pin_session cookie (sent automatically). */
+  triggerWithPinSession: (action: 'open' | 'close' = 'open') =>
+    api.post('/public/trigger', { action }),
 
-  /** Trigger gate as a local member (bypasses global-token interceptor). */
-  triggerAsLocal: (workspaceId: string, gateId: string, localToken: string, action: 'open' | 'close' = 'open') =>
-    axios.post(
-      `/api/workspaces/${workspaceId}/gates/${gateId}/trigger`,
-      { action },
-      { headers: { Authorization: `Bearer ${localToken}` } },
-    ),
-
-  /** Refresh any session token type (bypasses global-token interceptor). */
-  refreshSession: (refreshToken: string) =>
-    axios.post<{ access_token: string; refresh_token: string }>(
-      '/api/auth/refresh',
-      { refresh_token: refreshToken },
-    ).then((r) => r.data),
+  /** Trigger gate as a local member (cookie sent automatically). */
+  triggerAsLocal: (workspaceId: string, gateId: string, action: 'open' | 'close' = 'open') =>
+    api.post(`/workspaces/${workspaceId}/gates/${gateId}/trigger`, { action }),
 
   /** List public SSO providers for a workspace (public, no auth required). */
   ssoProviders: (wsId: string) =>

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/Buco7854/gatie/internal/middleware"
@@ -13,13 +14,51 @@ import (
 	"github.com/google/uuid"
 )
 
-type AuthHandler struct {
-	authSvc *service.AuthService
-	users   repository.UserRepository
+const (
+	accessCookieName  = "gatie_access"
+	refreshCookieName = "gatie_refresh"
+)
+
+// setAuthCookies builds Set-Cookie headers for both the access and refresh tokens.
+func setAuthCookies(tokens *service.TokenPair, secure bool) [2]string {
+	secureFlag := ""
+	if secure {
+		secureFlag = "; Secure"
+	}
+	accessMaxAge := int(service.AccessTokenTTL.Seconds())
+	refreshMaxAge := int(tokens.SessionDuration.Seconds())
+	if refreshMaxAge <= 0 {
+		// "infinite" session: cap cookie at 90 days (browser max varies).
+		refreshMaxAge = 90 * 24 * 60 * 60
+	}
+	return [2]string{
+		fmt.Sprintf("%s=%s; HttpOnly%s; SameSite=Lax; Path=/api; Max-Age=%d",
+			accessCookieName, tokens.AccessToken, secureFlag, accessMaxAge),
+		fmt.Sprintf("%s=%s; HttpOnly%s; SameSite=Lax; Path=/api/auth; Max-Age=%d",
+			refreshCookieName, tokens.RefreshToken, secureFlag, refreshMaxAge),
+	}
 }
 
-func NewAuthHandler(authSvc *service.AuthService, users repository.UserRepository) *AuthHandler {
-	return &AuthHandler{authSvc: authSvc, users: users}
+// clearAuthCookies builds Set-Cookie headers that expire both cookies.
+func clearAuthCookies(secure bool) [2]string {
+	secureFlag := ""
+	if secure {
+		secureFlag = "; Secure"
+	}
+	return [2]string{
+		fmt.Sprintf("%s=; HttpOnly%s; SameSite=Lax; Path=/api; Max-Age=0", accessCookieName, secureFlag),
+		fmt.Sprintf("%s=; HttpOnly%s; SameSite=Lax; Path=/api/auth; Max-Age=0", refreshCookieName, secureFlag),
+	}
+}
+
+type AuthHandler struct {
+	authSvc      *service.AuthService
+	users        repository.UserRepository
+	cookieSecure bool
+}
+
+func NewAuthHandler(authSvc *service.AuthService, users repository.UserRepository, cookieSecure bool) *AuthHandler {
+	return &AuthHandler{authSvc: authSvc, users: users, cookieSecure: cookieSecure}
 }
 
 // --- Register ---
@@ -27,29 +66,35 @@ func NewAuthHandler(authSvc *service.AuthService, users repository.UserRepositor
 type RegisterInput struct {
 	Body struct {
 		Email    string `json:"email" format:"email" doc:"User email address"`
-		Password string `json:"password" minLength:"8" doc:"Password (min 8 chars)"`
+		Password string `json:"password" minLength:"8" maxLength:"128" doc:"Password (min 8 chars, must contain uppercase, lowercase, and digit)"`
 	}
 }
 
-type AuthOutput struct {
-	Body struct {
-		AccessToken  string     `json:"access_token"`
-		RefreshToken string     `json:"refresh_token"`
-		User         model.User `json:"user"`
+type GlobalAuthOutput struct {
+	SetCookie  string `header:"Set-Cookie"`
+	SetCookie2 string `header:"Set-Cookie2"`
+	Body       struct {
+		Type string     `json:"type"`
+		User model.User `json:"user"`
 	}
 }
 
-func (h *AuthHandler) Register(ctx context.Context, input *RegisterInput) (*AuthOutput, error) {
+func (h *AuthHandler) Register(ctx context.Context, input *RegisterInput) (*GlobalAuthOutput, error) {
 	tokens, user, err := h.authSvc.Register(ctx, input.Body.Email, input.Body.Password)
+	if errors.Is(err, service.ErrWeakPassword) {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
 	if errors.Is(err, service.ErrEmailTaken) {
-		return nil, huma.Error409Conflict("email already taken")
+		return nil, huma.Error409Conflict("registration failed")
 	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError("registration failed")
 	}
-	resp := &AuthOutput{}
-	resp.Body.AccessToken = tokens.AccessToken
-	resp.Body.RefreshToken = tokens.RefreshToken
+	cookies := setAuthCookies(tokens, h.cookieSecure)
+	resp := &GlobalAuthOutput{}
+	resp.SetCookie = cookies[0]
+	resp.SetCookie2 = cookies[1]
+	resp.Body.Type = "global"
 	resp.Body.User = *user
 	return resp, nil
 }
@@ -63,17 +108,19 @@ type LoginInput struct {
 	}
 }
 
-func (h *AuthHandler) Login(ctx context.Context, input *LoginInput) (*AuthOutput, error) {
+func (h *AuthHandler) Login(ctx context.Context, input *LoginInput) (*GlobalAuthOutput, error) {
 	tokens, user, err := h.authSvc.Login(ctx, input.Body.Email, input.Body.Password)
 	if errors.Is(err, service.ErrInvalidCredentials) {
 		return nil, huma.Error401Unauthorized("invalid credentials")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("login failed", err)
+		return nil, huma.Error500InternalServerError("login failed")
 	}
-	resp := &AuthOutput{}
-	resp.Body.AccessToken = tokens.AccessToken
-	resp.Body.RefreshToken = tokens.RefreshToken
+	cookies := setAuthCookies(tokens, h.cookieSecure)
+	resp := &GlobalAuthOutput{}
+	resp.SetCookie = cookies[0]
+	resp.SetCookie2 = cookies[1]
+	resp.Body.Type = "global"
 	resp.Body.User = *user
 	return resp, nil
 }
@@ -82,17 +129,21 @@ func (h *AuthHandler) Login(ctx context.Context, input *LoginInput) (*AuthOutput
 
 type LoginLocalInput struct {
 	Body struct {
-		WorkspaceID   uuid.UUID `json:"workspace_id"`
+		WorkspaceID  uuid.UUID `json:"workspace_id"`
 		LocalUsername string    `json:"local_username" minLength:"1"`
-		Password      string    `json:"password" minLength:"1"`
+		Password     string    `json:"password" minLength:"1"`
 	}
 }
 
 type LocalAuthOutput struct {
-	Body struct {
-		AccessToken  string                    `json:"access_token"`
-		RefreshToken string                    `json:"refresh_token"`
-		Membership   *model.WorkspaceMembership `json:"membership"`
+	SetCookie  string `header:"Set-Cookie"`
+	SetCookie2 string `header:"Set-Cookie2"`
+	Body       struct {
+		Type         string              `json:"type"`
+		MembershipID string              `json:"membership_id"`
+		WorkspaceID  string              `json:"workspace_id"`
+		Role         model.WorkspaceRole `json:"role"`
+		DisplayName  string              `json:"display_name,omitempty"`
 	}
 }
 
@@ -104,49 +155,107 @@ func (h *AuthHandler) LoginLocal(ctx context.Context, input *LoginLocalInput) (*
 	if err != nil {
 		return nil, huma.Error500InternalServerError("login failed")
 	}
+	cookies := setAuthCookies(tokens, h.cookieSecure)
 	out := &LocalAuthOutput{}
-	out.Body.AccessToken = tokens.AccessToken
-	out.Body.RefreshToken = tokens.RefreshToken
-	out.Body.Membership = membership
+	out.SetCookie = cookies[0]
+	out.SetCookie2 = cookies[1]
+	out.Body.Type = "local"
+	out.Body.MembershipID = membership.ID.String()
+	out.Body.WorkspaceID = membership.WorkspaceID.String()
+	out.Body.Role = membership.Role
+	if membership.DisplayName != nil {
+		out.Body.DisplayName = *membership.DisplayName
+	}
 	return out, nil
 }
 
 // --- Refresh ---
 
 type RefreshInput struct {
-	Body struct {
-		RefreshToken string `json:"refresh_token"`
-	}
+	RefreshCookie string `cookie:"gatie_refresh"`
 }
 
 type RefreshOutput struct {
-	Body struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
+	SetCookie  string `header:"Set-Cookie"`
+	SetCookie2 string `header:"Set-Cookie2"`
+	Body       struct {
+		Type         string              `json:"type"`
+		User         *model.User         `json:"user,omitempty"`
+		MembershipID string              `json:"membership_id,omitempty"`
+		WorkspaceID  string              `json:"workspace_id,omitempty"`
+		Role         model.WorkspaceRole `json:"role,omitempty"`
+		DisplayName  string              `json:"display_name,omitempty"`
+		GateID       string              `json:"gate_id,omitempty"`
+		Permissions  []string            `json:"permissions,omitempty"`
 	}
 }
 
 func (h *AuthHandler) Refresh(ctx context.Context, input *RefreshInput) (*RefreshOutput, error) {
-	tokens, err := h.authSvc.Refresh(ctx, input.Body.RefreshToken)
+	token := input.RefreshCookie
+	if token == "" {
+		return nil, huma.Error401Unauthorized("missing refresh token")
+	}
+
+	result, err := h.authSvc.Refresh(ctx, token)
 	if errors.Is(err, service.ErrInvalidToken) {
 		return nil, huma.Error401Unauthorized("invalid or expired refresh token")
 	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError("refresh failed")
 	}
+
+	cookies := setAuthCookies(result.Tokens, h.cookieSecure)
 	resp := &RefreshOutput{}
-	resp.Body.AccessToken = tokens.AccessToken
-	resp.Body.RefreshToken = tokens.RefreshToken
+	resp.SetCookie = cookies[0]
+	resp.SetCookie2 = cookies[1]
+	resp.Body.Type = result.Type
+
+	switch result.Type {
+	case "global":
+		resp.Body.User = result.User
+	case "local":
+		if result.Membership != nil {
+			resp.Body.MembershipID = result.Membership.ID.String()
+			resp.Body.WorkspaceID = result.Membership.WorkspaceID.String()
+			resp.Body.Role = result.Membership.Role
+			if result.Membership.DisplayName != nil {
+				resp.Body.DisplayName = *result.Membership.DisplayName
+			}
+		}
+	case "pin_session":
+		resp.Body.GateID = result.GateID.String()
+		resp.Body.Permissions = result.Permissions
+	}
+
 	return resp, nil
+}
+
+// --- Logout ---
+
+type LogoutInput struct {
+	RefreshCookie string `cookie:"gatie_refresh"`
+}
+
+type LogoutOutput struct {
+	SetCookie  string `header:"Set-Cookie"`
+	SetCookie2 string `header:"Set-Cookie2"`
+}
+
+func (h *AuthHandler) Logout(ctx context.Context, input *LogoutInput) (*LogoutOutput, error) {
+	if input.RefreshCookie != "" {
+		h.authSvc.RevokeRefreshToken(ctx, input.RefreshCookie)
+	}
+	cookies := clearAuthCookies(h.cookieSecure)
+	return &LogoutOutput{SetCookie: cookies[0], SetCookie2: cookies[1]}, nil
 }
 
 // --- Merge (link local membership to global user) ---
 
 type MergeInput struct {
 	Body struct {
-		WorkspaceID   uuid.UUID `json:"workspace_id"`
+		WorkspaceID  uuid.UUID `json:"workspace_id"`
 		LocalUsername string    `json:"local_username" minLength:"1"`
-		Password      string    `json:"password" minLength:"1"`
+		Password     string    `json:"password" minLength:"1"`
 	}
 }
 
@@ -181,13 +290,14 @@ func (h *AuthHandler) Me(ctx context.Context, _ *struct{}) (*MeOutput, error) {
 }
 
 // RegisterRoutes wires auth endpoints onto the Huma API.
-func (h *AuthHandler) RegisterRoutes(api huma.API, requireAuth func(huma.Context, func(huma.Context))) {
+func (h *AuthHandler) RegisterRoutes(api huma.API, requireAuth func(huma.Context, func(huma.Context)), authRateLimit func(huma.Context, func(huma.Context))) {
 	huma.Register(api, huma.Operation{
 		OperationID: "auth-register",
 		Method:      http.MethodPost,
 		Path:        "/api/auth/register",
 		Summary:     "Register a new platform user",
 		Tags:        []string{"Auth"},
+		Middlewares: huma.Middlewares{authRateLimit},
 	}, h.Register)
 
 	huma.Register(api, huma.Operation{
@@ -196,6 +306,7 @@ func (h *AuthHandler) RegisterRoutes(api huma.API, requireAuth func(huma.Context
 		Path:        "/api/auth/login",
 		Summary:     "Login with email and password (platform user)",
 		Tags:        []string{"Auth"},
+		Middlewares: huma.Middlewares{authRateLimit},
 	}, h.Login)
 
 	huma.Register(api, huma.Operation{
@@ -204,15 +315,24 @@ func (h *AuthHandler) RegisterRoutes(api huma.API, requireAuth func(huma.Context
 		Path:        "/api/auth/login/local",
 		Summary:     "Login as a managed member (local credentials)",
 		Tags:        []string{"Auth"},
+		Middlewares: huma.Middlewares{authRateLimit},
 	}, h.LoginLocal)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "auth-refresh",
 		Method:      http.MethodPost,
 		Path:        "/api/auth/refresh",
-		Summary:     "Refresh access token",
+		Summary:     "Refresh access token (reads refresh cookie)",
 		Tags:        []string{"Auth"},
 	}, h.Refresh)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "auth-logout",
+		Method:      http.MethodPost,
+		Path:        "/api/auth/logout",
+		Summary:     "Logout (clears session cookies and revokes refresh token)",
+		Tags:        []string{"Auth"},
+	}, h.Logout)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "auth-merge",

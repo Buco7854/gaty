@@ -18,22 +18,15 @@ interface PolicyInput {
   permission_code: string
 }
 
-function authHeader(bearerToken: string) {
-  return { headers: { Authorization: `Bearer ${bearerToken}` } }
-}
-
 export interface MyEffectiveAuthConfig {
   api_token: boolean
 }
 
-/** Workspace member self-service: calls /api/workspaces/{ws_id}/members/me/* — JWT auto-attached by axios interceptor */
+/** Workspace member self-service: calls /api/workspaces/{ws_id}/members/me/* — cookie auto-attached */
 export const workspaceCredApi = {
-  getMyAuthConfig: (wsId: string, bearerToken?: string): Promise<MyEffectiveAuthConfig> =>
+  getMyAuthConfig: (wsId: string): Promise<MyEffectiveAuthConfig> =>
     api
-      .get<MyEffectiveAuthConfig>(
-        `/workspaces/${wsId}/members/me/auth-config`,
-        bearerToken ? authHeader(bearerToken) : undefined,
-      )
+      .get<MyEffectiveAuthConfig>(`/workspaces/${wsId}/members/me/auth-config`)
       .then((r) => r.data),
 
   listTokens: (wsId: string): Promise<MemberCredential[]> =>
@@ -62,16 +55,15 @@ export const workspaceCredApi = {
     api.delete(`/workspaces/${wsId}/members/me/credentials/${credId}`).then(() => {}),
 }
 
-/** Local member self-service: calls /api/auth/local/me/* with the member's own JWT */
+/** Local member self-service: calls /api/auth/local/me/* — cookie auto-attached */
 export const memberCredApi = {
-  listTokens: (bearerToken: string): Promise<MemberCredential[]> =>
+  listTokens: (): Promise<MemberCredential[]> =>
     api
-      .get<MemberCredential[]>('/auth/local/me/credentials', authHeader(bearerToken))
+      .get<MemberCredential[]>('/auth/local/me/credentials')
       .then((r) => (Array.isArray(r.data) ? r.data : []))
       .then((data) => data.filter((c) => c.type === 'API_TOKEN')),
 
   createToken: (
-    bearerToken: string,
     label: string,
     expiresAt?: string,
     policies?: PolicyInput[],
@@ -86,10 +78,9 @@ export const memberCredApi = {
           ...(policies?.length ? { policies } : {}),
           ...(scheduleId ? { schedule_id: scheduleId } : {}),
         },
-        authHeader(bearerToken),
       )
       .then((r) => r.data),
 
-  deleteToken: (bearerToken: string, credId: string): Promise<void> =>
-    api.delete(`/auth/local/me/credentials/${credId}`, authHeader(bearerToken)).then(() => {}),
+  deleteToken: (credId: string): Promise<void> =>
+    api.delete(`/auth/local/me/credentials/${credId}`).then(() => {}),
 }

@@ -30,6 +30,7 @@ const en = {
     optional: 'optional',
     grant: 'Grant',
     revoke: 'Revoke',
+    administration: 'Administration',
     saved: 'Saved',
     created: 'Created',
     deleted: 'Deleted',

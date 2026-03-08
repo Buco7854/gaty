@@ -19,8 +19,7 @@ func New(brokerURL, username, password string) (*Client, error) {
 		AddBroker(brokerURL).
 		SetClientID("gatie-server").
 		SetAutoReconnect(true).
-		SetConnectRetry(true).
-		SetConnectRetryInterval(5 * time.Second).
+		SetConnectTimeout(5 * time.Second).
 		SetOnConnectHandler(func(_ pahomqtt.Client) {
 			slog.Info("mqtt connected")
 		}).

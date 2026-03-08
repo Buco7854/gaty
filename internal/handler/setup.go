@@ -2,8 +2,10 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
+	"github.com/Buco7854/gatie/internal/model"
 	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/Buco7854/gatie/internal/service"
 	"github.com/danielgtaylor/huma/v2"
@@ -11,12 +13,13 @@ import (
 
 // SetupHandler handles the initial setup flow when no users exist yet.
 type SetupHandler struct {
-	users   repository.UserRepository
-	authSvc *service.AuthService
+	users        repository.UserRepository
+	authSvc      *service.AuthService
+	cookieSecure bool
 }
 
-func NewSetupHandler(users repository.UserRepository, authSvc *service.AuthService) *SetupHandler {
-	return &SetupHandler{users: users, authSvc: authSvc}
+func NewSetupHandler(users repository.UserRepository, authSvc *service.AuthService, cookieSecure bool) *SetupHandler {
+	return &SetupHandler{users: users, authSvc: authSvc, cookieSecure: cookieSecure}
 }
 
 // --- Status ---
@@ -47,9 +50,10 @@ type SetupInitInput struct {
 }
 
 type SetupInitOutput struct {
-	Body struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
+	SetCookie  string `header:"Set-Cookie"`
+	SetCookie2 string `header:"Set-Cookie2"`
+	Body       struct {
+		User model.User `json:"user"`
 	}
 }
 
@@ -62,14 +66,19 @@ func (h *SetupHandler) init(ctx context.Context, input *SetupInitInput) (*SetupI
 		return nil, huma.Error409Conflict("setup already completed")
 	}
 
-	tokens, _, err := h.authSvc.Register(ctx, input.Body.Email, input.Body.Password)
+	tokens, user, err := h.authSvc.Register(ctx, input.Body.Email, input.Body.Password)
+	if errors.Is(err, service.ErrWeakPassword) {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create admin user", err)
 	}
 
+	cookies := setAuthCookies(tokens, h.cookieSecure)
 	out := &SetupInitOutput{}
-	out.Body.AccessToken = tokens.AccessToken
-	out.Body.RefreshToken = tokens.RefreshToken
+	out.SetCookie = cookies[0]
+	out.SetCookie2 = cookies[1]
+	out.Body.User = *user
 	return out, nil
 }
 

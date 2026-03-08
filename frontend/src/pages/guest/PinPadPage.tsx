@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { publicApi } from '@/api'
-import type { GateSession } from '@/api/public'
+import { useAuthStore } from '@/store/auth'
 import { useTranslation } from 'react-i18next'
 import { Center, Stack, Group, Text, Title, Button, Anchor, PasswordInput } from '@mantine/core'
 import { Delete } from 'lucide-react'
@@ -10,10 +10,6 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
 
 const DIGITS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫']
-
-function sessionKey(gateId: string) {
-  return `gatie_session_${gateId}`
-}
 
 export default function PinPadPage() {
   const { wsId, gateId } = useParams<{ wsId?: string; gateId: string }>()
@@ -29,31 +25,31 @@ export default function PinPadPage() {
     ? `/workspaces/${wsId}/gates/${gateId}/public`
     : gateId ? `/unlock/${gateId}` : '/'
 
+  // If we already have a pin session, redirect to portal
   useEffect(() => {
     if (!gateId) return
-    const raw = localStorage.getItem(sessionKey(gateId))
-    if (raw) {
-      try {
-        const s = JSON.parse(raw) as GateSession
-        if (s?.access_token) {
-          navigate(portalPath, { replace: true })
-          return
-        }
-      } catch { /* ignore */ }
+    const session = useAuthStore.getState().session
+    if (session?.type === 'pin_session') {
+      navigate(portalPath, { replace: true })
+      return
     }
     publicApi.resolveByGateId(gateId)
       .then((data) => setGateName(data.gate_name))
       .catch(() => {})
   }, [gateId, navigate, portalPath])
 
+  const lastSubmitRef = useRef(0)
+
   async function submitCode(value: string) {
-    if (!gateId || value.length < 1 || submitting) return
+    const now = Date.now()
+    if (!gateId || value.length < 1 || submitting || now - lastSubmitRef.current < 1000) return
+    lastSubmitRef.current = now
     setSubmitting(true)
     try {
       const result = await publicApi.open(gateId, value)
-      if (result.session) {
-        const session: GateSession = { type: 'pin', ...result.session }
-        localStorage.setItem(sessionKey(gateId), JSON.stringify(session))
+      if (result.has_session && result.gate_id && result.permissions) {
+        // Cookies set by backend; store session metadata in zustand
+        useAuthStore.getState().setPinSession(result.gate_id, result.permissions)
       }
       navigate(portalPath, { replace: true, state: { justAuthenticated: true } })
     } catch (err: unknown) {

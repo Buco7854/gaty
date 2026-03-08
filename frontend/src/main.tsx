@@ -1,4 +1,4 @@
-import { StrictMode } from 'react'
+import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { RouterProvider } from 'react-router'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
@@ -11,6 +11,7 @@ import './i18n'
 import './index.css'
 import { router } from './router'
 import { setupApi } from './api'
+import { useAuthStore } from './store/auth'
 import SetupPage from './pages/setup/SetupPage'
 
 const queryClient = new QueryClient({
@@ -44,14 +45,22 @@ const theme = createTheme({
 })
 
 function AppRoot() {
+  const initializing = useAuthStore((s) => s.initializing)
+  const [hydrated, setHydrated] = useState(false)
+
+  useEffect(() => {
+    useAuthStore.getState().hydrate().finally(() => setHydrated(true))
+  }, [])
+
   const { data, isLoading } = useQuery({
     queryKey: ['setup-status'],
     queryFn: setupApi.status,
     staleTime: Infinity,
     retry: false,
+    enabled: hydrated,
   })
 
-  if (isLoading) {
+  if (!hydrated || initializing || isLoading) {
     return <LoadingOverlay visible />
   }
 

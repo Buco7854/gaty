@@ -2,8 +2,7 @@
 #
 # Authentication strategy:
 #   - Backend server : username=gatie-server, password=MQTT_PASSWORD env var
-#   - Gate devices  : username={gate_uuid}, password=API_TOKEN from credentials table
-#                     (target_type=GATE, credential_type=API_TOKEN)
+#   - Gate devices  : username={gate_uuid}, password=gate_token from gates table
 #
 # Topic format:
 #   Status  : workspace_{ws_id}/gates/{gate_id}/status

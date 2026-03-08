@@ -10,8 +10,8 @@ type ScheduleParams = { name: string; description?: string; expr: ExprNode | nul
 
 export const schedulesApi = {
   // Workspace-level schedules (admin-managed)
-  list: (wsId: string, bearerToken?: string) =>
-    api.get(`/workspaces/${wsId}/schedules`, bearerToken ? { headers: { Authorization: `Bearer ${bearerToken}` } } : undefined).then((r) => normalizeList(r.data)),
+  list: (wsId: string) =>
+    api.get(`/workspaces/${wsId}/schedules`).then((r) => normalizeList(r.data)),
 
   create: (wsId: string, params: ScheduleParams) =>
     api.post<AccessSchedule>(`/workspaces/${wsId}/schedules`, params).then((r) => r.data),
@@ -27,17 +27,17 @@ export const schedulesApi = {
 
   // Member personal schedules
   listMine: (wsId: string) =>
-    api.get(`/workspaces/${wsId}/my-schedules`).then((r) => normalizeList(r.data)),
+    api.get(`/workspaces/${wsId}/members/me/schedules`).then((r) => normalizeList(r.data)),
 
   createMine: (wsId: string, params: ScheduleParams) =>
-    api.post<AccessSchedule>(`/workspaces/${wsId}/my-schedules`, params).then((r) => r.data),
+    api.post<AccessSchedule>(`/workspaces/${wsId}/members/me/schedules`, params).then((r) => r.data),
 
   getMine: (wsId: string, scheduleId: string) =>
-    api.get<AccessSchedule>(`/workspaces/${wsId}/my-schedules/${scheduleId}`).then((r) => r.data),
+    api.get<AccessSchedule>(`/workspaces/${wsId}/members/me/schedules/${scheduleId}`).then((r) => r.data),
 
   updateMine: (wsId: string, scheduleId: string, params: ScheduleParams) =>
-    api.put<AccessSchedule>(`/workspaces/${wsId}/my-schedules/${scheduleId}`, params).then((r) => r.data),
+    api.put<AccessSchedule>(`/workspaces/${wsId}/members/me/schedules/${scheduleId}`, params).then((r) => r.data),
 
   deleteMine: (wsId: string, scheduleId: string) =>
-    api.delete(`/workspaces/${wsId}/my-schedules/${scheduleId}`),
+    api.delete(`/workspaces/${wsId}/members/me/schedules/${scheduleId}`),
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useAuthStore } from '@/store/auth'
+import axios from 'axios'
 
 export interface GateEvent {
   gate_id: string
@@ -10,30 +11,42 @@ export interface GateEvent {
 
 /**
  * Subscribes to real-time gate status events via SSE for the given workspace.
- * Uses a ref for the callback so the EventSource is not recreated on every render.
+ * Uses a one-time ticket obtained via POST (cookie auth) to avoid exposing the JWT in the URL.
  */
 export function useGateEvents(wsId: string | undefined, onEvent: (event: GateEvent) => void) {
-  const accessToken = useAuthStore((s) => s.accessToken)
+  const session = useAuthStore((s) => s.session)
   const onEventRef = useRef(onEvent)
   onEventRef.current = onEvent
 
   useEffect(() => {
-    if (!wsId || !accessToken) return
+    if (!wsId || !session) return
 
-    const url = `/api/workspaces/${wsId}/events?token=${encodeURIComponent(accessToken)}`
-    const es = new EventSource(url)
+    let es: EventSource | null = null
+    let cancelled = false
 
-    es.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data) as GateEvent
-        onEventRef.current(data)
-      } catch {
-        // ignore malformed events
+    axios.post<{ ticket: string }>(
+      `/api/workspaces/${wsId}/events/ticket`,
+      null,
+      { withCredentials: true },
+    ).then(({ data }) => {
+      if (cancelled) return
+      const url = `/api/workspaces/${wsId}/events?ticket=${encodeURIComponent(data.ticket)}`
+      es = new EventSource(url)
+      es.onmessage = (e) => {
+        try {
+          const event = JSON.parse(e.data) as GateEvent
+          onEventRef.current(event)
+        } catch {
+          // ignore malformed events
+        }
       }
-    }
+    }).catch(() => {
+      // ticket acquisition failed — SSE won't connect
+    })
 
     return () => {
-      es.close()
+      cancelled = true
+      es?.close()
     }
-  }, [wsId, accessToken])
+  }, [wsId, session])
 }

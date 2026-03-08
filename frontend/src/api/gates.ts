@@ -40,8 +40,8 @@ export interface GateTokenResponse {
 }
 
 export const gatesApi = {
-  list: (wsId: string, bearerToken?: string) =>
-    api.get(`/workspaces/${wsId}/gates`, bearerToken ? { headers: { Authorization: `Bearer ${bearerToken}` } } : undefined).then((r) => normalizeList(r.data)),
+  list: (wsId: string) =>
+    api.get(`/workspaces/${wsId}/gates`).then((r) => normalizeList(r.data)),
 
   get: (wsId: string, gateId: string) =>
     api.get<Gate>(`/workspaces/${wsId}/gates/${gateId}`).then((r) => r.data),

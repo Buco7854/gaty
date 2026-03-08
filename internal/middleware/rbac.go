@@ -148,6 +148,34 @@ func IsPrivilegedMember(ctx context.Context) bool {
 	return false
 }
 
+// AdminOrGateManager is a Huma per-operation middleware that allows ADMIN/OWNER
+// or any member with gate:manage on at least one gate in the workspace.
+// Must be chained after WorkspaceMember.
+func AdminOrGateManager(api huma.API, wsRepo repository.WorkspaceRepository, memberRepo repository.WorkspaceMembershipRepository, policyRepo repository.PolicyRepository) func(huma.Context, func(huma.Context)) {
+	inner := workspaceAccess(api, wsRepo, memberRepo, model.RoleMember)
+	return func(ctx huma.Context, next func(huma.Context)) {
+		inner(ctx, func(ctx huma.Context) {
+			role, _ := WorkspaceRoleFromContext(ctx.Context())
+			if role == model.RoleAdmin || role == model.RoleOwner {
+				next(ctx)
+				return
+			}
+			membershipID, ok := WorkspaceMembershipIDFromContext(ctx.Context())
+			if !ok {
+				huma.WriteErr(api, ctx, http.StatusForbidden, "forbidden")
+				return
+			}
+			wsID, _ := uuid.Parse(chi.URLParamFromCtx(ctx.Context(), "ws_id"))
+			isManager, err := policyRepo.HasPermissionInWorkspace(ctx.Context(), membershipID, wsID, "gate:manage")
+			if err != nil || !isManager {
+				huma.WriteErr(api, ctx, http.StatusForbidden, "forbidden")
+				return
+			}
+			next(ctx)
+		})
+	}
+}
+
 // WorkspaceRoleFromContext retrieves the workspace role injected by WorkspaceMember/WorkspaceAdmin.
 func WorkspaceRoleFromContext(ctx context.Context) (model.WorkspaceRole, bool) {
 	role, ok := ctx.Value(wsRoleKey).(model.WorkspaceRole)

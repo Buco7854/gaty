@@ -175,15 +175,31 @@ export interface Credential {
   created_at: string
 }
 
-export interface AuthResponse {
-  access_token: string
-  refresh_token: string
+/** Response from global login/register — tokens in cookies, metadata in body. */
+export interface GlobalAuthResponse {
+  type: 'global'
   user: User
 }
 
+/** Response from local login — tokens in cookies, metadata in body. */
+export interface LocalAuthResponse {
+  type: 'local'
+  membership_id: string
+  workspace_id: string
+  role: WorkspaceRole
+  display_name?: string
+}
+
+/** Response from refresh — tokens in cookies, type-dependent metadata in body. */
 export interface RefreshResponse {
-  access_token: string
-  refresh_token: string
+  type: 'global' | 'local' | 'pin_session'
+  user?: User
+  membership_id?: string
+  workspace_id?: string
+  role?: WorkspaceRole
+  display_name?: string
+  gate_id?: string
+  permissions?: string[]
 }
 
 export interface DomainResolveResult {
