@@ -67,6 +67,13 @@ export interface StatusRule {
   set_status: string
 }
 
+/** Automatic status transition after a timeout. */
+export interface StatusTransition {
+  from: string
+  to: string
+  after_seconds: number
+}
+
 export interface Gate {
   id: string
   workspace_id: string
@@ -87,6 +94,10 @@ export interface Gate {
   status_rules?: StatusRule[]
   /** User-defined statuses in addition to the defaults (open, closed, unavailable). */
   custom_statuses?: string[]
+  /** Per-gate inactivity threshold in seconds. null = use global default (30s). */
+  ttl_seconds?: number | null
+  /** Automatic status transitions after a timeout. */
+  status_transitions?: StatusTransition[]
   /** Gate authentication token — only populated on create and rotate-token responses. */
   gate_token?: string
 }

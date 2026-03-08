@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { gatesApi, pinsApi, domainsApi, policiesApi, schedulesApi } from '@/api'
 import type { ActionConfig, PinMetadata } from '@/api'
-import type { Gate, GatePin, CustomDomain, WorkspaceWithRole, AccessSchedule, MetaField, StatusRule, GateStatus } from '@/types'
+import type { Gate, GatePin, CustomDomain, WorkspaceWithRole, AccessSchedule, MetaField, StatusRule, StatusTransition, GateStatus } from '@/types'
 import { useAuthStore } from '@/store/auth'
 import { useTranslation } from 'react-i18next'
 import { notifySuccess, notifyError } from '@/lib/notify'
@@ -185,6 +185,7 @@ function StatusConfigForm({
   const headersObj = (cfg.headers as Record<string, string>) ?? {}
   const body = (cfg.body as string) ?? ''
   const intervalSeconds = (cfg.interval_seconds as number) ?? 60
+  const successStatusCodes = (cfg.success_status_codes as Array<{ from: number; to: number }>) ?? []
 
   function emit(newType: StatusDriverType, newCfg: Record<string, unknown>) {
     if (newType === 'NONE') { onChange(null); return }
@@ -296,6 +297,55 @@ function StatusConfigForm({
             placeholder='{"action": "status"}'
             styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
           />
+
+          <div>
+            <Group justify="space-between" mb={4}>
+              <Text size="sm" fw={500}>{t('gates.successStatusCodes')}</Text>
+              <Button size="xs" variant="subtle" leftSection={<Plus size={12} />}
+                onClick={() => setCfgField('success_status_codes', [...successStatusCodes, { from: 200, to: 299 }])}>
+                {t('common.add')}
+              </Button>
+            </Group>
+            {successStatusCodes.length === 0 && (
+              <Text size="xs" c="dimmed">{t('gates.successStatusCodesDefault')}</Text>
+            )}
+            <Stack gap={4}>
+              {successStatusCodes.map((range, idx) => (
+                <Group key={idx} gap="xs">
+                  <NumberInput
+                    value={range.from}
+                    onChange={(v) => {
+                      const updated = [...successStatusCodes]
+                      updated[idx] = { ...updated[idx], from: typeof v === 'number' ? v : 200 }
+                      setCfgField('success_status_codes', updated)
+                    }}
+                    min={100} max={599}
+                    placeholder="200"
+                    style={{ flex: 1 }}
+                    styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+                  />
+                  <Text size="sm">–</Text>
+                  <NumberInput
+                    value={range.to}
+                    onChange={(v) => {
+                      const updated = [...successStatusCodes]
+                      updated[idx] = { ...updated[idx], to: typeof v === 'number' ? v : 299 }
+                      setCfgField('success_status_codes', updated)
+                    }}
+                    min={100} max={599}
+                    placeholder="299"
+                    style={{ flex: 1 }}
+                    styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+                  />
+                  <ActionIcon variant="subtle" color="red" onClick={() => {
+                    setCfgField('success_status_codes', successStatusCodes.filter((_, i) => i !== idx))
+                  }}>
+                    <Trash2 size={14} />
+                  </ActionIcon>
+                </Group>
+              ))}
+            </Stack>
+          </div>
         </Stack>
       )}
 
@@ -653,6 +703,8 @@ export default function GatePage() {
   const [editMetaConfig, setEditMetaConfig] = useState<MetaField[]>([])
   const [editStatusRules, setEditStatusRules] = useState<StatusRule[]>([])
   const [editCustomStatuses, setEditCustomStatuses] = useState<string[]>([])
+  const [editTTLSeconds, setEditTTLSeconds] = useState<number | null>(null)
+  const [editStatusTransitions, setEditStatusTransitions] = useState<StatusTransition[]>([])
 
   const PIN_SESSION_PRESETS = [
     { value: '0', label: t('members.sessionInfinite') },
@@ -747,6 +799,8 @@ export default function GatePage() {
         meta_config: editMetaConfig,
         status_rules: editStatusRules,
         custom_statuses: editCustomStatuses,
+        ttl_seconds: editTTLSeconds,
+        status_transitions: editStatusTransitions,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['gate', wsId, gateId] })
@@ -873,6 +927,8 @@ export default function GatePage() {
     setEditMetaConfig(gate?.meta_config ?? [])
     setEditStatusRules(gate?.status_rules ?? [])
     setEditCustomStatuses(gate?.custom_statuses ?? [])
+    setEditTTLSeconds(gate?.ttl_seconds ?? null)
+    setEditStatusTransitions(gate?.status_transitions ?? [])
     openConfigModal()
   }
 
@@ -1102,6 +1158,74 @@ export default function GatePage() {
             <MetaConfigEditor value={editMetaConfig} onChange={setEditMetaConfig} />
             <CustomStatusesEditor value={editCustomStatuses} onChange={setEditCustomStatuses} />
             <StatusRulesEditor value={editStatusRules} onChange={setEditStatusRules} allStatuses={allStatuses} />
+            <div>
+              <Text fw={600} mb="sm">{t('gates.ttlSection')}</Text>
+              <NumberInput
+                label={t('gates.ttlSeconds')}
+                description={t('gates.ttlSecondsHint')}
+                value={editTTLSeconds ?? ''}
+                onChange={(v) => setEditTTLSeconds(typeof v === 'number' ? v : null)}
+                min={1}
+                max={3600}
+                placeholder="30"
+              />
+            </div>
+            <div>
+              <Group justify="space-between" mb={4}>
+                <Text fw={600}>{t('gates.statusTransitions')}</Text>
+                <Button size="xs" variant="subtle" leftSection={<Plus size={12} />}
+                  onClick={() => setEditStatusTransitions([...editStatusTransitions, { from: 'open', to: 'closed', after_seconds: 30 }])}>
+                  {t('common.add')}
+                </Button>
+              </Group>
+              <Text size="xs" c="dimmed" mb="xs">{t('gates.statusTransitionsHint')}</Text>
+              <Stack gap={4}>
+                {editStatusTransitions.map((tr, idx) => (
+                  <Group key={idx} gap="xs">
+                    <Select
+                      data={allStatuses}
+                      value={tr.from}
+                      onChange={(v) => {
+                        const updated = [...editStatusTransitions]
+                        updated[idx] = { ...updated[idx], from: v ?? 'open' }
+                        setEditStatusTransitions(updated)
+                      }}
+                      placeholder="from"
+                      style={{ flex: 1 }}
+                    />
+                    <Text size="sm">→</Text>
+                    <Select
+                      data={allStatuses}
+                      value={tr.to}
+                      onChange={(v) => {
+                        const updated = [...editStatusTransitions]
+                        updated[idx] = { ...updated[idx], to: v ?? 'closed' }
+                        setEditStatusTransitions(updated)
+                      }}
+                      placeholder="to"
+                      style={{ flex: 1 }}
+                    />
+                    <NumberInput
+                      value={tr.after_seconds}
+                      onChange={(v) => {
+                        const updated = [...editStatusTransitions]
+                        updated[idx] = { ...updated[idx], after_seconds: typeof v === 'number' ? v : 30 }
+                        setEditStatusTransitions(updated)
+                      }}
+                      min={1}
+                      placeholder="30"
+                      suffix="s"
+                      style={{ flex: 1 }}
+                    />
+                    <ActionIcon variant="subtle" color="red" onClick={() =>
+                      setEditStatusTransitions(editStatusTransitions.filter((_, i) => i !== idx))
+                    }>
+                      <Trash2 size={14} />
+                    </ActionIcon>
+                  </Group>
+                ))}
+              </Stack>
+            </div>
             <Group justify="flex-end">
               <Button variant="default" onClick={closeConfigModal}>{t('common.cancel')}</Button>
               <Button type="submit" loading={updateConfig.isPending}>{t('common.save')}</Button>

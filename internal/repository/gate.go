@@ -19,19 +19,23 @@ type CreateGateParams struct {
 	MetaConfig        []model.MetaField
 	StatusRules       []model.StatusRule
 	CustomStatuses    []string
+	TTLSeconds        *int
+	StatusTransitions []model.StatusTransition
 }
 
 // UpdateGateParams holds the fields that can be updated on a gate.
 // For action configs, Set=false = unchanged; Set=true && V=nil = clear to NULL.
 // For slices, nil = unchanged, empty slice = clear.
 type UpdateGateParams struct {
-	Name           *string
-	OpenConfig     OmittableNullable[model.ActionConfig]
-	CloseConfig    OmittableNullable[model.ActionConfig]
-	StatusConfig   OmittableNullable[model.ActionConfig]
-	MetaConfig     []model.MetaField  // nil = unchanged, [] = clear
-	StatusRules    []model.StatusRule
-	CustomStatuses []string // nil = unchanged, [] = clear
+	Name              *string
+	OpenConfig        OmittableNullable[model.ActionConfig]
+	CloseConfig       OmittableNullable[model.ActionConfig]
+	StatusConfig      OmittableNullable[model.ActionConfig]
+	MetaConfig        []model.MetaField  // nil = unchanged, [] = clear
+	StatusRules       []model.StatusRule
+	CustomStatuses    []string // nil = unchanged, [] = clear
+	TTLSeconds        OmittableNullable[int]
+	StatusTransitions []model.StatusTransition // nil = unchanged, [] = clear
 }
 
 // GatePublicInfo holds gate + workspace context needed for the public PIN pad.
@@ -73,4 +77,7 @@ type GateRepository interface {
 	// ListWebhookGates returns all gates configured with HTTP_WEBHOOK status polling.
 	// Used by the webhook worker to determine which gates need periodic polling.
 	ListWebhookGates(ctx context.Context) ([]model.Gate, error)
+	// ListTransitionCandidates returns gates that have non-empty status_transitions
+	// and a non-null last_seen_at. Timing checks are done in Go.
+	ListTransitionCandidates(ctx context.Context) ([]model.Gate, error)
 }

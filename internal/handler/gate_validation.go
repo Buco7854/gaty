@@ -61,6 +61,9 @@ func validateStatusActionConfig(cfg *model.ActionConfig) error {
 		if strings.TrimSpace(url) == "" {
 			return fmt.Errorf("status_config: HTTP_WEBHOOK driver requires a non-empty url")
 		}
+		if err := validateSuccessStatusCodes(cfg.Config); err != nil {
+			return err
+		}
 	}
 
 	// All active modes require a complete payload mapping (field mandatory).
@@ -85,6 +88,74 @@ func validateStatusActionConfig(cfg *model.ActionConfig) error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("status_config: status value mapping is missing required targets: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// validateTTLSeconds checks that a per-gate TTL override is within a sensible range.
+func validateTTLSeconds(v *int) error {
+	if v == nil {
+		return nil
+	}
+	if *v < 1 || *v > 3600 {
+		return fmt.Errorf("ttl_seconds must be between 1 and 3600")
+	}
+	return nil
+}
+
+// validateStatusTransitions checks that each transition has valid from/to statuses,
+// from != to, and after_seconds > 0.
+func validateStatusTransitions(transitions []model.StatusTransition, customStatuses []string) error {
+	known := make(map[string]bool, len(model.DefaultGateStatuses)+len(customStatuses))
+	for _, s := range model.DefaultGateStatuses {
+		known[s] = true
+	}
+	for _, s := range customStatuses {
+		known[s] = true
+	}
+	for i, t := range transitions {
+		if t.From == t.To {
+			return fmt.Errorf("status_transitions[%d]: 'from' and 'to' must be different", i)
+		}
+		if t.AfterSeconds <= 0 {
+			return fmt.Errorf("status_transitions[%d]: after_seconds must be > 0", i)
+		}
+		if !known[t.From] {
+			return fmt.Errorf("status_transitions[%d]: 'from' status %q is not a known status", i, t.From)
+		}
+		if !known[t.To] {
+			return fmt.Errorf("status_transitions[%d]: 'to' status %q is not a known status", i, t.To)
+		}
+	}
+	return nil
+}
+
+// validateSuccessStatusCodes validates the optional success_status_codes field in a webhook config.
+func validateSuccessStatusCodes(cfg map[string]any) error {
+	raw, ok := cfg["success_status_codes"]
+	if !ok {
+		return nil
+	}
+	arr, ok := raw.([]any)
+	if !ok {
+		return fmt.Errorf("status_config: success_status_codes must be an array of {from, to} ranges")
+	}
+	for i, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return fmt.Errorf("status_config: success_status_codes[%d] must be an object with 'from' and 'to'", i)
+		}
+		from, okF := model.ToInt(m["from"])
+		to, okT := model.ToInt(m["to"])
+		if !okF || !okT {
+			return fmt.Errorf("status_config: success_status_codes[%d]: 'from' and 'to' must be integers", i)
+		}
+		if from > to {
+			return fmt.Errorf("status_config: success_status_codes[%d]: 'from' (%d) must be <= 'to' (%d)", i, from, to)
+		}
+		if from < 100 || to > 599 {
+			return fmt.Errorf("status_config: success_status_codes[%d]: values must be between 100 and 599", i)
+		}
 	}
 	return nil
 }

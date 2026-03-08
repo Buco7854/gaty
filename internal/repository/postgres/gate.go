@@ -69,7 +69,7 @@ type rowScanner interface {
 }
 
 // applyGateJSON populates the JSON-derived fields of g from raw database bytes.
-func applyGateJSON(g *model.Gate, rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses []byte) {
+func applyGateJSON(g *model.Gate, rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses, rawStatusTransitions []byte) {
 	g.OpenConfig = unmarshalActionConfig(rawOpen)
 	g.CloseConfig = unmarshalActionConfig(rawClose)
 	g.StatusConfig = unmarshalActionConfig(rawStatus)
@@ -81,32 +81,35 @@ func applyGateJSON(g *model.Gate, rawOpen, rawClose, rawStatus, rawMeta, rawMeta
 	if len(rawCustomStatuses) > 0 {
 		_ = json.Unmarshal(rawCustomStatuses, &g.CustomStatuses)
 	}
+	if len(rawStatusTransitions) > 0 {
+		_ = json.Unmarshal(rawStatusTransitions, &g.StatusTransitions)
+	}
 }
 
 // scanGate fills g from a row that yields colsFull columns.
 // Callers handle ErrNoRows themselves (pgx.Row.Scan returns it directly).
 func scanGate(s rowScanner, g *model.Gate) error {
-	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses []byte
+	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses, rawStatusTransitions []byte
 	err := s.Scan(
 		&g.ID, &g.WorkspaceID, &g.Name,
 		&g.IntegrationType, &g.IntegrationConfig,
 		&rawOpen, &rawClose, &rawStatus,
 		&g.Status, &g.LastSeenAt,
 		&rawMeta, &rawMetaCfg, &rawStatusRules,
-		&rawCustomStatuses,
+		&rawCustomStatuses, &g.TTLSeconds, &rawStatusTransitions,
 		&g.CreatedAt,
 	)
 	if err != nil {
 		return err
 	}
-	applyGateJSON(g, rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses)
+	applyGateJSON(g, rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses, rawStatusTransitions)
 	return nil
 }
 
 const colsFull = `id, workspace_id, name, integration_type, integration_config,
                   open_config, close_config, status_config,
                   status, last_seen_at, status_metadata, meta_config, status_rules,
-                  custom_statuses, created_at`
+                  custom_statuses, ttl_seconds, status_transitions, created_at`
 
 func marshalJSONSlice[T any](v []T, fallback string) json.RawMessage {
 	if len(v) == 0 {
@@ -125,11 +128,11 @@ func (r *gateRepository) Create(ctx context.Context, wsID uuid.UUID, p repositor
 	// Single round-trip: INSERT + RETURNING gate_token + all gate columns.
 	var g model.Gate
 	var token string
-	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses []byte
+	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses, rawStatusTransitions []byte
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO gates (workspace_id, name, integration_type, integration_config,
-		                    open_config, close_config, status_config, meta_config, status_rules, custom_statuses)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		                    open_config, close_config, status_config, meta_config, status_rules, custom_statuses, ttl_seconds, status_transitions)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		 RETURNING gate_token, `+colsFull,
 		wsID, p.Name, p.IntegrationType, p.IntegrationConfig,
 		marshalActionConfig(p.OpenConfig),
@@ -138,6 +141,8 @@ func (r *gateRepository) Create(ctx context.Context, wsID uuid.UUID, p repositor
 		marshalJSONSlice(p.MetaConfig, "[]"),
 		marshalJSONSlice(p.StatusRules, "[]"),
 		marshalJSONSlice(p.CustomStatuses, "[]"),
+		p.TTLSeconds,
+		marshalJSONSlice(p.StatusTransitions, "[]"),
 	).Scan(
 		&token,
 		&g.ID, &g.WorkspaceID, &g.Name,
@@ -145,13 +150,13 @@ func (r *gateRepository) Create(ctx context.Context, wsID uuid.UUID, p repositor
 		&rawOpen, &rawClose, &rawStatus,
 		&g.Status, &g.LastSeenAt,
 		&rawMeta, &rawMetaCfg, &rawStatusRules,
-		&rawCustomStatuses,
+		&rawCustomStatuses, &g.TTLSeconds, &rawStatusTransitions,
 		&g.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create gate: %w", err)
 	}
-	applyGateJSON(&g, rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses)
+	applyGateJSON(&g, rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses, rawStatusTransitions)
 	g.GateToken = &token
 	return &g, nil
 }
@@ -221,6 +226,21 @@ func (r *gateRepository) Update(ctx context.Context, gateID, wsID uuid.UUID, p r
 	if p.CustomStatuses != nil {
 		sets = append(sets, fmt.Sprintf("custom_statuses = $%d::jsonb", n))
 		args = append(args, marshalJSONSlice(p.CustomStatuses, "[]"))
+		n++
+	}
+	if p.TTLSeconds.Sent {
+		if p.TTLSeconds.Null {
+			sets = append(sets, fmt.Sprintf("ttl_seconds = $%d", n))
+			args = append(args, nil)
+		} else {
+			sets = append(sets, fmt.Sprintf("ttl_seconds = $%d", n))
+			args = append(args, p.TTLSeconds.Value)
+		}
+		n++
+	}
+	if p.StatusTransitions != nil {
+		sets = append(sets, fmt.Sprintf("status_transitions = $%d::jsonb", n))
+		args = append(args, marshalJSONSlice(p.StatusTransitions, "[]"))
 		n++
 	}
 
@@ -330,19 +350,18 @@ func (r *gateRepository) UpdateStatus(ctx context.Context, gateID uuid.UUID, sta
 }
 
 func (r *gateRepository) MarkUnresponsiveWithIDs(ctx context.Context, ttl time.Duration) ([]repository.UnresponsiveGate, error) {
-	// Compute the cutoff timestamp on the application side so it uses the app's clock
-	// (consistent with time.Since checks in the model) and avoids fragile string interval formatting.
-	cutoff := time.Now().Add(-ttl)
+	// Per-gate TTL: use COALESCE(ttl_seconds, default) to respect per-gate overrides.
+	defaultTTLSeconds := int(ttl.Seconds())
 
 	rows, err := r.pool.Query(ctx,
 		`UPDATE gates
 		 SET status = $1
 		 WHERE last_seen_at IS NOT NULL
-		   AND last_seen_at < $2
+		   AND last_seen_at < NOW() - INTERVAL '1 second' * COALESCE(ttl_seconds, $2)
 		   AND status NOT IN ($1, $3, $4)
 		 RETURNING id, workspace_id`,
 		string(model.GateStatusUnresponsive),
-		cutoff,
+		defaultTTLSeconds,
 		string(model.GateStatusUnknown),
 		// Don't override "offline": a gate may self-report offline before going quiet,
 		// and marking it "unresponsive" would lose that intentional state.
@@ -462,6 +481,28 @@ func (r *gateRepository) ListWebhookGates(ctx context.Context) ([]model.Gate, er
 		var g model.Gate
 		if err := scanGate(rows, &g); err != nil {
 			return nil, fmt.Errorf("scan webhook gate: %w", err)
+		}
+		gates = append(gates, g)
+	}
+	return gates, rows.Err()
+}
+
+func (r *gateRepository) ListTransitionCandidates(ctx context.Context) ([]model.Gate, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+colsFull+` FROM gates
+		 WHERE status_transitions != '[]'::jsonb
+		   AND last_seen_at IS NOT NULL`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list transition candidates: %w", err)
+	}
+	defer rows.Close()
+
+	var gates []model.Gate
+	for rows.Next() {
+		var g model.Gate
+		if err := scanGate(rows, &g); err != nil {
+			return nil, fmt.Errorf("scan transition candidate: %w", err)
 		}
 		gates = append(gates, g)
 	}

@@ -89,13 +89,15 @@ func main() {
 
 	// ── 4. Gate 1 : Portail Principal ─────────────────────────────────────────
 	g1 := c.must(http.MethodPost, fmt.Sprintf("/api/workspaces/%s/gates", wsID), map[string]any{
-		"name":             "Portail Principal",
-		"integration_type": "NONE",
+		"name": "Portail Principal",
 		"status_config": map[string]any{
 			"type": "HTTP_INBOUND",
 			"config": map[string]any{
 				"mapping": map[string]any{
-					"status": map[string]any{"field": "status"},
+					"status": map[string]any{
+						"field":  "status",
+						"values": map[string]string{"open": "open", "closed": "closed"},
+					},
 				},
 			},
 		},
@@ -114,8 +116,7 @@ func main() {
 
 	// ── 5. Gate 2 : Garage ────────────────────────────────────────────────────
 	g2 := c.must(http.MethodPost, fmt.Sprintf("/api/workspaces/%s/gates", wsID), map[string]any{
-		"name":             "Garage",
-		"integration_type": "NONE",
+		"name": "Garage",
 	}, http.StatusCreated)
 	token2, _ := g2["gate_token"].(string)
 	gateID2, _ := g2["id"].(string)
@@ -153,7 +154,10 @@ func main() {
 			"type": "MQTT_CUSTOM",
 			"config": map[string]any{
 				"mapping": map[string]any{
-					"status": map[string]any{"field": "state"},
+					"status": map[string]any{
+						"field":  "state",
+						"values": map[string]string{"open": "open", "closed": "closed"},
+					},
 				},
 			},
 		},

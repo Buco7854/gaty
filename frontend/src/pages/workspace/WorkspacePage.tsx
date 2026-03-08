@@ -272,7 +272,13 @@ export default function WorkspacePage() {
               </Group>
               {canManage && (
                 <Text size="xs" c="dimmed" mb="md">
-                  {gate.open_config?.type ?? gate.integration_type}
+                  {(() => {
+                    const types = [gate.open_config, gate.close_config, gate.status_config]
+                      .map(c => c?.type)
+                      .filter((t): t is string => !!t && t !== 'NONE');
+                    const unique = [...new Set(types)];
+                    return unique.length > 0 ? unique.join(' / ') : t('gates.noDriver');
+                  })()}
                 </Text>
               )}
               <Group gap="xs">

@@ -23,7 +23,8 @@ const (
 )
 
 // GateTTLWorker periodically marks gates as "unresponsive" when they haven't
-// sent a status update within the configured TTL.
+// sent a status update within the configured TTL. It also applies automatic
+// status transitions when configured.
 //
 // Architecture note: the worker relies on the partial index
 // idx_gates_ttl_candidates so the bulk UPDATE touches only candidate rows,
@@ -51,6 +52,7 @@ func (w *GateTTLWorker) Run(ctx context.Context) {
 		select {
 		case <-ticker.C:
 			w.markExpired(ctx)
+			w.checkTransitions(ctx)
 		case <-ctx.Done():
 			slog.Info("gate TTL worker stopped")
 			return
@@ -79,5 +81,52 @@ func (w *GateTTLWorker) markExpired(ctx context.Context) {
 			WorkspaceID: g.WorkspaceID.String(),
 			Status:      string(model.GateStatusUnresponsive),
 		})
+	}
+}
+
+// checkTransitions applies automatic status transitions for gates whose current
+// status matches a transition's "from" and whose last_seen_at + after_seconds has elapsed.
+func (w *GateTTLWorker) checkTransitions(ctx context.Context) {
+	tCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	gates, err := w.gates.ListTransitionCandidates(tCtx)
+	if err != nil {
+		slog.Error("gate transitions: failed to list candidates", "error", err)
+		return
+	}
+
+	now := time.Now()
+	for i := range gates {
+		g := &gates[i]
+		if g.LastSeenAt == nil {
+			continue
+		}
+		for _, t := range g.StatusTransitions {
+			if string(g.Status) != t.From {
+				continue
+			}
+			deadline := g.LastSeenAt.Add(time.Duration(t.AfterSeconds) * time.Second)
+			if now.Before(deadline) {
+				continue
+			}
+			// Transition is due — apply it directly (no status rules evaluation).
+			if err := w.gates.UpdateStatus(tCtx, g.ID, t.To, g.StatusMetadata); err != nil {
+				slog.Error("gate transitions: failed to update status",
+					"gate_id", g.ID, "from", t.From, "to", t.To, "error", err)
+				continue
+			}
+			slog.Info("gate transitions: applied",
+				"gate_id", g.ID, "from", t.From, "to", t.To, "after_seconds", t.AfterSeconds)
+
+			if w.redis != nil {
+				publishGateStatusEvent(tCtx, w.redis, GateStatusEvent{
+					GateID:      g.ID.String(),
+					WorkspaceID: g.WorkspaceID.String(),
+					Status:      t.To,
+				})
+			}
+			break // first matching transition wins
+		}
 	}
 }

@@ -10,6 +10,8 @@
 //     responds to open/close commands by publishing a status update.
 //     Requires only --token (workspace_id and gate_id are decoded from the JWT).
 //
+// Both modes send periodic heartbeat status updates to keep the gate alive.
+//
 // Usage (HTTP mode):
 //
 //	go run ./cmd/gatesim --token=<gate_token> --mode=http [--api=...] [--listen=:9090]
@@ -32,6 +34,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -45,6 +48,7 @@ func main() {
 	apiURL := flag.String("api", "http://localhost:8080", "Gatie API base URL")
 	broker := flag.String("broker", "tcp://localhost:1883", "MQTT broker URL")
 	listenAddr := flag.String("listen", ":9090", "Listen address for HTTP mode command server")
+	heartbeat := flag.Duration("heartbeat", 10*time.Second, "Heartbeat interval for periodic status updates (0 to disable)")
 	flag.Parse()
 
 	if *token == "" {
@@ -58,8 +62,8 @@ func main() {
 
 	switch *mode {
 	case "http":
-		sim := &simulator{token: *token, apiURL: *apiURL}
-		runHTTP(ctx, sim, *listenAddr)
+		sim := &simulator{token: *token, apiURL: *apiURL, status: "closed"}
+		runHTTP(ctx, sim, *listenAddr, *heartbeat)
 
 	case "mqtt":
 		wsID, gateID, err := parseJWTClaims(*token)
@@ -67,8 +71,8 @@ func main() {
 			slog.Error("mqtt: cannot decode workspace_id/gate_id from token", "error", err)
 			os.Exit(1)
 		}
-		sim := &simulator{wsID: wsID.String(), gateID: gateID, token: *token, apiURL: *apiURL}
-		runMQTT(ctx, sim, *broker)
+		sim := &simulator{wsID: wsID.String(), gateID: gateID, token: *token, apiURL: *apiURL, status: "closed"}
+		runMQTT(ctx, sim, *broker, *heartbeat)
 
 	default:
 		slog.Error("unknown mode, use http or mqtt", "mode", *mode)
@@ -111,13 +115,39 @@ type simulator struct {
 	gateID uuid.UUID
 	token  string
 	apiURL string
+
+	mu     sync.Mutex
+	status string // current gate status ("open", "closed", etc.)
+}
+
+func (s *simulator) getStatus() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.status
+}
+
+func (s *simulator) setStatus(status string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.status = status
+}
+
+func sampleMeta(mode string) map[string]any {
+	return map[string]any{
+		"sim.mode":    mode,
+		"sim.latency": "0ms",
+		"lora.snr":    float64(-8),
+		"lora.rssi":   float64(-72),
+	}
 }
 
 // ---- MQTT mode ----
 
-func runMQTT(ctx context.Context, sim *simulator, brokerURL string) {
+func runMQTT(ctx context.Context, sim *simulator, brokerURL string, heartbeatInterval time.Duration) {
 	commandTopic := fmt.Sprintf("workspace_%s/gates/%s/command", sim.wsID, sim.gateID)
 	statusTopic := fmt.Sprintf("workspace_%s/gates/%s/status", sim.wsID, sim.gateID)
+
+	var mqttClient pahomqtt.Client
 
 	opts := pahomqtt.NewClientOptions().
 		AddBroker(brokerURL).
@@ -141,17 +171,48 @@ func runMQTT(ctx context.Context, sim *simulator, brokerURL string) {
 			slog.Warn("mqtt: connection lost", "error", err)
 		})
 
-	client := pahomqtt.NewClient(opts)
-	if t := client.Connect(); t.Wait() && t.Error() != nil {
+	mqttClient = pahomqtt.NewClient(opts)
+	if t := mqttClient.Connect(); t.Wait() && t.Error() != nil {
 		slog.Error("mqtt: failed to connect", "error", t.Error())
 		os.Exit(1)
 	}
-	defer client.Disconnect(500)
+	defer mqttClient.Disconnect(500)
 
-	slog.Info("gatesim running in MQTT mode", "workspace_id", sim.wsID, "gate_id", sim.gateID)
+	// Start heartbeat
+	if heartbeatInterval > 0 {
+		go mqttHeartbeat(ctx, sim, mqttClient, statusTopic, heartbeatInterval)
+	}
+
+	slog.Info("gatesim running in MQTT mode", "workspace_id", sim.wsID, "gate_id", sim.gateID, "heartbeat", heartbeatInterval)
 	slog.Info("Waiting for commands (Ctrl+C to stop)")
 	<-ctx.Done()
 	slog.Info("gatesim stopping")
+}
+
+func mqttHeartbeat(ctx context.Context, sim *simulator, client pahomqtt.Client, statusTopic string, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			payload := mqttStatusPayload{
+				Token:  sim.token,
+				Status: sim.getStatus(),
+				Meta:   sampleMeta("mqtt"),
+			}
+			b, _ := json.Marshal(payload)
+			t := client.Publish(statusTopic, 1, false, b)
+			t.Wait()
+			if err := t.Error(); err != nil {
+				slog.Warn("mqtt heartbeat: publish failed", "error", err)
+			} else {
+				slog.Debug("mqtt heartbeat: sent", "status", payload.Status)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // commandPayload is the JSON the server sends on the command topic.
@@ -175,15 +236,12 @@ func handleMQTTCommand(ctx context.Context, sim *simulator, client pahomqtt.Clie
 	slog.Info("mqtt: received command", "action", cmd.Action)
 
 	newStatus := actionToStatus(cmd.Action)
+	sim.setStatus(newStatus)
+
 	payload := mqttStatusPayload{
 		Token:  sim.token,
 		Status: newStatus,
-		Meta: map[string]any{
-			"sim.mode":    "mqtt",
-			"sim.latency": "0ms",
-			"lora.snr":    float64(-8),
-			"lora.rssi":   float64(-72),
-		},
+		Meta:   sampleMeta("mqtt"),
 	}
 	b, _ := json.Marshal(payload)
 
@@ -198,7 +256,7 @@ func handleMQTTCommand(ctx context.Context, sim *simulator, client pahomqtt.Clie
 
 // ---- HTTP mode ----
 
-func runHTTP(ctx context.Context, sim *simulator, listenAddr string) {
+func runHTTP(ctx context.Context, sim *simulator, listenAddr string, heartbeatInterval time.Duration) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/open", func(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +265,7 @@ func runHTTP(ctx context.Context, sim *simulator, listenAddr string) {
 			return
 		}
 		slog.Info("http: received open command")
+		sim.setStatus("open")
 		w.WriteHeader(http.StatusOK)
 		pushStatus(r.Context(), sim, "open", map[string]any{"sim.mode": "http"})
 	})
@@ -217,6 +276,7 @@ func runHTTP(ctx context.Context, sim *simulator, listenAddr string) {
 			return
 		}
 		slog.Info("http: received close command")
+		sim.setStatus("closed")
 		w.WriteHeader(http.StatusOK)
 		pushStatus(r.Context(), sim, "closed", map[string]any{"sim.mode": "http"})
 	})
@@ -233,8 +293,10 @@ func runHTTP(ctx context.Context, sim *simulator, listenAddr string) {
 			return
 		}
 		slog.Info("http: received action command", "action", cmd.Action)
+		newStatus := actionToStatus(cmd.Action)
+		sim.setStatus(newStatus)
 		w.WriteHeader(http.StatusOK)
-		pushStatus(r.Context(), sim, actionToStatus(cmd.Action), map[string]any{"sim.mode": "http"})
+		pushStatus(r.Context(), sim, newStatus, map[string]any{"sim.mode": "http"})
 	})
 
 	srv := &http.Server{Addr: listenAddr, Handler: mux}
@@ -248,12 +310,34 @@ func runHTTP(ctx context.Context, sim *simulator, listenAddr string) {
 		}
 	}()
 
-	slog.Info("gatesim running in HTTP mode — waiting for commands (Ctrl+C to stop)")
+	// Start heartbeat
+	if heartbeatInterval > 0 {
+		go httpHeartbeat(ctx, sim, heartbeatInterval)
+	}
+
+	slog.Info("gatesim running in HTTP mode", "heartbeat", heartbeatInterval)
+	slog.Info("Waiting for commands (Ctrl+C to stop)")
 	<-ctx.Done()
 	slog.Info("gatesim stopping")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+func httpHeartbeat(ctx context.Context, sim *simulator, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			status := sim.getStatus()
+			pushStatus(ctx, sim, status, map[string]any{"sim.mode": "http"})
+			slog.Debug("http heartbeat: sent", "status", status)
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // pushStatus sends a status update to the gatie inbound API endpoint.

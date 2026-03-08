@@ -208,3 +208,8 @@ ALTER TABLE gates
 
 -- Ensure token uniqueness (DEFAULT already generates unique values per row).
 ALTER TABLE gates ADD CONSTRAINT gates_gate_token_unique UNIQUE (gate_token);
+
+-- Per-gate TTL override (NULL = use global default) and automatic status transitions.
+ALTER TABLE gates
+    ADD COLUMN ttl_seconds          INTEGER,
+    ADD COLUMN status_transitions   JSONB NOT NULL DEFAULT '[]';

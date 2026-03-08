@@ -1,3 +1,7 @@
+ALTER TABLE gates
+    DROP COLUMN IF EXISTS status_transitions,
+    DROP COLUMN IF EXISTS ttl_seconds;
+
 ALTER TABLE gates DROP CONSTRAINT IF EXISTS gates_gate_token_unique;
 ALTER TABLE gates
     DROP COLUMN IF EXISTS gate_token,

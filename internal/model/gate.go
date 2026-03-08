@@ -52,6 +52,15 @@ type StatusRule struct {
 	SetStatus string `json:"set_status" minLength:"1"`
 }
 
+// StatusTransition defines an automatic status change after a timeout.
+// When a gate's current status matches From and no new status update arrives
+// within AfterSeconds, the status is automatically set to To.
+type StatusTransition struct {
+	From         string `json:"from" minLength:"1"`
+	To           string `json:"to" minLength:"1"`
+	AfterSeconds int    `json:"after_seconds"`
+}
+
 // EvaluateStatusRules checks each rule against meta in order and returns the first matching
 // (setStatus, true), or ("", false) if no rule matches.
 // Keys support dot notation for nested objects (e.g. "lora.snr" → meta["lora"]["snr"]).
@@ -155,6 +164,63 @@ func ruleMatches(op string, actual any, threshold string) bool {
 	return false
 }
 
+// StatusCodeRange defines an inclusive range of HTTP status codes considered successful.
+type StatusCodeRange struct {
+	From int `json:"from"`
+	To   int `json:"to"`
+}
+
+// IsSuccessStatus checks whether the given HTTP status code falls within any of the
+// provided success ranges. If ranges is empty, the default 200-299 range is used.
+func IsSuccessStatus(code int, ranges []StatusCodeRange) bool {
+	if len(ranges) == 0 {
+		return code >= 200 && code < 300
+	}
+	for _, r := range ranges {
+		if code >= r.From && code <= r.To {
+			return true
+		}
+	}
+	return false
+}
+
+// ExtractSuccessStatusCodes extracts success_status_codes from an ActionConfig's Config map.
+func ExtractSuccessStatusCodes(cfg map[string]any) []StatusCodeRange {
+	raw, ok := cfg["success_status_codes"]
+	if !ok {
+		return nil
+	}
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	var ranges []StatusCodeRange
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		from, _ := ToInt(m["from"])
+		to, _ := ToInt(m["to"])
+		if from > 0 && to > 0 {
+			ranges = append(ranges, StatusCodeRange{From: from, To: to})
+		}
+	}
+	return ranges
+}
+
+func ToInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int(n), true
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	}
+	return 0, false
+}
+
 // DriverType identifies which integration driver handles a gate action.
 type DriverType string
 
@@ -223,6 +289,13 @@ type Gate struct {
 
 	// CustomStatuses are user-defined statuses in addition to DefaultGateStatuses.
 	CustomStatuses []string `json:"custom_statuses,omitempty"`
+
+	// TTLSeconds is the per-gate inactivity threshold in seconds.
+	// nil means use the global default (30s).
+	TTLSeconds *int `json:"ttl_seconds,omitempty"`
+
+	// StatusTransitions define automatic status changes after a timeout.
+	StatusTransitions []StatusTransition `json:"status_transitions,omitempty"`
 
 	// GateToken is the gate's authentication secret.
 	// Only populated in create and rotate-token responses (never in list/get).

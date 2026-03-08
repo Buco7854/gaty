@@ -60,7 +60,9 @@ type CreateGateInput struct {
 		// StatusRules define conditions evaluated against metadata to override the gate status.
 		StatusRules []model.StatusRule `json:"status_rules,omitempty"`
 		// CustomStatuses are user-defined statuses in addition to the defaults (open, closed, unavailable).
-		CustomStatuses []string `json:"custom_statuses,omitempty"`
+		CustomStatuses    []string                    `json:"custom_statuses,omitempty"`
+		TTLSeconds        *int                        `json:"ttl_seconds,omitempty"`
+		StatusTransitions []model.StatusTransition    `json:"status_transitions,omitempty"`
 	}
 }
 
@@ -92,6 +94,12 @@ func (h *GateHandler) Create(ctx context.Context, input *CreateGateInput) (*Gate
 	if err := validateStatusRules(b.StatusRules, b.CustomStatuses); err != nil {
 		return nil, gateFieldErr("status_rules", err)
 	}
+	if err := validateTTLSeconds(b.TTLSeconds); err != nil {
+		return nil, gateFieldErr("ttl_seconds", err)
+	}
+	if err := validateStatusTransitions(b.StatusTransitions, b.CustomStatuses); err != nil {
+		return nil, gateFieldErr("status_transitions", err)
+	}
 	gate, err := h.gates.Create(ctx, input.WorkspaceID, service.CreateGateParams{
 		Name:              input.Body.Name,
 		IntegrationType:   input.Body.IntegrationType,
@@ -102,6 +110,8 @@ func (h *GateHandler) Create(ctx context.Context, input *CreateGateInput) (*Gate
 		MetaConfig:        input.Body.MetaConfig,
 		StatusRules:       input.Body.StatusRules,
 		CustomStatuses:    input.Body.CustomStatuses,
+		TTLSeconds:        input.Body.TTLSeconds,
+		StatusTransitions: input.Body.StatusTransitions,
 	})
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create gate", err)
@@ -145,6 +155,8 @@ type UpdateGateInput struct {
 		MetaConfig     []model.MetaField                    `json:"meta_config,omitempty"`
 		StatusRules    []model.StatusRule                    `json:"status_rules,omitempty"`
 		CustomStatuses []string                             `json:"custom_statuses,omitempty"`
+		TTLSeconds        OmittableNullable[int]               `json:"ttl_seconds,omitempty"`
+		StatusTransitions []model.StatusTransition             `json:"status_transitions,omitempty"`
 	}
 }
 
@@ -175,14 +187,26 @@ func (h *GateHandler) Update(ctx context.Context, input *UpdateGateInput) (*Gate
 			return nil, gateFieldErr("status_rules", err)
 		}
 	}
+	if b.TTLSeconds.Sent && !b.TTLSeconds.Null {
+		if err := validateTTLSeconds(&b.TTLSeconds.Value); err != nil {
+			return nil, gateFieldErr("ttl_seconds", err)
+		}
+	}
+	if b.StatusTransitions != nil {
+		if err := validateStatusTransitions(b.StatusTransitions, b.CustomStatuses); err != nil {
+			return nil, gateFieldErr("status_transitions", err)
+		}
+	}
 	gate, err := h.gates.Update(ctx, input.GateID, input.WorkspaceID, service.UpdateGateParams{
-		Name:           input.Body.Name,
-		OpenConfig:     input.Body.OpenConfig.ToModel(),
-		CloseConfig:    input.Body.CloseConfig.ToModel(),
-		StatusConfig:   input.Body.StatusConfig.ToModel(),
-		MetaConfig:     input.Body.MetaConfig,
-		StatusRules:    input.Body.StatusRules,
-		CustomStatuses: input.Body.CustomStatuses,
+		Name:              input.Body.Name,
+		OpenConfig:        input.Body.OpenConfig.ToModel(),
+		CloseConfig:       input.Body.CloseConfig.ToModel(),
+		StatusConfig:      input.Body.StatusConfig.ToModel(),
+		MetaConfig:        input.Body.MetaConfig,
+		StatusRules:       input.Body.StatusRules,
+		CustomStatuses:    input.Body.CustomStatuses,
+		TTLSeconds:        input.Body.TTLSeconds.ToModel(),
+		StatusTransitions: input.Body.StatusTransitions,
 	})
 	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")

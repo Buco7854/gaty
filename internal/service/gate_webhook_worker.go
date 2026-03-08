@@ -151,7 +151,9 @@ func (w *GateWebhookWorker) pollGate(ctx context.Context, gate *model.Gate) {
 		return
 	}
 
-	raw, err := w.fetchWithRetry(ctx, method, url, headers, body)
+	successRanges := model.ExtractSuccessStatusCodes(cfg)
+
+	raw, err := w.fetchWithRetry(ctx, method, url, headers, body, successRanges)
 	if err != nil {
 		slog.Warn("webhook: poll failed", "gate_id", gate.ID, "url", url, "error", err)
 		return
@@ -171,7 +173,7 @@ func (w *GateWebhookWorker) pollGate(ctx context.Context, gate *model.Gate) {
 
 // fetchWithRetry performs the HTTP request and retries up to maxRetries times on failure.
 // Returns the parsed JSON response body as map[string]any.
-func (w *GateWebhookWorker) fetchWithRetry(ctx context.Context, method, url string, headers map[string]string, body string) (map[string]any, error) {
+func (w *GateWebhookWorker) fetchWithRetry(ctx context.Context, method, url string, headers map[string]string, body string, successRanges []model.StatusCodeRange) (map[string]any, error) {
 	var lastErr error
 	for attempt := 0; attempt <= w.maxRetries; attempt++ {
 		if attempt > 0 {
@@ -182,7 +184,7 @@ func (w *GateWebhookWorker) fetchWithRetry(ctx context.Context, method, url stri
 			}
 		}
 
-		result, err := fetchJSON(ctx, w.httpClient, method, url, headers, body)
+		result, err := fetchJSON(ctx, w.httpClient, method, url, headers, body, successRanges)
 		if err == nil {
 			return result, nil
 		}
@@ -192,7 +194,7 @@ func (w *GateWebhookWorker) fetchWithRetry(ctx context.Context, method, url stri
 	return nil, fmt.Errorf("all %d attempts failed: %w", w.maxRetries+1, lastErr)
 }
 
-func fetchJSON(ctx context.Context, client *http.Client, method, url string, headers map[string]string, body string) (map[string]any, error) {
+func fetchJSON(ctx context.Context, client *http.Client, method, url string, headers map[string]string, body string, successRanges []model.StatusCodeRange) (map[string]any, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -218,7 +220,7 @@ func fetchJSON(ctx context.Context, client *http.Client, method, url string, hea
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 300 {
+	if !model.IsSuccessStatus(resp.StatusCode, successRanges) {
 		return nil, fmt.Errorf("server returned %d", resp.StatusCode)
 	}
 
