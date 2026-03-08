@@ -29,6 +29,7 @@ var (
 )
 
 const (
+	AccessTokenTTL    = 15 * time.Minute
 	defaultSessionTTL = 7 * 24 * time.Hour
 	refreshKeyPrefix  = "refresh:"
 )
@@ -37,7 +38,7 @@ type TokenPair struct {
 	AccessToken     string
 	RefreshToken    string
 	SessionDuration time.Duration
-	AccessTokenTTL  time.Duration // duration used for the access token (for cookie Max-Age)
+	AccessTokenTTL  time.Duration // duration embedded for cookie Max-Age (always = service.AccessTokenTTL)
 }
 
 // RefreshResult carries the new tokens plus session metadata so the handler
@@ -68,8 +69,6 @@ type AuthService struct {
 	redis                 *redis.Client
 	jwtSecret             []byte
 	globalSessionDuration time.Duration // 0 = infinite
-	accessTokenTTL        time.Duration
-	bcryptCost            int
 	passwordPolicy        PasswordPolicy
 }
 
@@ -82,16 +81,8 @@ func NewAuthService(
 	redisClient *redis.Client,
 	jwtSecret string,
 	globalSessionDuration time.Duration,
-	accessTokenTTL time.Duration,
-	bcryptCost int,
 	passwordPolicy PasswordPolicy,
 ) *AuthService {
-	if accessTokenTTL <= 0 {
-		accessTokenTTL = 15 * time.Minute
-	}
-	if bcryptCost < bcrypt.MinCost || bcryptCost > bcrypt.MaxCost {
-		bcryptCost = bcrypt.DefaultCost
-	}
 	return &AuthService{
 		users:                 users,
 		credentials:           credentials,
@@ -101,16 +92,8 @@ func NewAuthService(
 		redis:                 redisClient,
 		jwtSecret:             []byte(jwtSecret),
 		globalSessionDuration: globalSessionDuration,
-		accessTokenTTL:        accessTokenTTL,
-		bcryptCost:            bcryptCost,
 		passwordPolicy:        passwordPolicy,
 	}
-}
-
-// AccessTokenTTL returns the configured access token duration.
-// Handlers use this to set the cookie Max-Age.
-func (s *AuthService) AccessTokenTTL() time.Duration {
-	return s.accessTokenTTL
 }
 
 func (s *AuthService) validatePassword(password string) error {
@@ -154,7 +137,7 @@ func (s *AuthService) Register(ctx context.Context, email, password string) (*To
 		return nil, nil, fmt.Errorf("check email: %w", err)
 	}
 
-	hashed, err := bcrypt.GenerateFromPassword([]byte(password), s.bcryptCost)
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, nil, fmt.Errorf("hash password: %w", err)
 	}
@@ -467,7 +450,7 @@ func (s *AuthService) IssueGatePinSession(ctx context.Context, pinID, gateID uui
 		"gate_id":     gateID.String(),
 		"permissions": permissions,
 		"iat":         time.Now().Unix(),
-		"exp":         time.Now().Add(s.accessTokenTTL).Unix(),
+		"exp":         time.Now().Add(AccessTokenTTL).Unix(),
 	}).SignedString(s.jwtSecret)
 	if err != nil {
 		return nil, fmt.Errorf("sign pin session access token: %w", err)
@@ -489,7 +472,7 @@ func (s *AuthService) IssueGatePinSession(ctx context.Context, pinID, gateID uui
 		return nil, fmt.Errorf("store pin session refresh token: %w", err)
 	}
 
-	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken, AccessTokenTTL: s.accessTokenTTL}, nil
+	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken, AccessTokenTTL: AccessTokenTTL}, nil
 }
 
 // ValidatePinSessionToken validates a pin_session JWT and returns pin ID, gate ID, and permissions.
@@ -554,7 +537,7 @@ func (s *AuthService) issueGlobalTokenPair(ctx context.Context, userID uuid.UUID
 		"sub":  userID.String(),
 		"type": "global",
 		"iat":  time.Now().Unix(),
-		"exp":  time.Now().Add(s.accessTokenTTL).Unix(),
+		"exp":  time.Now().Add(AccessTokenTTL).Unix(),
 	}).SignedString(s.jwtSecret)
 	if err != nil {
 		return nil, fmt.Errorf("sign access token: %w", err)
@@ -574,7 +557,7 @@ func (s *AuthService) issueGlobalTokenPair(ctx context.Context, userID uuid.UUID
 		return nil, fmt.Errorf("store refresh token: %w", err)
 	}
 
-	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken, SessionDuration: sessionDuration, AccessTokenTTL: s.accessTokenTTL}, nil
+	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken, SessionDuration: sessionDuration, AccessTokenTTL: AccessTokenTTL}, nil
 }
 
 func (s *AuthService) issueLocalTokenPair(ctx context.Context, membershipID, workspaceID uuid.UUID, role model.WorkspaceRole, sessionDuration time.Duration) (*TokenPair, error) {
@@ -584,7 +567,7 @@ func (s *AuthService) issueLocalTokenPair(ctx context.Context, membershipID, wor
 		"workspace_id":  workspaceID.String(),
 		"role": string(role),
 		"iat":  time.Now().Unix(),
-		"exp":  time.Now().Add(s.accessTokenTTL).Unix(),
+		"exp":  time.Now().Add(AccessTokenTTL).Unix(),
 	}).SignedString(s.jwtSecret)
 	if err != nil {
 		return nil, fmt.Errorf("sign local access token: %w", err)
@@ -606,7 +589,7 @@ func (s *AuthService) issueLocalTokenPair(ctx context.Context, membershipID, wor
 		return nil, fmt.Errorf("store refresh token: %w", err)
 	}
 
-	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken, SessionDuration: sessionDuration, AccessTokenTTL: s.accessTokenTTL}, nil
+	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken, SessionDuration: sessionDuration, AccessTokenTTL: AccessTokenTTL}, nil
 }
 
 // resolveSessionDuration reads session_duration (in seconds) from the workspace-level

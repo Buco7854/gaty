@@ -67,7 +67,7 @@ func main() {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
-	router.Use(middleware.TenantResolver(pool, redisClient, cfg.TenantCacheTTL, cfg.TenantCacheNotFoundTTL))
+	router.Use(middleware.TenantResolver(pool, redisClient))
 
 	// MQTT client (non-fatal: API works without broker)
 	mqttClient, err := internalmqtt.New(cfg.MQTTBroker, cfg.MQTTUsername, cfg.MQTTPassword)
@@ -99,7 +99,7 @@ func main() {
 	}
 
 	// Services
-	authSvc := service.NewAuthService(userRepo, credRepo, membershipRepo, memberCredRepo, wsRepo, redisClient, cfg.JWTSecret, cfg.GlobalSessionDuration, cfg.AccessTokenTTL, cfg.BcryptCost, service.PasswordPolicy{
+	authSvc := service.NewAuthService(userRepo, credRepo, membershipRepo, memberCredRepo, wsRepo, redisClient, cfg.JWTSecret, cfg.GlobalSessionDuration, service.PasswordPolicy{
 		MinLength:    cfg.PasswordMinLength,
 		RequireUpper: cfg.PasswordRequireUpper,
 		RequireLower: cfg.PasswordRequireLower,
@@ -111,10 +111,7 @@ func main() {
 	scheduleSvc := service.NewScheduleService(scheduleRepo)
 	policySvc := service.NewPolicyService(policyRepo, scheduleRepo)
 	// Shared SSRF-safe HTTP client for all outbound gate HTTP requests.
-	gateHTTPClient := integration.NewHTTPClient(
-		time.Duration(cfg.HTTPDriverDialTimeoutMs)*time.Millisecond,
-		time.Duration(cfg.HTTPDriverResponseTimeoutMs)*time.Millisecond,
-	)
+	gateHTTPClient := integration.NewHTTPClient(cfg.HTTPDriverAllowedCIDRs)
 
 	// gateTrigger fires open/close drivers; defined here to avoid an import cycle
 	// (service -> integration -> mqtt -> service).
@@ -135,13 +132,7 @@ func main() {
 		}
 	})
 	gateSvc := service.NewGateService(gateRepo, policySvc, credPolicyRepo, scheduleSvc, auditRepo, gateTrigger, []byte(cfg.JWTSecret), redisClient)
-	gatePinSvc := service.NewGatePinService(gatePinRepo, gateRepo, scheduleSvc, authSvc, gateTrigger, redisClient, service.GatePinConfig{
-		MaxAttempts:       cfg.PINMaxAttempts,
-		MaxGateAttempts:   cfg.PINGateMaxAttempts,
-		RateLimitTTL:      cfg.PINRateLimitWindow,
-		MinUnlockDuration: time.Duration(cfg.PINMinUnlockMs) * time.Millisecond,
-		PINMinLength:      cfg.PINMinLength,
-	})
+	gatePinSvc := service.NewGatePinService(gatePinRepo, gateRepo, scheduleSvc, authSvc, gateTrigger, redisClient, cfg.PINMaxAttempts, cfg.PINGateMaxAttempts)
 
 	// Gate TTL worker: marks gates unresponsive when last_seen_at > DefaultGateTTL ago.
 	ttlCtx, ttlCancel := context.WithCancel(ctx)
@@ -238,7 +229,7 @@ func main() {
 	handler.NewGateInboundHandler(gateSvc).RegisterRoutes(api)
 
 	// SSE: raw chi route (long-lived, not Huma)
-	handler.NewSSEHandler(authSvc, redisClient, cfg.SSETicketTTL).RegisterRoutes(router)
+	handler.NewSSEHandler(authSvc, redisClient).RegisterRoutes(router)
 
 	srv := &http.Server{
 		Addr:           fmt.Sprintf(":%d", cfg.Port),

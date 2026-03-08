@@ -166,8 +166,8 @@ type UnlockInput struct {
 func (h *GatePinHandler) Unlock(ctx context.Context, input *UnlockInput) (*struct{}, error) {
 	start := time.Now()
 	defer func() {
-		if min := h.pins.MinUnlockDuration(); elapsed < min {
-			time.Sleep(min - elapsed)
+		if elapsed := time.Since(start); elapsed < service.MinUnlockDuration {
+			time.Sleep(service.MinUnlockDuration - elapsed)
 		}
 	}()
 
@@ -197,8 +197,8 @@ type OpenGateOutput struct {
 func (h *GatePinHandler) OpenGate(ctx context.Context, input *OpenGateInput) (*OpenGateOutput, error) {
 	start := time.Now()
 	defer func() {
-		if min := h.pins.MinUnlockDuration(); elapsed < min {
-			time.Sleep(min - elapsed)
+		if elapsed := time.Since(start); elapsed < service.MinUnlockDuration {
+			time.Sleep(service.MinUnlockDuration - elapsed)
 		}
 	}()
 

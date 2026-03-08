@@ -50,21 +50,36 @@ func isPrivateIP(addr string) bool {
 	return false
 }
 
-// ssrfSafeDialContext wraps a net.Dialer and rejects connections to private IPs.
-func ssrfSafeDialContext(dialTimeout, keepAlive time.Duration) func(ctx context.Context, network, addr string) (net.Conn, error) {
-	dialer := &net.Dialer{Timeout: dialTimeout, KeepAlive: keepAlive}
+// isAllowed reports whether addr falls within one of the explicitly allowed CIDRs.
+func isAllowed(addr string, cidrs []*net.IPNet) bool {
+	ip := net.ParseIP(addr)
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range cidrs {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// ssrfSafeDialContext wraps a net.Dialer and rejects connections to private IPs,
+// unless the resolved IP is covered by one of the explicitly allowed CIDRs.
+func ssrfSafeDialContext(allowedCIDRs []*net.IPNet) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, _, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, fmt.Errorf("ssrf check: %w", err)
 		}
-		// Resolve hostname to IPs and reject any private address.
+		// Resolve hostname to IPs and reject any private address not in the allowlist.
 		addrs, err := net.DefaultResolver.LookupHost(ctx, host)
 		if err != nil {
 			return nil, fmt.Errorf("ssrf check: resolve %s: %w", host, err)
 		}
 		for _, a := range addrs {
-			if isPrivateIP(a) {
+			if isPrivateIP(a) && !isAllowed(a, allowedCIDRs) {
 				return nil, fmt.Errorf("http driver: target resolves to a private/reserved IP (%s), blocked for security", a)
 			}
 		}
@@ -72,14 +87,15 @@ func ssrfSafeDialContext(dialTimeout, keepAlive time.Duration) func(ctx context.
 	}
 }
 
-// NewHTTPClient builds a dedicated HTTP client for gate drivers with configurable timeouts
-// and SSRF protection (private/reserved IPs are blocked at the dial level).
-func NewHTTPClient(dialTimeout, responseTimeout time.Duration) *http.Client {
+// NewHTTPClient builds a dedicated HTTP client for gate drivers with SSRF protection
+// (private/reserved IPs are blocked at the dial level).
+// allowedCIDRs lists subnets exempt from the block (e.g. an on-prem gate LAN).
+func NewHTTPClient(allowedCIDRs []*net.IPNet) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
-			DialContext:           ssrfSafeDialContext(dialTimeout, 30*time.Second),
-			TLSHandshakeTimeout:   dialTimeout,
-			ResponseHeaderTimeout: responseTimeout,
+			DialContext:           ssrfSafeDialContext(allowedCIDRs),
+			TLSHandshakeTimeout:   5 * time.Second,
+			ResponseHeaderTimeout: 10 * time.Second,
 			MaxIdleConns:          32,
 			MaxIdleConnsPerHost:   4,
 			IdleConnTimeout:       90 * time.Second,

@@ -15,21 +15,20 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const sseTicketPrefix = "sse:ticket:"
+const (
+	sseTicketPrefix = "sse:ticket:"
+	sseTicketTTL    = 30 * time.Second
+)
 
 // SSEHandler streams gate events to authenticated clients via Server-Sent Events.
 // Implemented as a raw chi handler (not Huma) to support long-lived connections.
 type SSEHandler struct {
-	authSvc       *service.AuthService
-	redis         *redis.Client
-	sseTicketTTL  time.Duration
+	authSvc *service.AuthService
+	redis   *redis.Client
 }
 
-func NewSSEHandler(authSvc *service.AuthService, redisClient *redis.Client, ticketTTL time.Duration) *SSEHandler {
-	if ticketTTL <= 0 {
-		ticketTTL = 30 * time.Second
-	}
-	return &SSEHandler{authSvc: authSvc, redis: redisClient, sseTicketTTL: ticketTTL}
+func NewSSEHandler(authSvc *service.AuthService, redisClient *redis.Client) *SSEHandler {
+	return &SSEHandler{authSvc: authSvc, redis: redisClient}
 }
 
 func (h *SSEHandler) RegisterRoutes(r chi.Router) {
@@ -71,7 +70,7 @@ func (h *SSEHandler) issueTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	ticket := hex.EncodeToString(b)
 
-	if err := h.redis.Set(r.Context(), sseTicketPrefix+ticket, wsID, h.sseTicketTTL).Err(); err != nil {
+	if err := h.redis.Set(r.Context(), sseTicketPrefix+ticket, wsID, sseTicketTTL).Err(); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
