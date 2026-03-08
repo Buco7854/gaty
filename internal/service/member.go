@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/Buco7854/gatie/internal/model"
 	"github.com/Buco7854/gatie/internal/repository"
@@ -70,7 +71,7 @@ func (s *MembershipService) CreateLocal(ctx context.Context, workspaceID uuid.UU
 	}
 
 	if err := s.applyDefaultPermissions(ctx, workspaceID, membership.ID); err != nil {
-		fmt.Printf("warn: apply default permissions for membership %s: %v\n", membership.ID, err)
+		slog.Warn("apply default permissions failed (non-fatal)", "membership_id", membership.ID, "err", err)
 	}
 
 	return membership, nil
@@ -142,7 +143,7 @@ func (s *MembershipService) InviteUser(ctx context.Context, workspaceID, userID 
 	}
 	if err := s.applyDefaultPermissions(ctx, workspaceID, membership.ID); err != nil {
 		// Non-fatal: membership is created, permissions can be set manually.
-		fmt.Printf("warn: apply default permissions for membership %s: %v\n", membership.ID, err)
+		slog.Warn("apply default permissions failed (non-fatal)", "membership_id", membership.ID, "err", err)
 	}
 	return membership, nil
 }

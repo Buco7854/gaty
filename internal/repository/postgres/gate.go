@@ -68,6 +68,21 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
+// applyGateJSON populates the JSON-derived fields of g from raw database bytes.
+func applyGateJSON(g *model.Gate, rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses []byte) {
+	g.OpenConfig = unmarshalActionConfig(rawOpen)
+	g.CloseConfig = unmarshalActionConfig(rawClose)
+	g.StatusConfig = unmarshalActionConfig(rawStatus)
+	if len(rawMeta) > 0 {
+		_ = json.Unmarshal(rawMeta, &g.StatusMetadata)
+	}
+	g.MetaConfig = unmarshalMetaConfig(rawMetaCfg)
+	g.StatusRules = unmarshalStatusRules(rawStatusRules)
+	if len(rawCustomStatuses) > 0 {
+		_ = json.Unmarshal(rawCustomStatuses, &g.CustomStatuses)
+	}
+}
+
 // scanGate fills g from a row that yields colsFull columns.
 // Callers handle ErrNoRows themselves (pgx.Row.Scan returns it directly).
 func scanGate(s rowScanner, g *model.Gate) error {
@@ -84,17 +99,7 @@ func scanGate(s rowScanner, g *model.Gate) error {
 	if err != nil {
 		return err
 	}
-	g.OpenConfig = unmarshalActionConfig(rawOpen)
-	g.CloseConfig = unmarshalActionConfig(rawClose)
-	g.StatusConfig = unmarshalActionConfig(rawStatus)
-	if len(rawMeta) > 0 {
-		_ = json.Unmarshal(rawMeta, &g.StatusMetadata)
-	}
-	g.MetaConfig = unmarshalMetaConfig(rawMetaCfg)
-	g.StatusRules = unmarshalStatusRules(rawStatusRules)
-	if len(rawCustomStatuses) > 0 {
-		_ = json.Unmarshal(rawCustomStatuses, &g.CustomStatuses)
-	}
+	applyGateJSON(g, rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses)
 	return nil
 }
 
@@ -146,17 +151,7 @@ func (r *gateRepository) Create(ctx context.Context, wsID uuid.UUID, p repositor
 	if err != nil {
 		return nil, fmt.Errorf("create gate: %w", err)
 	}
-	g.OpenConfig = unmarshalActionConfig(rawOpen)
-	g.CloseConfig = unmarshalActionConfig(rawClose)
-	g.StatusConfig = unmarshalActionConfig(rawStatus)
-	if len(rawMeta) > 0 {
-		_ = json.Unmarshal(rawMeta, &g.StatusMetadata)
-	}
-	g.MetaConfig = unmarshalMetaConfig(rawMetaCfg)
-	g.StatusRules = unmarshalStatusRules(rawStatusRules)
-	if len(rawCustomStatuses) > 0 {
-		_ = json.Unmarshal(rawCustomStatuses, &g.CustomStatuses)
-	}
+	applyGateJSON(&g, rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses)
 	g.GateToken = &token
 	return &g, nil
 }
