@@ -68,3 +68,11 @@ tasks:
   migrate-create:
     desc: "Create a new migration (usage: task migrate-create -- my_migration_name)"
     cmd: migrate create -ext sql -dir migrations -seq {{.CLI_ARGS}}
+
+  demo-seed:
+    desc: "Crée les données démo (user demo@gatie.local + workspace Demo + 2 gates) — nécessite task dev-infra + task dev-api"
+    cmd: go run ./cmd/seed/ {{.CLI_ARGS}}
+
+  demo-sim:
+    desc: "Lance le simulateur de portail en mode HTTP (usage: task demo-sim -- --token=<gate_token>)"
+    cmd: go run ./cmd/gatesim/ --mode=http {{.CLI_ARGS}}
