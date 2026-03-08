@@ -43,8 +43,12 @@ tasks:
     cmd: npm install
 
   test:
-    desc: "Run Go tests"
-    cmd: go test ./... -v
+    desc: "Run Go unit tests (no infra required)"
+    cmd: go test ./internal/... -v
+
+  test-integration:
+    desc: "Run E2E integration tests against live server (requires: task dev-infra + task dev-api)"
+    cmd: go test ./tests/integration/... -v -tags integration -timeout 60s
 
   lint:
     desc: "Run all linters"
