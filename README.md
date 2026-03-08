@@ -92,6 +92,95 @@ The React app will be available at `http://localhost:5173` with HMR and automati
 
 ---
 
+## Local Demo (5 minutes)
+
+The quickest way to see GATIE working end-to-end with real gate simulations.
+
+### Prerequisites check
+
+```bash
+docker info          # Docker must be running
+task --version       # go-task installed
+air -v               # air installed  (go install github.com/air-verse/air@latest)
+migrate -version     # golang-migrate CLI installed
+```
+
+### Step 1 — Start everything
+
+Open **4 terminals** in the project root:
+
+```bash
+# Terminal 1 — infrastructure
+task dev-infra && task migrate-up
+
+# Terminal 2 — backend API
+task dev-api
+
+# Terminal 3 — frontend (first time: cd frontend && npm install)
+task dev-frontend
+```
+
+### Step 2 — Seed demo data
+
+```bash
+# Terminal 4
+task demo-seed
+```
+
+This creates account `demo@gatie.local` / `Demo1234!`, workspace **Demo**, and 4 gates.
+The command prints each gate's token and simulation instructions.
+
+### Step 3 — Open the UI
+
+**http://localhost:5173** → log in with `demo@gatie.local` / `Demo1234!`
+
+You should see the **Demo** workspace with 4 gates, all in `unknown` state.
+
+### Step 4 — Simulate a gate
+
+**Option A — HTTP push** (Portail Principal, gate 1):
+
+```bash
+# copy token1 from the seed output, then:
+task demo-sim -- --token=<token1>
+```
+
+Click **Open** or **Close** in the UI — the gate simulator receives the command and
+pushes the new status back. You will see it update in real time via SSE.
+
+**Option B — MQTT native** (Interphone, gate 3):
+
+```bash
+go run ./cmd/gatesim --mode=mqtt --token=<token3>
+```
+
+Same behaviour: click Open/Close in the UI, gatesim responds over MQTT.
+
+**Option C — MQTT custom payload** (Barrière, gate 4):
+
+Publish directly to the broker (e.g. with [MQTT Explorer](https://mqtt-explorer.com/) on `localhost:1883`):
+
+```
+topic  : workspace_<wsID>/gates/<gateID4>/status
+payload: {"token":"<token4>","state":"open","voltage":12.3,"temp":22.5}
+```
+
+The `state` field is mapped to the gate status; `voltage` and `temp` appear as metadata.
+
+### What to expect
+
+| Gate | Driver | How to test |
+|------|--------|-------------|
+| Portail Principal | `HTTP_INBOUND` | `task demo-sim -- --token=<t>` |
+| Garage | `NONE` | manual status (no simulator) |
+| Interphone | `MQTT_GATIE` | `gatesim --mode=mqtt --token=<t>` |
+| Barrière | `MQTT_CUSTOM` | publish JSON via MQTT client |
+
+Battery rule on **Portail Principal**: push `{"status":"closed","battery":5}` (via the
+HTTP simulator) → status overrides to `low_battery` automatically.
+
+---
+
 ## Task Reference
 
 Run `task --list` to see all available tasks.
@@ -109,7 +198,10 @@ Run `task --list` to see all available tasks.
 | `task migrate-up` | Apply all pending migrations |
 | `task migrate-down` | Roll back last migration |
 | `task migrate-create -- <name>` | Create a new migration pair |
-| `task test` | Run Go test suite |
+| `task demo-seed` | Provision demo account + workspace + 4 gates |
+| `task demo-sim -- --token=<t>` | Run HTTP gate simulator (Portail Principal) |
+| `task test` | Run Go unit tests (no infra required) |
+| `task test-integration` | Run E2E tests against live server |
 | `task lint` | Run golangci-lint + ESLint |
 
 ---
