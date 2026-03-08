@@ -45,7 +45,7 @@ func IssueGateToken(gateID, workspaceID uuid.UUID, secret []byte) (string, error
 func ParseGateToken(tokenStr string, secret []byte) (gateID, workspaceID uuid.UUID, err error) {
 	var claims gateTokenClaims
 	_, err = jwt.ParseWithClaims(tokenStr, &claims, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+		if t.Method != jwt.SigningMethodHS256 {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
 		return secret, nil

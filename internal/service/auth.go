@@ -38,6 +38,7 @@ type TokenPair struct {
 	AccessToken     string
 	RefreshToken    string
 	SessionDuration time.Duration
+	AccessTokenTTL  time.Duration // duration embedded for cookie Max-Age (always = service.AccessTokenTTL)
 }
 
 // RefreshResult carries the new tokens plus session metadata so the handler
@@ -471,7 +472,7 @@ func (s *AuthService) IssueGatePinSession(ctx context.Context, pinID, gateID uui
 		return nil, fmt.Errorf("store pin session refresh token: %w", err)
 	}
 
-	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken}, nil
+	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken, AccessTokenTTL: AccessTokenTTL}, nil
 }
 
 // ValidatePinSessionToken validates a pin_session JWT and returns pin ID, gate ID, and permissions.
@@ -525,8 +526,8 @@ func (s *AuthService) IssueLocalTokenPair(ctx context.Context, membershipID, wor
 }
 
 func (s *AuthService) keyFunc(t *jwt.Token) (any, error) {
-	if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-		return nil, fmt.Errorf("unexpected signing method")
+	if t.Method != jwt.SigningMethodHS256 {
+		return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 	}
 	return s.jwtSecret, nil
 }
@@ -556,7 +557,7 @@ func (s *AuthService) issueGlobalTokenPair(ctx context.Context, userID uuid.UUID
 		return nil, fmt.Errorf("store refresh token: %w", err)
 	}
 
-	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken, SessionDuration: sessionDuration}, nil
+	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken, SessionDuration: sessionDuration, AccessTokenTTL: AccessTokenTTL}, nil
 }
 
 func (s *AuthService) issueLocalTokenPair(ctx context.Context, membershipID, workspaceID uuid.UUID, role model.WorkspaceRole, sessionDuration time.Duration) (*TokenPair, error) {
@@ -588,7 +589,7 @@ func (s *AuthService) issueLocalTokenPair(ctx context.Context, membershipID, wor
 		return nil, fmt.Errorf("store refresh token: %w", err)
 	}
 
-	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken, SessionDuration: sessionDuration}, nil
+	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken, SessionDuration: sessionDuration, AccessTokenTTL: AccessTokenTTL}, nil
 }
 
 // resolveSessionDuration reads session_duration (in seconds) from the workspace-level

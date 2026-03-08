@@ -15,10 +15,9 @@ import (
 )
 
 const (
-	maxPINAttempts     = 5
-	maxGatePINAttempts = 50
-	pinRateLimitTTL    = 15 * time.Minute
-
+	defaultMaxPINAttempts     int64         = 5
+	defaultMaxGatePINAttempts int64         = 50
+	pinRateLimitTTL                         = 15 * time.Minute
 	// MinUnlockDuration is the minimum response time for unlock endpoints.
 	// Enforced in the handler to prevent timing attacks on PIN validation.
 	MinUnlockDuration = 400 * time.Millisecond
@@ -72,12 +71,14 @@ type OpenResult struct {
 }
 
 type GatePinService struct {
-	pins      repository.GatePinRepository
-	gates     repository.GateRepository
-	schedules *ScheduleService
-	auth      *AuthService
-	trigger   GateTriggerFn
-	redis     *redis.Client
+	pins            repository.GatePinRepository
+	gates           repository.GateRepository
+	schedules       *ScheduleService
+	auth            *AuthService
+	trigger         GateTriggerFn
+	redis           *redis.Client
+	maxAttempts     int64
+	maxGateAttempts int64
 }
 
 func NewGatePinService(
@@ -87,14 +88,23 @@ func NewGatePinService(
 	auth *AuthService,
 	trigger GateTriggerFn,
 	redis *redis.Client,
+	maxAttempts, maxGateAttempts int64,
 ) *GatePinService {
+	if maxAttempts <= 0 {
+		maxAttempts = defaultMaxPINAttempts
+	}
+	if maxGateAttempts <= 0 {
+		maxGateAttempts = defaultMaxGatePINAttempts
+	}
 	return &GatePinService{
-		pins:      pins,
-		gates:     gates,
-		schedules: schedules,
-		auth:      auth,
-		trigger:   trigger,
-		redis:     redis,
+		pins:            pins,
+		gates:           gates,
+		schedules:       schedules,
+		auth:            auth,
+		trigger:         trigger,
+		redis:           redis,
+		maxAttempts:     maxAttempts,
+		maxGateAttempts: maxGateAttempts,
 	}
 }
 
@@ -263,7 +273,7 @@ func (s *GatePinService) validatePIN(ctx context.Context, gateID uuid.UUID, pin,
 		slog.Error("pin validate: redis rate limit unavailable, denying request", "error", err)
 		return nil, pinMetadata{}, ErrTooManyAttempts
 	}
-	if incrIPCmd.Val() > maxPINAttempts || incrGateCmd.Val() > maxGatePINAttempts {
+	if incrIPCmd.Val() > s.maxAttempts || incrGateCmd.Val() > s.maxGateAttempts {
 		return nil, pinMetadata{}, ErrTooManyAttempts
 	}
 

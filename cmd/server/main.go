@@ -110,15 +110,18 @@ func main() {
 	workspaceSvc := service.NewWorkspaceService(wsRepo)
 	scheduleSvc := service.NewScheduleService(scheduleRepo)
 	policySvc := service.NewPolicyService(policyRepo, scheduleRepo)
+	// Shared SSRF-safe HTTP client for all outbound gate HTTP requests.
+	gateHTTPClient := integration.NewHTTPClient(cfg.HTTPDriverAllowedCIDRs)
+
 	// gateTrigger fires open/close drivers; defined here to avoid an import cycle
 	// (service -> integration -> mqtt -> service).
 	gateTrigger := service.GateTriggerFn(func(ctx context.Context, gate *model.Gate, action string) {
 		var driver integration.Driver
 		var err error
 		if action == "close" {
-			driver, err = integration.NewCloseDriver(gate, mqttClient)
+			driver, err = integration.NewCloseDriver(gate, mqttClient, gateHTTPClient)
 		} else {
-			driver, err = integration.NewOpenDriver(gate, mqttClient)
+			driver, err = integration.NewOpenDriver(gate, mqttClient, gateHTTPClient)
 		}
 		if err != nil {
 			slog.Warn("gate: failed to build driver", "gate_id", gate.ID, "action", action, "error", err)
@@ -129,7 +132,7 @@ func main() {
 		}
 	})
 	gateSvc := service.NewGateService(gateRepo, policySvc, credPolicyRepo, scheduleSvc, auditRepo, gateTrigger, []byte(cfg.JWTSecret), redisClient)
-	gatePinSvc := service.NewGatePinService(gatePinRepo, gateRepo, scheduleSvc, authSvc, gateTrigger, redisClient)
+	gatePinSvc := service.NewGatePinService(gatePinRepo, gateRepo, scheduleSvc, authSvc, gateTrigger, redisClient, cfg.PINMaxAttempts, cfg.PINGateMaxAttempts)
 
 	// Gate TTL worker: marks gates unresponsive when last_seen_at > DefaultGateTTL ago.
 	ttlCtx, ttlCancel := context.WithCancel(ctx)
@@ -139,7 +142,7 @@ func main() {
 	// Webhook worker: polls HTTP_WEBHOOK-configured gates on their configured interval.
 	webhookCtx, webhookCancel := context.WithCancel(ctx)
 	defer webhookCancel()
-	go service.NewGateWebhookWorker(gateRepo, redisClient, cfg.WebhookMaxRetries, cfg.WebhookRetryDelay).Run(webhookCtx)
+	go service.NewGateWebhookWorker(gateRepo, redisClient, cfg.WebhookMaxRetries, cfg.WebhookRetryDelay, gateHTTPClient).Run(webhookCtx)
 
 	// Global error hook: log 5xx with the original cause, but never expose raw
 	// errors to the client. Structured *huma.ErrorDetail items (validation) are

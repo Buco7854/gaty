@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -29,6 +30,14 @@ type Config struct {
 	PasswordRequireUpper bool // require uppercase letter (default true)
 	PasswordRequireLower bool // require lowercase letter (default true)
 	PasswordRequireDigit bool // require digit (default true)
+
+	// PIN unlock rate limiting
+	PINMaxAttempts     int64 // max failed attempts per IP per window (default 5)
+	PINGateMaxAttempts int64 // max failed attempts per gate per window (default 50)
+
+	// HTTP driver SSRF allowlist: CIDRs/IPs that are exempt from the private-IP block.
+	// Useful when gate devices live on an RFC-1918 subnet.
+	HTTPDriverAllowedCIDRs []*net.IPNet
 
 	// Webhook poller settings (HTTP_WEBHOOK status mode).
 	WebhookMaxRetries int           // max retry attempts per poll (default 3)
@@ -134,6 +143,46 @@ func Load() (*Config, error) {
 			cfg.GlobalSessionDuration = 0
 		} else {
 			cfg.GlobalSessionDuration = time.Duration(secs) * time.Second
+		}
+	}
+
+	// PIN_MAX_ATTEMPTS: max failed unlock attempts per IP per 15-min window (default 5).
+	cfg.PINMaxAttempts = 5
+	if v := os.Getenv("PIN_MAX_ATTEMPTS"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("invalid PIN_MAX_ATTEMPTS: must be a positive integer")
+		}
+		cfg.PINMaxAttempts = n
+	}
+
+	// PIN_GATE_MAX_ATTEMPTS: max failed unlock attempts per gate per 15-min window (default 50).
+	cfg.PINGateMaxAttempts = 50
+	if v := os.Getenv("PIN_GATE_MAX_ATTEMPTS"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("invalid PIN_GATE_MAX_ATTEMPTS: must be a positive integer")
+		}
+		cfg.PINGateMaxAttempts = n
+	}
+
+	// HTTP_DRIVER_ALLOWED_CIDRS: comma-separated CIDR blocks exempt from the SSRF private-IP block.
+	// Use when gate devices are on an RFC-1918 LAN (e.g. "192.168.1.0/24,10.0.0.50/32").
+	if v := os.Getenv("HTTP_DRIVER_ALLOWED_CIDRS"); v != "" {
+		for _, raw := range strings.Split(v, ",") {
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				continue
+			}
+			// Accept bare IPs as well as CIDR notation.
+			if !strings.Contains(raw, "/") {
+				raw = raw + "/32"
+			}
+			_, ipNet, err := net.ParseCIDR(raw)
+			if err != nil {
+				return nil, fmt.Errorf("invalid HTTP_DRIVER_ALLOWED_CIDRS entry %q: %w", raw, err)
+			}
+			cfg.HTTPDriverAllowedCIDRs = append(cfg.HTTPDriverAllowedCIDRs, ipNet)
 		}
 	}
 
