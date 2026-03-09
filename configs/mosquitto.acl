@@ -1,8 +1,8 @@
 # GATIE - Mosquitto ACL rules
 #
 # Authentication strategy:
-#   - Backend server : username=gatie-server, password=MQTT_PASSWORD env var
-#   - Gate devices  : username={gate_uuid}, password=gate_token from gates table
+#   - Backend server : username=gatie-server, full access
+#   - Gate devices  : username={gate_uuid}, restricted to own topics
 #
 # Topic format:
 #   Status  : workspace_{ws_id}/gates/{gate_id}/status

@@ -18,6 +18,7 @@ type Config struct {
 	MQTTBroker            string
 	MQTTUsername          string // optional, empty = anonymous
 	MQTTPassword          string // optional
+	MQTTBrokerAuth        bool   // true = broker validates credentials (EMQX), false = app-level token check (Mosquitto)
 	JWTSecret             string
 	CORSOrigins           []string
 	BaseURL               string        // public base URL of this API, e.g. https://api.example.com
@@ -77,6 +78,7 @@ func Load() (*Config, error) {
 
 	cfg.MQTTUsername = os.Getenv("MQTT_USERNAME")
 	cfg.MQTTPassword = os.Getenv("MQTT_PASSWORD")
+	cfg.MQTTBrokerAuth = os.Getenv("MQTT_BROKER_AUTH") == "true"
 
 	cfg.JWTSecret = os.Getenv("JWT_SECRET")
 	if cfg.JWTSecret == "" {

@@ -3,7 +3,6 @@ package mqtt
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -38,9 +37,20 @@ func CommandTopic(wsID, gateID uuid.UUID) string {
 //  1. Verify JWT signature with jwtSecret (prevents forgery).
 //  2. DB lookup by gateID + token (detects rotation — old JWTs are invalid after SetToken).
 //
-// Payload: JSON object. "token" is always required. Status and meta are extracted using
-// the gate's MQTT StatusConfig PayloadMapping (status_config.config.mapping).
-func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redisClient *redis.Client, jwtSecret []byte) error {
+// SubscribeGateStatuses subscribes to all gate status topics and delegates
+// status processing to service.ProcessGateStatus (rule evaluation, DB
+// persistence, SSE pub/sub).
+//
+// Two authentication modes controlled by brokerAuth:
+//
+//   - brokerAuth=true (EMQX): the broker already validated credentials at
+//     CONNECT time via the /api/mqtt/auth webhook. We trust the topic gate_id
+//     and load the gate by ID.
+//
+//   - brokerAuth=false (Mosquitto): the broker does not authenticate clients.
+//     Each payload must include a "token" field (gate JWT). We verify the JWT
+//     signature and confirm the token is current via DB lookup.
+func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redisClient *redis.Client, brokerAuth bool, jwtSecret []byte) error {
 	return c.Subscribe("+/gates/+/status", func(_ pahomqtt.Client, msg pahomqtt.Message) {
 		_, topicGateID, err := parseTopicIDs(msg.Topic())
 		if err != nil {
@@ -48,42 +58,44 @@ func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redis
 			return
 		}
 
-		// Unmarshal as raw map to support arbitrary device payload shapes.
 		var raw map[string]any
 		if err := json.Unmarshal(msg.Payload(), &raw); err != nil {
 			slog.Warn("mqtt: invalid JSON payload", "topic", msg.Topic())
 			return
 		}
 
-		token, _ := raw["token"].(string)
-		if token == "" {
-			slog.Warn("mqtt: status payload missing token", "gate_id", topicGateID)
-			return
-		}
-
-		// Step 1: verify JWT signature and extract claimed gate identity.
-		claimedGateID, _, err := service.ParseGateToken(token, jwtSecret)
-		if err != nil {
-			slog.Warn("mqtt: invalid gate token signature, rejected", "gate_id", topicGateID)
-			return
-		}
-		if claimedGateID != topicGateID {
-			slog.Warn("mqtt: token gate_id mismatch with topic", "topic_gate_id", topicGateID, "token_gate_id", claimedGateID)
-			return
-		}
-
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		// Step 2: DB lookup by gateID — confirms token is current (not rotated).
-		gate, err := gateRepo.GetByToken(ctx, topicGateID, token)
-		if err != nil {
-			if errors.Is(err, repository.ErrUnauthorized) {
-				slog.Warn("mqtt: gate token rotated or invalid, rejected", "gate_id", topicGateID)
-			} else {
-				slog.Error("mqtt: failed to authenticate gate", "gate_id", topicGateID, "error", err)
+		var gate *model.Gate
+		if brokerAuth {
+			// Broker already authenticated the client — trust the topic.
+			gate, err = gateRepo.GetByIDPublic(ctx, topicGateID)
+			if err != nil {
+				slog.Warn("mqtt: gate not found", "gate_id", topicGateID, "error", err)
+				return
 			}
-			return
+		} else {
+			// No broker auth — validate the token from the payload.
+			token, _ := raw["token"].(string)
+			if token == "" {
+				slog.Warn("mqtt: status payload missing token", "gate_id", topicGateID)
+				return
+			}
+			claimedGateID, _, err := service.ParseGateToken(token, jwtSecret)
+			if err != nil {
+				slog.Warn("mqtt: invalid gate token signature", "gate_id", topicGateID)
+				return
+			}
+			if claimedGateID != topicGateID {
+				slog.Warn("mqtt: token gate_id mismatch with topic", "topic_gate_id", topicGateID, "token_gate_id", claimedGateID)
+				return
+			}
+			gate, err = gateRepo.GetByToken(ctx, topicGateID, token)
+			if err != nil {
+				slog.Warn("mqtt: gate token invalid or rotated", "gate_id", topicGateID)
+				return
+			}
 		}
 
 		status, meta, err := resolveMQTTPayload(gate, raw)

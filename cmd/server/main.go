@@ -93,7 +93,7 @@ func main() {
 
 	// Subscribe to gate status updates from MQTT (bridge to Redis Pub/Sub for SSE)
 	if mqttClient != nil {
-		if err := mqttClient.SubscribeGateStatuses(gateRepo, redisClient, []byte(cfg.JWTSecret)); err != nil {
+		if err := mqttClient.SubscribeGateStatuses(gateRepo, redisClient, cfg.MQTTBrokerAuth, []byte(cfg.JWTSecret)); err != nil {
 			slog.Warn("mqtt: failed to subscribe to gate statuses", "error", err)
 		}
 	}
@@ -227,6 +227,11 @@ func main() {
 
 	// Inbound: gate-to-server status push (gate token auth, no workspace middleware).
 	handler.NewGateInboundHandler(gateSvc).RegisterRoutes(api)
+
+	// MQTT broker auth: EMQX HTTP webhook validates gate credentials.
+	if cfg.MQTTBrokerAuth {
+		handler.NewMQTTAuthHandler(gateSvc, cfg.MQTTUsername).RegisterRoutes(api)
+	}
 
 	// SSE: raw chi route (long-lived, not Huma)
 	handler.NewSSEHandler(authSvc, redisClient).RegisterRoutes(router)

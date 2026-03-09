@@ -35,7 +35,6 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
@@ -51,13 +50,15 @@ func main() {
 	heartbeat := flag.Duration("heartbeat", 10*time.Second, "Heartbeat interval for periodic status updates (0 to disable)")
 	flag.Parse()
 
+	slog.Info("gatesim starting", "mode", *mode, "broker", *broker, "api", *apiURL)
+
 	if *token == "" {
 		slog.Error("--token is required")
 		flag.Usage()
 		os.Exit(1)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
 	switch *mode {
@@ -152,9 +153,10 @@ func runMQTT(ctx context.Context, sim *simulator, brokerURL string, heartbeatInt
 	opts := pahomqtt.NewClientOptions().
 		AddBroker(brokerURL).
 		SetClientID(fmt.Sprintf("gatesim-%s", sim.gateID)).
+		SetUsername(sim.gateID.String()).
+		SetPassword(sim.token).
 		SetAutoReconnect(true).
-		SetConnectRetry(true).
-		SetConnectRetryInterval(3 * time.Second).
+		SetConnectTimeout(5 * time.Second).
 		SetOnConnectHandler(func(c pahomqtt.Client) {
 			slog.Info("mqtt: connected to broker", "broker", brokerURL)
 			t := c.Subscribe(commandTopic, 1, func(_ pahomqtt.Client, msg pahomqtt.Message) {
@@ -221,6 +223,8 @@ type commandPayload struct {
 }
 
 // mqttStatusPayload is what this simulator sends on the MQTT status topic.
+// The token is included for brokers without CONNECT-level auth (e.g. Mosquitto).
+// Brokers with auth (EMQX) ignore it — authentication happens at CONNECT time.
 type mqttStatusPayload struct {
 	Token  string         `json:"token"`
 	Status string         `json:"status"`
@@ -342,8 +346,13 @@ func httpHeartbeat(ctx context.Context, sim *simulator, interval time.Duration) 
 
 // pushStatus sends a status update to the gatie inbound API endpoint.
 // The gate token in the Authorization header identifies the gate — no gate_id in the URL.
+// Metadata keys are placed at the root level (same as MQTT payloads) so that
+// ExtractMeta can find them via gate.MetaConfig keys.
 func pushStatus(ctx context.Context, sim *simulator, status string, meta map[string]any) {
-	body := map[string]any{"status": status, "meta": meta}
+	body := map[string]any{"status": status}
+	for k, v := range meta {
+		body[k] = v
+	}
 	b, _ := json.Marshal(body)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sim.apiURL+"/api/inbound/status", bytes.NewReader(b))

@@ -734,14 +734,21 @@ export default function GatePage() {
     refetchInterval: 15_000,
   })
 
-  // SSE: update gate data in real-time when a status event arrives
+  // SSE: update gate data in real-time (both detail and list caches)
   const handleGateEvent = useCallback(
     (event: GateEvent) => {
       if (event.gate_id !== gateId) return
+      const patch = { status: event.status as GateStatus, status_metadata: event.status_metadata }
       qc.setQueryData<Gate>(['gate', wsId, gateId], (prev) =>
-        prev
-          ? { ...prev, status: event.status as GateStatus, status_metadata: event.status_metadata ?? prev.status_metadata }
-          : prev
+        prev ? { ...prev, ...patch, status_metadata: patch.status_metadata ?? prev.status_metadata } : prev
+      )
+      // Also update the list cache so the workspace page stays in sync
+      qc.setQueryData<Gate[]>(['gates', wsId], (prev) =>
+        prev?.map((g) =>
+          g.id === event.gate_id
+            ? { ...g, ...patch, status_metadata: patch.status_metadata ?? g.status_metadata }
+            : g
+        )
       )
     },
     [qc, wsId, gateId]
@@ -786,6 +793,16 @@ export default function GatePage() {
 
   const trigger = useMutation({
     mutationFn: (action: 'open' | 'close') => gatesApi.trigger(wsId!, gateId!, action),
+    onMutate: (action) => {
+      // Optimistic update: immediately reflect the expected status
+      const optimisticStatus = (action === 'open' ? 'open' : 'closed') as GateStatus
+      qc.setQueryData<Gate>(['gate', wsId, gateId], (prev) =>
+        prev ? { ...prev, status: optimisticStatus } : prev
+      )
+      qc.setQueryData<Gate[]>(['gates', wsId], (prev) =>
+        prev?.map((g) => g.id === gateId ? { ...g, status: optimisticStatus } : g)
+      )
+    },
     onSuccess: () => notifySuccess(t('pinpad.gateOpened')),
     onError: (err: unknown) => notifyError(err, t('pinpad.unreachable')),
   })

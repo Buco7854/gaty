@@ -138,15 +138,20 @@ export default function WorkspacePage() {
   const canManageGate = (gateId: string) =>
     canManage || myPolicies?.some((p) => p.gate_id === gateId && p.permission_code === 'gate:manage')
 
-  // SSE: update gate status + metadata in real-time
+  // SSE: update gate status + metadata in real-time (both list and detail caches)
   const handleGateEvent = useCallback(
     (event: GateEvent) => {
+      const patch = { status: event.status as GateStatus, status_metadata: event.status_metadata }
       qc.setQueryData<Gate[]>(['gates', wsId], (prev) =>
         prev?.map((g) =>
           g.id === event.gate_id
-            ? { ...g, status: event.status as GateStatus, status_metadata: event.status_metadata ?? g.status_metadata }
+            ? { ...g, ...patch, status_metadata: patch.status_metadata ?? g.status_metadata }
             : g
         )
+      )
+      // Also update the single-gate cache so the detail page stays in sync
+      qc.setQueryData<Gate>(['gate', wsId, event.gate_id], (prev) =>
+        prev ? { ...prev, ...patch, status_metadata: patch.status_metadata ?? prev.status_metadata } : prev
       )
     },
     [qc, wsId]
@@ -179,11 +184,19 @@ export default function WorkspacePage() {
     onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
-  async function triggerGate(gateId: string) {
+  async function triggerGate(gateId: string, action: 'open' | 'close' = 'open') {
     if (triggeringId) return
     setTriggeringId(gateId)
+    // Optimistic update: immediately reflect the expected status
+    const optimisticStatus = (action === 'open' ? 'open' : 'closed') as GateStatus
+    qc.setQueryData<Gate[]>(['gates', wsId], (prev) =>
+      prev?.map((g) => g.id === gateId ? { ...g, status: optimisticStatus } : g)
+    )
+    qc.setQueryData<Gate>(['gate', wsId, gateId], (prev) =>
+      prev ? { ...prev, status: optimisticStatus } : prev
+    )
     try {
-      await gatesApi.trigger(wsId!, gateId, 'open')
+      await gatesApi.trigger(wsId!, gateId, action)
     } catch { /* fire-and-forget */ }
     setTriggeringId(null)
   }
