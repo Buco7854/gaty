@@ -73,11 +73,18 @@ const (
 //
 // OnNewStatus controls behavior when the gate receives a new status message
 // while the transition timer is pending (default: "reset").
+//
+// PersistOnChange controls what happens when the gate's status moves away from
+// From before the deadline. When false (default) the transition is cancelled
+// and must be re-armed by returning to From. When true the transition stays
+// armed and fires at the original deadline regardless of intermediate status
+// changes.
 type StatusTransition struct {
-	From         string                `json:"from" minLength:"1"`
-	To           string                `json:"to" minLength:"1"`
-	AfterSeconds int                   `json:"after_seconds"`
-	OnNewStatus  TransitionOnNewStatus `json:"on_new_status,omitempty" enum:"reset,cancel,continue" default:"reset"`
+	From            string                `json:"from" minLength:"1"`
+	To              string                `json:"to" minLength:"1"`
+	AfterSeconds    int                   `json:"after_seconds"`
+	OnNewStatus     TransitionOnNewStatus `json:"on_new_status,omitempty" enum:"reset,cancel,continue" default:"reset"`
+	PersistOnChange bool                  `json:"persist_on_change,omitempty"`
 }
 
 // EvaluateStatusRules checks each rule against meta in order and returns the first matching
