@@ -33,22 +33,25 @@ func CommandTopic(wsID, gateID uuid.UUID) string {
 // persistence, SSE pub/sub).
 // Topic wildcard: +/gates/+/status
 //
-// Two authentication modes controlled by brokerAuth (set via MQTT_AUTH_MODE):
+// The payload "token" field (gate JWT) is always required and verified
+// for signature + topic consistency (gate_id in token must match topic).
+// The auth mode only controls whether the token is also checked against
+// the DB for rotation:
 //
-//   - brokerAuth=true  (MQTT_AUTH_MODE=dynsec): the broker already validated
-//     credentials at CONNECT time via the Dynamic Security Plugin. We trust
-//     the topic gate_id and load the gate by ID.
+//   - brokerAuth=true  (MQTT_AUTH_MODE=dynsec): JWT signature + topic
+//     match only. The broker already validated credentials at CONNECT
+//     time via the Dynamic Security Plugin, so DB lookup is skipped.
 //
-//   - brokerAuth=false (MQTT_AUTH_MODE=payload): the broker does not
-//     authenticate clients. Each payload must include a "token" field
-//     (gate JWT). We verify the JWT signature and confirm the token is
-//     current via DB lookup.
+//   - brokerAuth=false (MQTT_AUTH_MODE=payload): full validation — JWT
+//     signature, topic match, AND DB lookup (GetByToken) to reject
+//     rotated tokens. This is the only line of defense when the broker
+//     accepts anonymous connections.
 //
 // ── Migration note ──────────────────────────────────────────────────
 // These two branches are the critical switch point for broker auth.
 // If the Dynamic Security Plugin (or any future broker auth backend)
 // becomes unavailable, set MQTT_AUTH_MODE=payload to fall back to
-// app-level token validation here. No other code changes are needed.
+// full app-level token validation here. No other code changes needed.
 func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redisClient *redis.Client, brokerAuth bool, jwtSecret []byte) error {
 	return c.Subscribe("+/gates/+/status", func(_ pahomqtt.Client, msg pahomqtt.Message) {
 		_, topicGateID, err := parseTopicIDs(msg.Topic())
@@ -66,10 +69,27 @@ func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redis
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
+		// ── Token is always required and signature-checked ──────────
+		token, _ := raw["token"].(string)
+		if token == "" {
+			slog.Warn("mqtt: status payload missing token", "gate_id", topicGateID)
+			return
+		}
+		claimedGateID, _, err := service.ParseGateToken(token, jwtSecret)
+		if err != nil {
+			slog.Warn("mqtt: invalid gate token signature", "gate_id", topicGateID)
+			return
+		}
+		if claimedGateID != topicGateID {
+			slog.Warn("mqtt: token gate_id mismatch with topic", "topic_gate_id", topicGateID, "token_gate_id", claimedGateID)
+			return
+		}
+
 		var gate *model.Gate
 		if brokerAuth {
 			// ── BROKER AUTH PATH (dynsec) ────────────────────────────────
-			// Broker already authenticated the client — trust the topic.
+			// Broker validated credentials at CONNECT. Token signature and
+			// topic match are verified above; skip DB rotation check.
 			gate, err = gateRepo.GetByIDPublic(ctx, topicGateID)
 			if err != nil {
 				slog.Warn("mqtt: gate not found", "gate_id", topicGateID, "error", err)
@@ -77,21 +97,8 @@ func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redis
 			}
 		} else {
 			// ── APP-LEVEL AUTH PATH (payload) ────────────────────────────
-			// No broker auth — validate the token from the payload.
-			token, _ := raw["token"].(string)
-			if token == "" {
-				slog.Warn("mqtt: status payload missing token", "gate_id", topicGateID)
-				return
-			}
-			claimedGateID, _, err := service.ParseGateToken(token, jwtSecret)
-			if err != nil {
-				slog.Warn("mqtt: invalid gate token signature", "gate_id", topicGateID)
-				return
-			}
-			if claimedGateID != topicGateID {
-				slog.Warn("mqtt: token gate_id mismatch with topic", "topic_gate_id", topicGateID, "token_gate_id", claimedGateID)
-				return
-			}
+			// No broker auth — also verify the token against DB to reject
+			// rotated tokens (full validation).
 			gate, err = gateRepo.GetByToken(ctx, topicGateID, token)
 			if err != nil {
 				slog.Warn("mqtt: gate token invalid or rotated", "gate_id", topicGateID)
