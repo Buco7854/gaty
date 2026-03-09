@@ -12,7 +12,7 @@ import { useGateEvents } from '@/hooks/useGateEvents'
 import type { GateEvent } from '@/hooks/useGateEvents'
 import {
   Container, Title, Text, Group, Button, Stack, Paper, Badge, ActionIcon,
-  TextInput, PasswordInput, Select, Tooltip, Modal, Code, Alert, Textarea,
+  TextInput, PasswordInput, Select, Switch, Tooltip, Modal, Code, Alert, Textarea,
   NumberInput, Checkbox,
 } from '@mantine/core'
 import { useDisclosure, useClipboard } from '@mantine/hooks'
@@ -1234,19 +1234,14 @@ export default function GatePage() {
                       suffix="s"
                       style={{ flex: 1 }}
                     />
-                    <Select
-                      data={[
-                        { value: 'reset', label: t('gates.onNewStatusReset') },
-                        { value: 'cancel', label: t('gates.onNewStatusCancel') },
-                        { value: 'continue', label: t('gates.onNewStatusContinue') },
-                      ]}
-                      value={tr.on_new_status ?? 'reset'}
-                      onChange={(v) => {
+                    <Switch
+                      label={t('gates.persistOnChange')}
+                      checked={tr.persist_on_change ?? false}
+                      onChange={(e) => {
                         const updated = [...editStatusTransitions]
-                        updated[idx] = { ...updated[idx], on_new_status: (v as 'reset' | 'cancel' | 'continue') ?? 'reset' }
+                        updated[idx] = { ...updated[idx], persist_on_change: e.currentTarget.checked }
                         setEditStatusTransitions(updated)
                       }}
-                      style={{ flex: 1 }}
                     />
                     <ActionIcon variant="subtle" color="red" onClick={() =>
                       setEditStatusTransitions(editStatusTransitions.filter((_, i) => i !== idx))
