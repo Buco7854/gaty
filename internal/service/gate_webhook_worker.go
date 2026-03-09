@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Buco7854/gatie/internal/model"
@@ -18,6 +19,10 @@ import (
 )
 
 const webhookCheckInterval = 10 * time.Second
+
+// maxConcurrentPolls limits the number of simultaneous outbound HTTP webhook requests
+// to prevent resource exhaustion when many gates are due at the same time.
+const maxConcurrentPolls = 10
 
 // GateWebhookWorker periodically polls all HTTP_WEBHOOK-configured gates for their status.
 // It respects the per-gate interval_seconds setting and retries failed requests according
@@ -86,18 +91,27 @@ func (w *GateWebhookWorker) pollAll(ctx context.Context) {
 		return
 	}
 
+	sem := make(chan struct{}, maxConcurrentPolls)
+	var wg sync.WaitGroup
+
 	for i := range gates {
 		g := &gates[i]
 		if !isDue(g) {
 			continue
 		}
 
+		wg.Add(1)
 		go func(gate *model.Gate) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 			w.pollGate(pollCtx, gate)
 		}(g)
 	}
+
+	wg.Wait()
 }
 
 // isDue reports whether a gate is due for a webhook poll based on its configured

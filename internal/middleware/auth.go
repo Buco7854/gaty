@@ -56,7 +56,7 @@ func AuthExtractor(authSvc *service.AuthService, memberCredRepo repository.Membe
 			hash := hex.EncodeToString(h[:])
 			if cred, membership, err := memberCredRepo.FindByHashedAPIToken(ctx.Context(), hash); err == nil {
 				ws, wsErr := wsRepo.GetByID(ctx.Context(), membership.WorkspaceID)
-				if wsErr == nil && apiTokenEnabled(membership.AuthConfig, ws.MemberAuthConfig) {
+				if wsErr == nil && model.APITokenEnabled(membership.AuthConfig, ws.MemberAuthConfig) {
 					ctx = huma.WithValue(ctx, memberIDKey, membership.ID)
 					ctx = huma.WithValue(ctx, memberWorkspaceIDKey, membership.WorkspaceID)
 					ctx = huma.WithValue(ctx, memberRoleKey, membership.Role)
@@ -95,24 +95,6 @@ func cookieValue(ctx huma.Context, name string) string {
 		}
 	}
 	return ""
-}
-
-// apiTokenEnabled returns true if API token authentication is allowed for a member.
-// memberConfig is the per-member auth_config override (may be nil).
-// wsConfig is the workspace-level member_auth_config default (may be nil).
-// Per-member setting takes precedence; workspace default applies otherwise; default is enabled.
-func apiTokenEnabled(memberConfig, wsConfig map[string]any) bool {
-	if v, ok := memberConfig["api_token"]; ok {
-		if b, ok := v.(bool); ok {
-			return b
-		}
-	}
-	if v, ok := wsConfig["api_token"]; ok {
-		if b, ok := v.(bool); ok {
-			return b
-		}
-	}
-	return true
 }
 
 // RequireAuth is a per-operation middleware that requires a valid global (platform user) JWT.

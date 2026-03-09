@@ -255,7 +255,13 @@ func matchesTimeRange(r model.ScheduleRule, now time.Time) bool {
 		return false
 	}
 	nowMins := now.Hour()*60 + now.Minute()
-	return nowMins >= startH*60+startM && nowMins < endH*60+endM
+	startMins := startH*60 + startM
+	endMins := endH*60 + endM
+	if startMins <= endMins {
+		return nowMins >= startMins && nowMins < endMins
+	}
+	// Wrap-around (e.g. 22:00 → 06:00 = night shift)
+	return nowMins >= startMins || nowMins < endMins
 }
 
 func matchesWeekdaysRange(r model.ScheduleRule, now time.Time) bool {

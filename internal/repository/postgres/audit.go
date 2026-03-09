@@ -16,6 +16,7 @@ func NewAuditRepository(pool *pgxpool.Pool) repository.AuditRepository {
 }
 
 // Insert is a no-op until the audit_logs table is re-added in a future migration.
+// TODO: implement once migration for audit_logs table is added.
 func (r *auditRepository) Insert(_ context.Context, _ repository.AuditEntry) error {
 	return nil
 }

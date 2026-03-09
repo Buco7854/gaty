@@ -14,5 +14,7 @@ type CredentialRepository interface {
 	GetByUserAndType(ctx context.Context, userID uuid.UUID, credType model.CredentialType) (*model.Credential, error)
 	GetByID(ctx context.Context, credID uuid.UUID) (*model.Credential, error)
 	ListByUserAndType(ctx context.Context, userID uuid.UUID, credType model.CredentialType) ([]*model.Credential, error)
+	// UpdateHashedValue atomically replaces the hashed_value for a credential of the given type.
+	UpdateHashedValue(ctx context.Context, userID uuid.UUID, credType model.CredentialType, newHashedValue string) error
 	Delete(ctx context.Context, credID, userID uuid.UUID) error
 }
