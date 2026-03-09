@@ -113,6 +113,12 @@ func validateStatusTransitions(transitions []model.StatusTransition, customStatu
 	for _, s := range customStatuses {
 		known[s] = true
 	}
+	validOnNew := map[model.TransitionOnNewStatus]bool{
+		model.TransitionReset:    true,
+		model.TransitionCancel:   true,
+		model.TransitionContinue: true,
+		"":                       true, // omitted = default (reset)
+	}
 	for i, t := range transitions {
 		if t.From == t.To {
 			return fmt.Errorf("status_transitions[%d]: 'from' and 'to' must be different", i)
@@ -125,6 +131,9 @@ func validateStatusTransitions(transitions []model.StatusTransition, customStatu
 		}
 		if !known[t.To] {
 			return fmt.Errorf("status_transitions[%d]: 'to' status %q is not a known status", i, t.To)
+		}
+		if !validOnNew[t.OnNewStatus] {
+			return fmt.Errorf("status_transitions[%d]: on_new_status %q must be one of: reset, cancel, continue", i, t.OnNewStatus)
 		}
 	}
 	return nil
