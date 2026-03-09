@@ -11,7 +11,7 @@ import (
 type WorkspaceRepository interface {
 	Create(ctx context.Context, name string, ownerID uuid.UUID) (*model.Workspace, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Workspace, error)
-	ListForUser(ctx context.Context, userID uuid.UUID) ([]model.WorkspaceWithRole, error)
+	ListForUser(ctx context.Context, userID uuid.UUID, p model.PaginationParams) ([]model.WorkspaceWithRole, int, error)
 	Rename(ctx context.Context, id uuid.UUID, name string) (*model.Workspace, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	UpdateSSOSettings(ctx context.Context, id uuid.UUID, settings map[string]any) (*model.Workspace, error)

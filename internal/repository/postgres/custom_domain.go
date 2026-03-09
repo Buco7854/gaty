@@ -68,13 +68,23 @@ func (r *customDomainRepository) GetByDomain(ctx context.Context, domain string)
 	))
 }
 
-func (r *customDomainRepository) ListByGate(ctx context.Context, gateID uuid.UUID) ([]*model.CustomDomain, error) {
-	rows, err := r.pool.Query(ctx,
-		`SELECT `+domainCols+` FROM custom_domains WHERE gate_id = $1 ORDER BY created_at DESC`,
+func (r *customDomainRepository) ListByGate(ctx context.Context, gateID uuid.UUID, p model.PaginationParams) ([]*model.CustomDomain, int, error) {
+	p = p.Normalize()
+
+	var total int
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM custom_domains WHERE gate_id = $1`,
 		gateID,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count custom domains: %w", err)
+	}
+
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+domainCols+` FROM custom_domains WHERE gate_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+		gateID, p.Limit, p.Offset,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list custom domains: %w", err)
+		return nil, 0, fmt.Errorf("list custom domains: %w", err)
 	}
 	defer rows.Close()
 
@@ -82,11 +92,11 @@ func (r *customDomainRepository) ListByGate(ctx context.Context, gateID uuid.UUI
 	for rows.Next() {
 		d := &model.CustomDomain{}
 		if err := rows.Scan(&d.ID, &d.GateID, &d.WorkspaceID, &d.Domain, &d.DNSChallengeToken, &d.VerifiedAt, &d.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan custom domain row: %w", err)
+			return nil, 0, fmt.Errorf("scan custom domain row: %w", err)
 		}
 		result = append(result, d)
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
 }
 
 func (r *customDomainRepository) ListAllVerified(ctx context.Context) ([]*model.CustomDomain, error) {

@@ -25,15 +25,15 @@ func (s *WorkspaceService) Create(ctx context.Context, name string, ownerID uuid
 	return &model.WorkspaceWithRole{Workspace: *ws, Role: model.RoleOwner}, nil
 }
 
-func (s *WorkspaceService) List(ctx context.Context, userID uuid.UUID) ([]model.WorkspaceWithRole, error) {
-	list, err := s.workspaces.ListForUser(ctx, userID)
+func (s *WorkspaceService) List(ctx context.Context, userID uuid.UUID, p model.PaginationParams) ([]model.WorkspaceWithRole, int, error) {
+	list, total, err := s.workspaces.ListForUser(ctx, userID, p)
 	if err != nil {
-		return nil, fmt.Errorf("list workspaces: %w", err)
+		return nil, 0, fmt.Errorf("list workspaces: %w", err)
 	}
 	if list == nil {
 		list = []model.WorkspaceWithRole{}
 	}
-	return list, nil
+	return list, total, nil
 }
 
 func (s *WorkspaceService) Get(ctx context.Context, wsID, userID uuid.UUID) (*model.WorkspaceWithRole, error) {

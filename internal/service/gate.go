@@ -144,10 +144,10 @@ func (s *GateService) Create(ctx context.Context, wsID uuid.UUID, params CreateG
 	return gate, nil
 }
 
-func (s *GateService) List(ctx context.Context, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID) ([]model.Gate, error) {
-	gates, err := s.gates.ListForWorkspace(ctx, wsID, role, membershipID)
+func (s *GateService) List(ctx context.Context, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID, p model.PaginationParams) ([]model.Gate, int, error) {
+	gates, total, err := s.gates.ListForWorkspace(ctx, wsID, role, membershipID, p)
 	if err != nil {
-		return nil, fmt.Errorf("list gates: %w", err)
+		return nil, 0, fmt.Errorf("list gates: %w", err)
 	}
 	if gates == nil {
 		gates = []model.Gate{}
@@ -155,7 +155,7 @@ func (s *GateService) List(ctx context.Context, wsID uuid.UUID, role model.Works
 	for i := range gates {
 		gates[i].Status = gates[i].EffectiveStatus()
 	}
-	return gates, nil
+	return gates, total, nil
 }
 
 func (s *GateService) Get(ctx context.Context, gateID, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID) (*model.Gate, error) {

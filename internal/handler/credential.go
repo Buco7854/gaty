@@ -103,17 +103,18 @@ type changePasswordInput struct {
 
 // ─── Platform user: own credentials ──────────────────────────────────────────
 
-func (h *CredentialHandler) ListMyCredentials(ctx context.Context, _ *struct{}) (*credListOutput, error) {
+func (h *CredentialHandler) ListMyCredentials(ctx context.Context, input *PaginationQuery) (*credListOutput, error) {
 	userID, ok := middleware.UserIDFromContext(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized("not authenticated")
 	}
 
-	tokens, err := h.credRepo.ListByUserAndType(ctx, userID, model.CredAPIToken)
+	p := input.Params()
+	tokens, _, err := h.credRepo.ListByUserAndType(ctx, userID, model.CredAPIToken, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list credentials", err)
 	}
-	ssos, err := h.credRepo.ListByUserAndType(ctx, userID, model.CredSSOIdentity)
+	ssos, _, err := h.credRepo.ListByUserAndType(ctx, userID, model.CredSSOIdentity, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list credentials", err)
 	}
@@ -242,13 +243,19 @@ type createWorkspaceMemberTokenInput struct {
 	}
 }
 
-func (h *CredentialHandler) ListMyWorkspaceMemberCredentials(ctx context.Context, _ *workspaceSelfCredPathParam) (*credListOutput, error) {
+type listWorkspaceMemberCredsInput struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	PaginationQuery
+}
+
+func (h *CredentialHandler) ListMyWorkspaceMemberCredentials(ctx context.Context, input *listWorkspaceMemberCredsInput) (*credListOutput, error) {
 	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized("not authenticated as workspace member")
 	}
 
-	tokens, err := h.memberCredRepo.ListByMembershipAndType(ctx, membershipID, model.CredAPIToken)
+	p := input.Params()
+	tokens, _, err := h.memberCredRepo.ListByMembershipAndType(ctx, membershipID, model.CredAPIToken, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list credentials", err)
 	}
@@ -336,17 +343,18 @@ func requireLocalMember(ctx context.Context) (uuid.UUID, error) {
 	return membershipID, nil
 }
 
-func (h *CredentialHandler) ListMyMemberCredentials(ctx context.Context, _ *struct{}) (*credListOutput, error) {
+func (h *CredentialHandler) ListMyMemberCredentials(ctx context.Context, input *PaginationQuery) (*credListOutput, error) {
 	membershipID, err := requireLocalMember(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	tokens, err := h.memberCredRepo.ListByMembershipAndType(ctx, membershipID, model.CredAPIToken)
+	p := input.Params()
+	tokens, _, err := h.memberCredRepo.ListByMembershipAndType(ctx, membershipID, model.CredAPIToken, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list credentials", err)
 	}
-	ssos, err := h.memberCredRepo.ListByMembershipAndType(ctx, membershipID, model.CredSSOIdentity)
+	ssos, _, err := h.memberCredRepo.ListByMembershipAndType(ctx, membershipID, model.CredSSOIdentity, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list credentials", err)
 	}
@@ -496,16 +504,23 @@ func (h *CredentialHandler) validateMembership(ctx context.Context, membershipID
 	return nil
 }
 
-func (h *CredentialHandler) AdminListMemberCredentials(ctx context.Context, input *memberCredPathParam) (*credListOutput, error) {
+type adminListMemberCredsInput struct {
+	WorkspaceID  uuid.UUID `path:"ws_id"`
+	MembershipID uuid.UUID `path:"membership_id"`
+	PaginationQuery
+}
+
+func (h *CredentialHandler) AdminListMemberCredentials(ctx context.Context, input *adminListMemberCredsInput) (*credListOutput, error) {
 	if err := h.validateMembership(ctx, input.MembershipID, input.WorkspaceID); err != nil {
 		return nil, err
 	}
 
-	tokens, err := h.memberCredRepo.ListByMembershipAndType(ctx, input.MembershipID, model.CredAPIToken)
+	p := input.Params()
+	tokens, _, err := h.memberCredRepo.ListByMembershipAndType(ctx, input.MembershipID, model.CredAPIToken, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list credentials", err)
 	}
-	ssos, err := h.memberCredRepo.ListByMembershipAndType(ctx, input.MembershipID, model.CredSSOIdentity)
+	ssos, _, err := h.memberCredRepo.ListByMembershipAndType(ctx, input.MembershipID, model.CredSSOIdentity, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list credentials", err)
 	}

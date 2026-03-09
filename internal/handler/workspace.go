@@ -52,19 +52,20 @@ func (h *WorkspaceHandler) Create(ctx context.Context, input *CreateWorkspaceInp
 // --- List ---
 
 type ListWorkspacesOutput struct {
-	Body []model.WorkspaceWithRole
+	Body PaginatedBody[model.WorkspaceWithRole]
 }
 
-func (h *WorkspaceHandler) List(ctx context.Context, _ *struct{}) (*ListWorkspacesOutput, error) {
+func (h *WorkspaceHandler) List(ctx context.Context, input *PaginationQuery) (*ListWorkspacesOutput, error) {
 	userID, ok := middleware.UserIDFromContext(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized("unauthorized")
 	}
-	list, err := h.workspaces.List(ctx, userID)
+	p := input.Params()
+	list, total, err := h.workspaces.List(ctx, userID, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list workspaces", err)
 	}
-	return &ListWorkspacesOutput{Body: list}, nil
+	return &ListWorkspacesOutput{Body: NewPaginatedBody(list, total, p)}, nil
 }
 
 // --- Get ---

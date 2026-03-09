@@ -20,27 +20,38 @@ func NewCredentialPolicyRepository(pool *pgxpool.Pool) repository.CredentialPoli
 	return &credentialPolicyRepository{pool: pool}
 }
 
-func (r *credentialPolicyRepository) List(ctx context.Context, credentialID uuid.UUID) ([]model.CredentialPolicy, error) {
+func (r *credentialPolicyRepository) List(ctx context.Context, credentialID uuid.UUID, p model.PaginationParams) ([]model.CredentialPolicy, int, error) {
+	p = p.Normalize()
+
+	var total int
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM access_policies WHERE subject_type = 'credential' AND subject_id = $1`,
+		credentialID,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count credential policies: %w", err)
+	}
+
 	rows, err := r.pool.Query(ctx,
 		`SELECT subject_id, gate_id, permission_code FROM access_policies
 		 WHERE subject_type = 'credential' AND subject_id = $1
-		 ORDER BY gate_id, permission_code`,
-		credentialID,
+		 ORDER BY gate_id, permission_code
+		 LIMIT $2 OFFSET $3`,
+		credentialID, p.Limit, p.Offset,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list credential policies: %w", err)
+		return nil, 0, fmt.Errorf("list credential policies: %w", err)
 	}
 	defer rows.Close()
 
 	var result []model.CredentialPolicy
 	for rows.Next() {
-		var p model.CredentialPolicy
-		if err := rows.Scan(&p.CredentialID, &p.GateID, &p.PermissionCode); err != nil {
-			return nil, fmt.Errorf("scan credential policy: %w", err)
+		var cp model.CredentialPolicy
+		if err := rows.Scan(&cp.CredentialID, &cp.GateID, &cp.PermissionCode); err != nil {
+			return nil, 0, fmt.Errorf("scan credential policy: %w", err)
 		}
-		result = append(result, p)
+		result = append(result, cp)
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
 }
 
 func (r *credentialPolicyRepository) HasAny(ctx context.Context, credentialID uuid.UUID) (bool, error) {

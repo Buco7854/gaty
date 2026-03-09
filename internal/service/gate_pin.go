@@ -135,15 +135,15 @@ func (s *GatePinService) Create(ctx context.Context, gateID uuid.UUID, params Cr
 	return s.pins.Create(ctx, gateID, string(hashed), params.Label, meta, params.ScheduleID)
 }
 
-func (s *GatePinService) List(ctx context.Context, gateID uuid.UUID) ([]*model.GatePin, error) {
-	pins, err := s.pins.List(ctx, gateID)
+func (s *GatePinService) List(ctx context.Context, gateID uuid.UUID, p model.PaginationParams) ([]*model.GatePin, int, error) {
+	pins, total, err := s.pins.List(ctx, gateID, p)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if pins == nil {
 		pins = []*model.GatePin{}
 	}
-	return pins, nil
+	return pins, total, nil
 }
 
 func (s *GatePinService) Update(ctx context.Context, pinID, gateID uuid.UUID, params UpdatePINParams) (*model.GatePin, error) {
@@ -277,7 +277,7 @@ func (s *GatePinService) validatePIN(ctx context.Context, gateID uuid.UUID, pin,
 		return nil, pinMetadata{}, ErrTooManyAttempts
 	}
 
-	pins, err := s.pins.List(ctx, gateID)
+	pins, _, err := s.pins.List(ctx, gateID, model.PaginationParams{Limit: 10000})
 	if err != nil {
 		return nil, pinMetadata{}, fmt.Errorf("list pins: %w", err)
 	}

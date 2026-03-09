@@ -97,18 +97,29 @@ func (r *workspaceMembershipRepository) GetByLocalUsername(ctx context.Context, 
 	))
 }
 
-func (r *workspaceMembershipRepository) List(ctx context.Context, workspaceID uuid.UUID) ([]*model.WorkspaceMembership, error) {
+func (r *workspaceMembershipRepository) List(ctx context.Context, workspaceID uuid.UUID, p model.PaginationParams) ([]*model.WorkspaceMembership, int, error) {
+	p = p.Normalize()
+
+	var total int
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM workspace_memberships WHERE workspace_id = $1`,
+		workspaceID,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count memberships: %w", err)
+	}
+
 	rows, err := r.pool.Query(ctx,
 		`SELECT m.id, m.workspace_id, m.user_id, m.local_username, m.display_name, m.role,
 		        m.auth_config, m.invited_by, m.created_at, u.email
 		 FROM workspace_memberships m
 		 LEFT JOIN users u ON u.id = m.user_id
 		 WHERE m.workspace_id = $1
-		 ORDER BY m.created_at DESC`,
-		workspaceID,
+		 ORDER BY m.created_at DESC
+		 LIMIT $2 OFFSET $3`,
+		workspaceID, p.Limit, p.Offset,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list memberships: %w", err)
+		return nil, 0, fmt.Errorf("list memberships: %w", err)
 	}
 	defer rows.Close()
 
@@ -116,11 +127,11 @@ func (r *workspaceMembershipRepository) List(ctx context.Context, workspaceID uu
 	for rows.Next() {
 		m := &model.WorkspaceMembership{}
 		if err := rows.Scan(&m.ID, &m.WorkspaceID, &m.UserID, &m.LocalUsername, &m.DisplayName, &m.Role, &m.AuthConfig, &m.InvitedBy, &m.CreatedAt, &m.UserEmail); err != nil {
-			return nil, fmt.Errorf("scan membership row: %w", err)
+			return nil, 0, fmt.Errorf("scan membership row: %w", err)
 		}
 		result = append(result, m)
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
 }
 
 func (r *workspaceMembershipRepository) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName *string, localUsername *string, role *model.WorkspaceRole, authConfig repository.OmittableNullable[map[string]any]) (*model.WorkspaceMembership, error) {

@@ -57,25 +57,35 @@ func (r *gatePinRepository) GetByID(ctx context.Context, pinID, gateID uuid.UUID
 	))
 }
 
-func (r *gatePinRepository) List(ctx context.Context, gateID uuid.UUID) ([]*model.GatePin, error) {
-	rows, err := r.pool.Query(ctx,
-		`SELECT `+gatePinColumns+` FROM gate_access_codes WHERE gate_id = $1 ORDER BY created_at DESC`,
+func (r *gatePinRepository) List(ctx context.Context, gateID uuid.UUID, p model.PaginationParams) ([]*model.GatePin, int, error) {
+	p = p.Normalize()
+
+	var total int
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM gate_access_codes WHERE gate_id = $1`,
 		gateID,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count gate access codes: %w", err)
+	}
+
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+gatePinColumns+` FROM gate_access_codes WHERE gate_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+		gateID, p.Limit, p.Offset,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list gate access codes: %w", err)
+		return nil, 0, fmt.Errorf("list gate access codes: %w", err)
 	}
 	defer rows.Close()
 
 	var result []*model.GatePin
 	for rows.Next() {
-		p := &model.GatePin{}
-		if err := rows.Scan(&p.ID, &p.GateID, &p.HashedPin, &p.Label, &p.Metadata, &p.ScheduleID, &p.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan gate access code row: %w", err)
+		pin := &model.GatePin{}
+		if err := rows.Scan(&pin.ID, &pin.GateID, &pin.HashedPin, &pin.Label, &pin.Metadata, &pin.ScheduleID, &pin.CreatedAt); err != nil {
+			return nil, 0, fmt.Errorf("scan gate access code row: %w", err)
 		}
-		result = append(result, p)
+		result = append(result, pin)
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
 }
 
 func (r *gatePinRepository) Update(ctx context.Context, pinID, gateID uuid.UUID, label *string, metadata map[string]any) (*model.GatePin, error) {

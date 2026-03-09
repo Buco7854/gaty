@@ -73,15 +73,26 @@ func (r *membershipCredentialRepository) GetByID(ctx context.Context, credID, me
 	))
 }
 
-func (r *membershipCredentialRepository) ListByMembershipAndType(ctx context.Context, membershipID uuid.UUID, credType model.CredentialType) ([]*model.MembershipCredential, error) {
+func (r *membershipCredentialRepository) ListByMembershipAndType(ctx context.Context, membershipID uuid.UUID, credType model.CredentialType, p model.PaginationParams) ([]*model.MembershipCredential, int, error) {
+	p = p.Normalize()
+
+	var total int
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM membership_credentials WHERE membership_id = $1 AND type = $2`,
+		membershipID, credType,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count membership credentials: %w", err)
+	}
+
 	rows, err := r.pool.Query(ctx,
 		`SELECT `+membershipCredColumns+` FROM membership_credentials
 		 WHERE membership_id = $1 AND type = $2
-		 ORDER BY created_at DESC`,
-		membershipID, credType,
+		 ORDER BY created_at DESC
+		 LIMIT $3 OFFSET $4`,
+		membershipID, credType, p.Limit, p.Offset,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list membership credentials: %w", err)
+		return nil, 0, fmt.Errorf("list membership credentials: %w", err)
 	}
 	defer rows.Close()
 
@@ -89,11 +100,11 @@ func (r *membershipCredentialRepository) ListByMembershipAndType(ctx context.Con
 	for rows.Next() {
 		c := &model.MembershipCredential{}
 		if err := rows.Scan(&c.ID, &c.MembershipID, &c.Type, &c.HashedValue, &c.Label, &c.ExpiresAt, &c.Metadata, &c.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan membership credential row: %w", err)
+			return nil, 0, fmt.Errorf("scan membership credential row: %w", err)
 		}
 		result = append(result, c)
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
 }
 
 func (r *membershipCredentialRepository) FindByHashedAPIToken(ctx context.Context, hash string) (*model.MembershipCredential, *model.WorkspaceMembership, error) {

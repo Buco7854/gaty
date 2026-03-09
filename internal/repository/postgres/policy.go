@@ -20,50 +20,72 @@ func NewPolicyRepository(pool *pgxpool.Pool) repository.PolicyRepository {
 	return &policyRepository{pool: pool}
 }
 
-func (r *policyRepository) List(ctx context.Context, gateID uuid.UUID) ([]model.MembershipPolicy, error) {
+func (r *policyRepository) List(ctx context.Context, gateID uuid.UUID, p model.PaginationParams) ([]model.MembershipPolicy, int, error) {
+	p = p.Normalize()
+
+	var total int
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM access_policies WHERE subject_type = 'membership' AND gate_id = $1`,
+		gateID,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count policies: %w", err)
+	}
+
 	rows, err := r.pool.Query(ctx,
 		`SELECT subject_id, gate_id, permission_code FROM access_policies
 		 WHERE subject_type = 'membership' AND gate_id = $1
-		 ORDER BY subject_id, permission_code`,
-		gateID,
+		 ORDER BY subject_id, permission_code
+		 LIMIT $2 OFFSET $3`,
+		gateID, p.Limit, p.Offset,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list policies: %w", err)
+		return nil, 0, fmt.Errorf("list policies: %w", err)
 	}
 	defer rows.Close()
 
 	var result []model.MembershipPolicy
 	for rows.Next() {
-		var p model.MembershipPolicy
-		if err := rows.Scan(&p.MembershipID, &p.GateID, &p.PermissionCode); err != nil {
-			return nil, fmt.Errorf("scan policy: %w", err)
+		var mp model.MembershipPolicy
+		if err := rows.Scan(&mp.MembershipID, &mp.GateID, &mp.PermissionCode); err != nil {
+			return nil, 0, fmt.Errorf("scan policy: %w", err)
 		}
-		result = append(result, p)
+		result = append(result, mp)
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
 }
 
-func (r *policyRepository) ListForMembership(ctx context.Context, membershipID uuid.UUID) ([]model.MembershipPolicy, error) {
+func (r *policyRepository) ListForMembership(ctx context.Context, membershipID uuid.UUID, p model.PaginationParams) ([]model.MembershipPolicy, int, error) {
+	p = p.Normalize()
+
+	var total int
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM access_policies WHERE subject_type = 'membership' AND subject_id = $1`,
+		membershipID,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count membership policies: %w", err)
+	}
+
 	rows, err := r.pool.Query(ctx,
 		`SELECT subject_id, gate_id, permission_code FROM access_policies
 		 WHERE subject_type = 'membership' AND subject_id = $1
-		 ORDER BY gate_id, permission_code`,
-		membershipID,
+		 ORDER BY gate_id, permission_code
+		 LIMIT $2 OFFSET $3`,
+		membershipID, p.Limit, p.Offset,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list membership policies: %w", err)
+		return nil, 0, fmt.Errorf("list membership policies: %w", err)
 	}
 	defer rows.Close()
 
 	var result []model.MembershipPolicy
 	for rows.Next() {
-		var p model.MembershipPolicy
-		if err := rows.Scan(&p.MembershipID, &p.GateID, &p.PermissionCode); err != nil {
-			return nil, fmt.Errorf("scan policy: %w", err)
+		var mp model.MembershipPolicy
+		if err := rows.Scan(&mp.MembershipID, &mp.GateID, &mp.PermissionCode); err != nil {
+			return nil, 0, fmt.Errorf("scan policy: %w", err)
 		}
-		result = append(result, p)
+		result = append(result, mp)
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
 }
 
 func (r *policyRepository) Grant(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) error {

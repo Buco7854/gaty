@@ -72,15 +72,26 @@ func (r *credentialRepository) GetByID(ctx context.Context, credID uuid.UUID) (*
 	))
 }
 
-func (r *credentialRepository) ListByUserAndType(ctx context.Context, userID uuid.UUID, credType model.CredentialType) ([]*model.Credential, error) {
+func (r *credentialRepository) ListByUserAndType(ctx context.Context, userID uuid.UUID, credType model.CredentialType, p model.PaginationParams) ([]*model.Credential, int, error) {
+	p = p.Normalize()
+
+	var total int
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM credentials WHERE user_id = $1 AND type = $2`,
+		userID, credType,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count credentials: %w", err)
+	}
+
 	rows, err := r.pool.Query(ctx,
 		`SELECT `+credColumns+` FROM credentials
 		 WHERE user_id = $1 AND type = $2
-		 ORDER BY created_at DESC`,
-		userID, credType,
+		 ORDER BY created_at DESC
+		 LIMIT $3 OFFSET $4`,
+		userID, credType, p.Limit, p.Offset,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list credentials: %w", err)
+		return nil, 0, fmt.Errorf("list credentials: %w", err)
 	}
 	defer rows.Close()
 
@@ -88,11 +99,11 @@ func (r *credentialRepository) ListByUserAndType(ctx context.Context, userID uui
 	for rows.Next() {
 		c := &model.Credential{}
 		if err := rows.Scan(&c.ID, &c.UserID, &c.Type, &c.HashedValue, &c.Label, &c.ExpiresAt, &c.Metadata, &c.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan credential row: %w", err)
+			return nil, 0, fmt.Errorf("scan credential row: %w", err)
 		}
 		result = append(result, c)
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
 }
 
 func (r *credentialRepository) UpdateHashedValue(ctx context.Context, userID uuid.UUID, credType model.CredentialType, newHashedValue string) error {

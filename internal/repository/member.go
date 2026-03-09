@@ -14,7 +14,7 @@ type WorkspaceMembershipRepository interface {
 	GetByID(ctx context.Context, membershipID, workspaceID uuid.UUID) (*model.WorkspaceMembership, error)
 	GetByUserID(ctx context.Context, workspaceID, userID uuid.UUID) (*model.WorkspaceMembership, error)
 	GetByLocalUsername(ctx context.Context, workspaceID uuid.UUID, localUsername string) (*model.WorkspaceMembership, error)
-	List(ctx context.Context, workspaceID uuid.UUID) ([]*model.WorkspaceMembership, error)
+	List(ctx context.Context, workspaceID uuid.UUID, p model.PaginationParams) ([]*model.WorkspaceMembership, int, error)
 	Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName *string, localUsername *string, role *model.WorkspaceRole, authConfig OmittableNullable[map[string]any]) (*model.WorkspaceMembership, error)
 	Delete(ctx context.Context, membershipID, workspaceID uuid.UUID) error
 	MergeUser(ctx context.Context, membershipID, userID uuid.UUID) error

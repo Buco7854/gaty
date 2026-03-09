@@ -81,15 +81,15 @@ func (s *MembershipService) GetByID(ctx context.Context, membershipID, workspace
 	return s.memberships.GetByID(ctx, membershipID, workspaceID)
 }
 
-func (s *MembershipService) List(ctx context.Context, workspaceID uuid.UUID) ([]*model.WorkspaceMembership, error) {
-	members, err := s.memberships.List(ctx, workspaceID)
+func (s *MembershipService) List(ctx context.Context, workspaceID uuid.UUID, p model.PaginationParams) ([]*model.WorkspaceMembership, int, error) {
+	members, total, err := s.memberships.List(ctx, workspaceID, p)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if members == nil {
 		members = []*model.WorkspaceMembership{}
 	}
-	return members, nil
+	return members, total, nil
 }
 
 func (s *MembershipService) Update(ctx context.Context, membershipID, workspaceID uuid.UUID, params UpdateMemberParams) (*model.WorkspaceMembership, error) {

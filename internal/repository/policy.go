@@ -9,8 +9,8 @@ import (
 
 // PolicyRepository is the data-access contract for membership policies.
 type PolicyRepository interface {
-	List(ctx context.Context, gateID uuid.UUID) ([]model.MembershipPolicy, error)
-	ListForMembership(ctx context.Context, membershipID uuid.UUID) ([]model.MembershipPolicy, error)
+	List(ctx context.Context, gateID uuid.UUID, p model.PaginationParams) ([]model.MembershipPolicy, int, error)
+	ListForMembership(ctx context.Context, membershipID uuid.UUID, p model.PaginationParams) ([]model.MembershipPolicy, int, error)
 	Grant(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) error
 	HasPermission(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) (bool, error)
 	HasAnyPermission(ctx context.Context, membershipID, gateID uuid.UUID) (bool, error)
