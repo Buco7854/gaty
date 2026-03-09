@@ -91,9 +91,24 @@ func main() {
 	auditRepo := repopg.NewAuditRepository(pool)
 	domainRepo := repopg.NewCustomDomainRepository(pool)
 
+	// MQTT auth strategy: DynSec (broker-level) or payload (app-level fallback).
+	// ── Migration note: to switch auth strategy, change MQTT_AUTH_MODE env var.
+	// See service.BrokerAuthManager for the full fallback procedure.
+	var brokerAuth service.BrokerAuthManager = service.NoopBrokerAuth{}
+	brokerAuthEnabled := cfg.MQTTAuthMode == "dynsec"
+	if brokerAuthEnabled && mqttClient != nil {
+		dynSec := internalmqtt.NewDynSecManager(mqttClient)
+		if err := dynSec.Setup(ctx); err != nil {
+			slog.Warn("dynsec: setup failed, falling back to payload auth", "error", err)
+			brokerAuthEnabled = false
+		} else {
+			brokerAuth = dynSec
+		}
+	}
+
 	// Subscribe to gate status updates from MQTT (bridge to Redis Pub/Sub for SSE)
 	if mqttClient != nil {
-		if err := mqttClient.SubscribeGateStatuses(gateRepo, redisClient, cfg.MQTTBrokerAuth, []byte(cfg.JWTSecret)); err != nil {
+		if err := mqttClient.SubscribeGateStatuses(gateRepo, redisClient, brokerAuthEnabled, []byte(cfg.JWTSecret)); err != nil {
 			slog.Warn("mqtt: failed to subscribe to gate statuses", "error", err)
 		}
 	}
@@ -131,7 +146,7 @@ func main() {
 			slog.Warn("gate: driver execution failed", "gate_id", gate.ID, "action", action, "error", err)
 		}
 	})
-	gateSvc := service.NewGateService(gateRepo, policySvc, credPolicyRepo, scheduleSvc, auditRepo, gateTrigger, []byte(cfg.JWTSecret), redisClient)
+	gateSvc := service.NewGateService(gateRepo, policySvc, credPolicyRepo, scheduleSvc, auditRepo, gateTrigger, []byte(cfg.JWTSecret), redisClient, brokerAuth)
 	gatePinSvc := service.NewGatePinService(gatePinRepo, gateRepo, scheduleSvc, authSvc, gateTrigger, redisClient, cfg.PINMaxAttempts, cfg.PINGateMaxAttempts)
 
 	// Gate TTL worker: marks gates unresponsive when last_seen_at > DefaultGateTTL ago.
@@ -227,11 +242,6 @@ func main() {
 
 	// Inbound: gate-to-server status push (gate token auth, no workspace middleware).
 	handler.NewGateInboundHandler(gateSvc).RegisterRoutes(api)
-
-	// MQTT broker auth: EMQX HTTP webhook validates gate credentials.
-	if cfg.MQTTBrokerAuth {
-		handler.NewMQTTAuthHandler(gateSvc, cfg.MQTTUsername).RegisterRoutes(api)
-	}
 
 	// SSE: raw chi route (long-lived, not Huma)
 	handler.NewSSEHandler(authSvc, redisClient).RegisterRoutes(router)

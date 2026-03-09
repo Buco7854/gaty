@@ -22,6 +22,8 @@ services:
     volumes:
       - ./configs/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./configs/mosquitto.acl:/mosquitto/config/mosquitto.acl:ro
+      - ./configs/dynsec_admin_pw.txt:/mosquitto/config/dynsec_admin_pw.txt:ro
+      - mosquitto_data:/mosquitto/data
 
   # Caddy reverse proxy with On-Demand TLS for custom gate domains.
   # Uses configs/Caddyfile.prod — set APP_DOMAIN env var before starting.
@@ -41,5 +43,6 @@ services:
 
 volumes:
   pgdata:
+  mosquitto_data:
   caddy_data:
   caddy_config:

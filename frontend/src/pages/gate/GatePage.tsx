@@ -1234,6 +1234,20 @@ export default function GatePage() {
                       suffix="s"
                       style={{ flex: 1 }}
                     />
+                    <Select
+                      data={[
+                        { value: 'reset', label: t('gates.onNewStatusReset') },
+                        { value: 'cancel', label: t('gates.onNewStatusCancel') },
+                        { value: 'continue', label: t('gates.onNewStatusContinue') },
+                      ]}
+                      value={tr.on_new_status ?? 'reset'}
+                      onChange={(v) => {
+                        const updated = [...editStatusTransitions]
+                        updated[idx] = { ...updated[idx], on_new_status: (v as 'reset' | 'cancel' | 'continue') ?? 'reset' }
+                        setEditStatusTransitions(updated)
+                      }}
+                      style={{ flex: 1 }}
+                    />
                     <ActionIcon variant="subtle" color="red" onClick={() =>
                       setEditStatusTransitions(editStatusTransitions.filter((_, i) => i !== idx))
                     }>
