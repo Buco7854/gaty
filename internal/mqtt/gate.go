@@ -28,28 +28,27 @@ func CommandTopic(wsID, gateID uuid.UUID) string {
 	return fmt.Sprintf("workspace_%s/gates/%s/command", wsID, gateID)
 }
 
-// SubscribeGateStatuses subscribes to all gate status topics, authenticates the gate,
-// and delegates status processing to service.ProcessGateStatus (rule evaluation,
-// DB persistence, SSE pub/sub).
-// Topic wildcard: +/gates/+/status
-//
-// Authentication is two-step:
-//  1. Verify JWT signature with jwtSecret (prevents forgery).
-//  2. DB lookup by gateID + token (detects rotation — old JWTs are invalid after SetToken).
-//
 // SubscribeGateStatuses subscribes to all gate status topics and delegates
 // status processing to service.ProcessGateStatus (rule evaluation, DB
 // persistence, SSE pub/sub).
+// Topic wildcard: +/gates/+/status
 //
-// Two authentication modes controlled by brokerAuth:
+// Two authentication modes controlled by brokerAuth (set via MQTT_AUTH_MODE):
 //
-//   - brokerAuth=true (EMQX): the broker already validated credentials at
-//     CONNECT time via the /api/mqtt/auth webhook. We trust the topic gate_id
-//     and load the gate by ID.
+//   - brokerAuth=true  (MQTT_AUTH_MODE=dynsec): the broker already validated
+//     credentials at CONNECT time via the Dynamic Security Plugin. We trust
+//     the topic gate_id and load the gate by ID.
 //
-//   - brokerAuth=false (Mosquitto): the broker does not authenticate clients.
-//     Each payload must include a "token" field (gate JWT). We verify the JWT
-//     signature and confirm the token is current via DB lookup.
+//   - brokerAuth=false (MQTT_AUTH_MODE=payload): the broker does not
+//     authenticate clients. Each payload must include a "token" field
+//     (gate JWT). We verify the JWT signature and confirm the token is
+//     current via DB lookup.
+//
+// ── Migration note ──────────────────────────────────────────────────
+// These two branches are the critical switch point for broker auth.
+// If the Dynamic Security Plugin (or any future broker auth backend)
+// becomes unavailable, set MQTT_AUTH_MODE=payload to fall back to
+// app-level token validation here. No other code changes are needed.
 func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redisClient *redis.Client, brokerAuth bool, jwtSecret []byte) error {
 	return c.Subscribe("+/gates/+/status", func(_ pahomqtt.Client, msg pahomqtt.Message) {
 		_, topicGateID, err := parseTopicIDs(msg.Topic())
@@ -69,6 +68,7 @@ func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redis
 
 		var gate *model.Gate
 		if brokerAuth {
+			// ── BROKER AUTH PATH (dynsec) ────────────────────────────────
 			// Broker already authenticated the client — trust the topic.
 			gate, err = gateRepo.GetByIDPublic(ctx, topicGateID)
 			if err != nil {
@@ -76,6 +76,7 @@ func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redis
 				return
 			}
 		} else {
+			// ── APP-LEVEL AUTH PATH (payload) ────────────────────────────
 			// No broker auth — validate the token from the payload.
 			token, _ := raw["token"].(string)
 			if token == "" {

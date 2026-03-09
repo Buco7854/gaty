@@ -223,8 +223,8 @@ type commandPayload struct {
 }
 
 // mqttStatusPayload is what this simulator sends on the MQTT status topic.
-// The token is included for brokers without CONNECT-level auth (e.g. Mosquitto).
-// Brokers with auth (EMQX) ignore it — authentication happens at CONNECT time.
+// The token is included for MQTT_AUTH_MODE=payload (no CONNECT-level auth).
+// In dynsec mode the broker ignores it — authentication happens at CONNECT time.
 type mqttStatusPayload struct {
 	Token  string         `json:"token"`
 	Status string         `json:"status"`

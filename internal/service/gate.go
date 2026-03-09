@@ -54,6 +54,7 @@ type GateService struct {
 	trigger      GateTriggerFn
 	jwtSecret    []byte
 	redis        *redis.Client
+	brokerAuth   BrokerAuthManager
 }
 
 func NewGateService(
@@ -65,6 +66,7 @@ func NewGateService(
 	trigger GateTriggerFn,
 	jwtSecret []byte,
 	redis *redis.Client,
+	brokerAuth BrokerAuthManager,
 ) *GateService {
 	return &GateService{
 		gates:        gates,
@@ -75,6 +77,7 @@ func NewGateService(
 		trigger:      trigger,
 		jwtSecret:    jwtSecret,
 		redis:        redis,
+		brokerAuth:   brokerAuth,
 	}
 }
 
@@ -127,6 +130,14 @@ func (s *GateService) Create(ctx context.Context, wsID uuid.UUID, params CreateG
 	if err := s.gates.SetToken(ctx, gate.ID, gate.WorkspaceID, jwtToken); err != nil {
 		return nil, fmt.Errorf("set gate token: %w", err)
 	}
+
+	// Sync credentials with the MQTT broker (DynSec or noop depending on auth mode).
+	// ── Migration note: if the broker auth plugin changes, this call becomes
+	// a no-op via NoopBrokerAuth — see BrokerAuthManager interface.
+	if err := s.brokerAuth.SyncCredentials(ctx, gate.ID, jwtToken); err != nil {
+		slog.Warn("gate: failed to sync broker credentials (gate still created)", "gate_id", gate.ID, "error", err)
+	}
+
 	gate.GateToken = &jwtToken
 	gate.Status = gate.EffectiveStatus()
 	return gate, nil
@@ -188,7 +199,14 @@ func (s *GateService) Update(ctx context.Context, gateID, wsID uuid.UUID, params
 }
 
 func (s *GateService) Delete(ctx context.Context, gateID, wsID uuid.UUID) error {
-	return s.gates.Delete(ctx, gateID, wsID)
+	if err := s.gates.Delete(ctx, gateID, wsID); err != nil {
+		return err
+	}
+	// ── Migration note: broker credential cleanup — see BrokerAuthManager.
+	if err := s.brokerAuth.RemoveCredentials(ctx, gateID); err != nil {
+		slog.Warn("gate: failed to remove broker credentials (gate already deleted)", "gate_id", gateID, "error", err)
+	}
+	return nil
 }
 
 func (s *GateService) GetToken(ctx context.Context, gateID, wsID uuid.UUID) (string, error) {
@@ -209,6 +227,12 @@ func (s *GateService) RotateToken(ctx context.Context, gateID, wsID uuid.UUID) (
 	if err := s.gates.SetToken(ctx, gateID, wsID, jwtToken); err != nil {
 		return "", fmt.Errorf("set gate token: %w", err)
 	}
+
+	// ── Migration note: broker credential sync — see BrokerAuthManager.
+	if err := s.brokerAuth.SyncCredentials(ctx, gate.ID, jwtToken); err != nil {
+		slog.Warn("gate: failed to sync broker credentials after rotation", "gate_id", gateID, "error", err)
+	}
+
 	return jwtToken, nil
 }
 

@@ -16,9 +16,19 @@ type Config struct {
 	DatabaseURL           string
 	RedisURL              string
 	MQTTBroker            string
-	MQTTUsername          string // optional, empty = anonymous
-	MQTTPassword          string // optional
-	MQTTBrokerAuth        bool   // true = broker validates credentials (EMQX), false = app-level token check (Mosquitto)
+	MQTTUsername string // optional, empty = anonymous
+	MQTTPassword string // optional
+	// MQTTAuthMode controls how MQTT gate credentials are validated:
+	//   "dynsec"  — Mosquitto Dynamic Security Plugin manages client credentials
+	//              at the broker level. Gates authenticate at CONNECT time.
+	//   "payload" — No broker-level auth. Gate JWT tokens are validated
+	//              in each MQTT message payload (app-level fallback).
+	//
+	// ── Migration note ──────────────────────────────────────────────
+	// If the Dynamic Security Plugin becomes unavailable, switch to
+	// "payload" mode. No code changes required — only this env var.
+	// See service.BrokerAuthManager for details.
+	MQTTAuthMode string
 	JWTSecret             string
 	CORSOrigins           []string
 	BaseURL               string        // public base URL of this API, e.g. https://api.example.com
@@ -78,7 +88,16 @@ func Load() (*Config, error) {
 
 	cfg.MQTTUsername = os.Getenv("MQTT_USERNAME")
 	cfg.MQTTPassword = os.Getenv("MQTT_PASSWORD")
-	cfg.MQTTBrokerAuth = os.Getenv("MQTT_BROKER_AUTH") == "true"
+
+	cfg.MQTTAuthMode = os.Getenv("MQTT_AUTH_MODE")
+	if cfg.MQTTAuthMode == "" {
+		cfg.MQTTAuthMode = "dynsec"
+	}
+	switch cfg.MQTTAuthMode {
+	case "dynsec", "payload":
+	default:
+		return nil, fmt.Errorf("MQTT_AUTH_MODE must be \"dynsec\" or \"payload\", got %q", cfg.MQTTAuthMode)
+	}
 
 	cfg.JWTSecret = os.Getenv("JWT_SECRET")
 	if cfg.JWTSecret == "" {
