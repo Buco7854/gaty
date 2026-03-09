@@ -67,15 +67,12 @@ export interface StatusRule {
   set_status: string
 }
 
-/** Controls behavior when a new status message arrives during a pending transition. */
-export type TransitionOnNewStatus = 'reset' | 'cancel' | 'continue'
-
 /** Automatic status transition after a timeout. */
 export interface StatusTransition {
   from: string
   to: string
   after_seconds: number
-  on_new_status?: TransitionOnNewStatus
+  persist_on_change?: boolean
 }
 
 export interface Gate {

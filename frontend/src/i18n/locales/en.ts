@@ -161,9 +161,7 @@ const en = {
     ttlSecondsHint: 'Time before the gate is marked unresponsive. Leave empty for default (30s).',
     statusTransitions: 'Automatic transitions',
     statusTransitionsHint: 'Automatically change status after a timeout (e.g. open → closed after 30s).',
-    onNewStatusReset: 'Reset',
-    onNewStatusCancel: 'Cancel',
-    onNewStatusContinue: 'Continue',
+    persistOnChange: 'Persist on status change',
     // Payload mapping
     payloadMapping: 'Payload mapping',
     payloadMappingDesc: 'Define how to interpret the raw device JSON payload.',

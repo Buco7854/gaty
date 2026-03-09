@@ -163,9 +163,7 @@ const fr: Translations = {
     ttlSecondsHint: "Délai avant que le portail soit marqué non réactif. Laisser vide pour le défaut (30s).",
     statusTransitions: 'Transitions automatiques',
     statusTransitionsHint: 'Changer automatiquement le statut après un délai (ex. ouvert → fermé après 30s).',
-    onNewStatusReset: 'Relancer',
-    onNewStatusCancel: 'Annuler',
-    onNewStatusContinue: 'Continuer',
+    persistOnChange: 'Persister si le statut change',
     // Payload mapping
     payloadMapping: 'Mappage du payload',
     payloadMappingDesc: 'Définissez comment interpréter le payload JSON brut du device.',

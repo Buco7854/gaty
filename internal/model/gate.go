@@ -52,27 +52,11 @@ type StatusRule struct {
 	SetStatus string `json:"set_status" minLength:"1"`
 }
 
-// TransitionOnNewStatus controls what happens when a new status message arrives
-// while a transition timer is pending.
-type TransitionOnNewStatus string
-
-const (
-	// TransitionReset restarts the timer from the latest last_seen_at (default).
-	TransitionReset TransitionOnNewStatus = "reset"
-	// TransitionCancel cancels the transition; it won't re-arm until the gate
-	// leaves the "from" status and comes back.
-	TransitionCancel TransitionOnNewStatus = "cancel"
-	// TransitionContinue keeps the original deadline — the transition fires
-	// at armed_at + after_seconds regardless of new messages.
-	TransitionContinue TransitionOnNewStatus = "continue"
-)
-
 // StatusTransition defines an automatic status change after a timeout.
 // When a gate's current status matches From and no new status update arrives
 // within AfterSeconds, the status is automatically set to To.
-//
-// OnNewStatus controls behavior when the gate receives a new status message
-// while the transition timer is pending (default: "reset").
+// The timer resets on every new status message matching From
+// (deadline = last_seen_at + AfterSeconds).
 //
 // PersistOnChange controls what happens when the gate's status moves away from
 // From before the deadline. When false (default) the transition is cancelled
@@ -80,11 +64,10 @@ const (
 // armed and fires at the original deadline regardless of intermediate status
 // changes.
 type StatusTransition struct {
-	From            string                `json:"from" minLength:"1"`
-	To              string                `json:"to" minLength:"1"`
-	AfterSeconds    int                   `json:"after_seconds"`
-	OnNewStatus     TransitionOnNewStatus `json:"on_new_status,omitempty" enum:"reset,cancel,continue" default:"reset"`
-	PersistOnChange bool                  `json:"persist_on_change,omitempty"`
+	From            string `json:"from" minLength:"1"`
+	To              string `json:"to" minLength:"1"`
+	AfterSeconds    int    `json:"after_seconds"`
+	PersistOnChange bool   `json:"persist_on_change,omitempty"`
 }
 
 // EvaluateStatusRules checks each rule against meta in order and returns the first matching
