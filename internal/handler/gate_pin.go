@@ -56,16 +56,23 @@ func (h *GatePinHandler) CreatePIN(ctx context.Context, input *CreatePINInput) (
 
 // --- Admin: List PINs ---
 
-type ListGatePinsOutput struct {
-	Body []*model.GatePin
+type ListGatePinsInput struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	GateID      uuid.UUID `path:"gate_id"`
+	PaginationQuery
 }
 
-func (h *GatePinHandler) ListPINs(ctx context.Context, input *GatePathParam) (*ListGatePinsOutput, error) {
-	pins, err := h.pins.List(ctx, input.GateID)
+type ListGatePinsOutput struct {
+	Body PaginatedBody[*model.GatePin]
+}
+
+func (h *GatePinHandler) ListPINs(ctx context.Context, input *ListGatePinsInput) (*ListGatePinsOutput, error) {
+	p := input.Params()
+	pins, total, err := h.pins.List(ctx, input.GateID, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list pins", err)
 	}
-	return &ListGatePinsOutput{Body: pins}, nil
+	return &ListGatePinsOutput{Body: NewPaginatedBody(pins, total, p)}, nil
 }
 
 // --- Admin: Update PIN ---

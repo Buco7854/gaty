@@ -29,19 +29,25 @@ type GatePathParam struct {
 
 // --- List gates ---
 
-type ListGatesOutput struct {
-	Body []model.Gate
+type ListGatesInput struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	PaginationQuery
 }
 
-func (h *GateHandler) List(ctx context.Context, input *WorkspacePathParam) (*ListGatesOutput, error) {
+type ListGatesOutput struct {
+	Body PaginatedBody[model.Gate]
+}
+
+func (h *GateHandler) List(ctx context.Context, input *ListGatesInput) (*ListGatesOutput, error) {
 	role, _ := middleware.WorkspaceRoleFromContext(ctx)
 	membershipID, _ := middleware.WorkspaceMembershipIDFromContext(ctx)
 
-	gates, err := h.gates.List(ctx, input.WorkspaceID, role, membershipID)
+	p := input.Params()
+	gates, total, err := h.gates.List(ctx, input.WorkspaceID, role, membershipID, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list gates", err)
 	}
-	return &ListGatesOutput{Body: gates}, nil
+	return &ListGatesOutput{Body: NewPaginatedBody(gates, total, p)}, nil
 }
 
 // --- Create gate ---

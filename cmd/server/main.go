@@ -67,6 +67,7 @@ func main() {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
+	router.Use(middleware.CookieFixer())
 	router.Use(middleware.TenantResolver(pool, redisClient))
 
 	// MQTT client (non-fatal: API works without broker)
@@ -190,10 +191,10 @@ func main() {
 	// Per-operation middlewares
 	requireAuth := middleware.RequireAuth(api)
 	requireMembership := middleware.RequireMembership(api)
-	wsMember := middleware.WorkspaceMember(api, wsRepo, membershipRepo)
-	wsAdmin := middleware.WorkspaceAdmin(api, wsRepo, membershipRepo)
+	wsMember := middleware.WorkspaceMember(api, membershipRepo)
+	wsAdmin := middleware.WorkspaceAdmin(api, membershipRepo)
 	wsGateManager := middleware.GateManager(api, policyRepo)
-	adminOrGateManager := middleware.AdminOrGateManager(api, wsRepo, membershipRepo, policyRepo)
+	adminOrGateManager := middleware.AdminOrGateManager(api, membershipRepo, policyRepo)
 
 	huma.Get(api, "/api/health", func(ctx context.Context, _ *struct{}) (*struct {
 		Body struct {

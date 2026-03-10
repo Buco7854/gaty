@@ -2,9 +2,6 @@ package handler
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"net/http"
 	"time"
@@ -12,9 +9,9 @@ import (
 	"github.com/Buco7854/gatie/internal/middleware"
 	"github.com/Buco7854/gatie/internal/model"
 	"github.com/Buco7854/gatie/internal/repository"
+	"github.com/Buco7854/gatie/internal/service"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // CredentialHandler manages credentials for platform users and managed members.
@@ -106,17 +103,18 @@ type changePasswordInput struct {
 
 // ─── Platform user: own credentials ──────────────────────────────────────────
 
-func (h *CredentialHandler) ListMyCredentials(ctx context.Context, _ *struct{}) (*credListOutput, error) {
+func (h *CredentialHandler) ListMyCredentials(ctx context.Context, input *PaginationQuery) (*credListOutput, error) {
 	userID, ok := middleware.UserIDFromContext(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized("not authenticated")
 	}
 
-	tokens, err := h.credRepo.ListByUserAndType(ctx, userID, model.CredAPIToken)
+	p := input.Params()
+	tokens, _, err := h.credRepo.ListByUserAndType(ctx, userID, model.CredAPIToken, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list credentials", err)
 	}
-	ssos, err := h.credRepo.ListByUserAndType(ctx, userID, model.CredSSOIdentity)
+	ssos, _, err := h.credRepo.ListByUserAndType(ctx, userID, model.CredSSOIdentity, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list credentials", err)
 	}
@@ -171,19 +169,16 @@ func (h *CredentialHandler) ChangeMyPassword(ctx context.Context, input *changeP
 		return nil, huma.Error500InternalServerError("failed to retrieve credential", err)
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(existing.HashedValue), []byte(input.Body.OldPassword)); err != nil {
+	if err := service.CheckPassword(existing.HashedValue, input.Body.OldPassword); err != nil {
 		return nil, huma.Error401Unauthorized("incorrect current password")
 	}
 
-	newHash, err := bcrypt.GenerateFromPassword([]byte(input.Body.NewPassword), bcrypt.DefaultCost)
+	newHash, err := service.HashPassword(input.Body.NewPassword)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to hash password", err)
 	}
 
-	if err := h.credRepo.Delete(ctx, existing.ID, userID); err != nil {
-		return nil, huma.Error500InternalServerError("failed to update password", err)
-	}
-	if _, err := h.credRepo.Create(ctx, userID, model.CredPassword, string(newHash), nil, nil, nil); err != nil {
+	if err := h.credRepo.UpdateHashedValue(ctx, userID, model.CredPassword, newHash); err != nil {
 		return nil, huma.Error500InternalServerError("failed to update password", err)
 	}
 	return nil, nil
@@ -229,7 +224,7 @@ func (h *CredentialHandler) GetMyEffectiveAuthConfig(ctx context.Context, input 
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to load workspace", err)
 	}
-	out.Body.APIToken = credAPITokenEnabled(m.AuthConfig, ws.MemberAuthConfig)
+	out.Body.APIToken = model.APITokenEnabled(m.AuthConfig, ws.MemberAuthConfig)
 	return out, nil
 }
 
@@ -248,13 +243,19 @@ type createWorkspaceMemberTokenInput struct {
 	}
 }
 
-func (h *CredentialHandler) ListMyWorkspaceMemberCredentials(ctx context.Context, _ *workspaceSelfCredPathParam) (*credListOutput, error) {
+type listWorkspaceMemberCredsInput struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	PaginationQuery
+}
+
+func (h *CredentialHandler) ListMyWorkspaceMemberCredentials(ctx context.Context, input *listWorkspaceMemberCredsInput) (*credListOutput, error) {
 	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized("not authenticated as workspace member")
 	}
 
-	tokens, err := h.memberCredRepo.ListByMembershipAndType(ctx, membershipID, model.CredAPIToken)
+	p := input.Params()
+	tokens, _, err := h.memberCredRepo.ListByMembershipAndType(ctx, membershipID, model.CredAPIToken, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list credentials", err)
 	}
@@ -276,7 +277,7 @@ func (h *CredentialHandler) CreateMyWorkspaceMemberAPIToken(ctx context.Context,
 		return nil, err
 	}
 
-	rawToken, hash, err := generateAPIToken()
+	rawToken, hash, err := service.GenerateAPIToken()
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to generate token", err)
 	}
@@ -342,17 +343,18 @@ func requireLocalMember(ctx context.Context) (uuid.UUID, error) {
 	return membershipID, nil
 }
 
-func (h *CredentialHandler) ListMyMemberCredentials(ctx context.Context, _ *struct{}) (*credListOutput, error) {
+func (h *CredentialHandler) ListMyMemberCredentials(ctx context.Context, input *PaginationQuery) (*credListOutput, error) {
 	membershipID, err := requireLocalMember(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	tokens, err := h.memberCredRepo.ListByMembershipAndType(ctx, membershipID, model.CredAPIToken)
+	p := input.Params()
+	tokens, _, err := h.memberCredRepo.ListByMembershipAndType(ctx, membershipID, model.CredAPIToken, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list credentials", err)
 	}
-	ssos, err := h.memberCredRepo.ListByMembershipAndType(ctx, membershipID, model.CredSSOIdentity)
+	ssos, _, err := h.memberCredRepo.ListByMembershipAndType(ctx, membershipID, model.CredSSOIdentity, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list credentials", err)
 	}
@@ -377,7 +379,7 @@ func (h *CredentialHandler) CreateMyMemberAPIToken(ctx context.Context, input *c
 		return nil, err
 	}
 
-	rawToken, hash, err := generateAPIToken()
+	rawToken, hash, err := service.GenerateAPIToken()
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to generate token", err)
 	}
@@ -445,19 +447,16 @@ func (h *CredentialHandler) ChangeMyMemberPassword(ctx context.Context, input *c
 		return nil, huma.Error500InternalServerError("failed to retrieve credential", err)
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(existing.HashedValue), []byte(input.Body.OldPassword)); err != nil {
+	if err := service.CheckPassword(existing.HashedValue, input.Body.OldPassword); err != nil {
 		return nil, huma.Error401Unauthorized("incorrect current password")
 	}
 
-	newHash, err := bcrypt.GenerateFromPassword([]byte(input.Body.NewPassword), bcrypt.DefaultCost)
+	newHash, err := service.HashPassword(input.Body.NewPassword)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to hash password", err)
 	}
 
-	if err := h.memberCredRepo.Delete(ctx, existing.ID, membershipID); err != nil {
-		return nil, huma.Error500InternalServerError("failed to update password", err)
-	}
-	if _, err := h.memberCredRepo.Create(ctx, membershipID, model.CredPassword, string(newHash), nil, nil, nil); err != nil {
+	if err := h.memberCredRepo.UpdateHashedValue(ctx, membershipID, model.CredPassword, newHash); err != nil {
 		return nil, huma.Error500InternalServerError("failed to update password", err)
 	}
 	return nil, nil
@@ -505,16 +504,23 @@ func (h *CredentialHandler) validateMembership(ctx context.Context, membershipID
 	return nil
 }
 
-func (h *CredentialHandler) AdminListMemberCredentials(ctx context.Context, input *memberCredPathParam) (*credListOutput, error) {
+type adminListMemberCredsInput struct {
+	WorkspaceID  uuid.UUID `path:"ws_id"`
+	MembershipID uuid.UUID `path:"membership_id"`
+	PaginationQuery
+}
+
+func (h *CredentialHandler) AdminListMemberCredentials(ctx context.Context, input *adminListMemberCredsInput) (*credListOutput, error) {
 	if err := h.validateMembership(ctx, input.MembershipID, input.WorkspaceID); err != nil {
 		return nil, err
 	}
 
-	tokens, err := h.memberCredRepo.ListByMembershipAndType(ctx, input.MembershipID, model.CredAPIToken)
+	p := input.Params()
+	tokens, _, err := h.memberCredRepo.ListByMembershipAndType(ctx, input.MembershipID, model.CredAPIToken, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list credentials", err)
 	}
-	ssos, err := h.memberCredRepo.ListByMembershipAndType(ctx, input.MembershipID, model.CredSSOIdentity)
+	ssos, _, err := h.memberCredRepo.ListByMembershipAndType(ctx, input.MembershipID, model.CredSSOIdentity, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list credentials", err)
 	}
@@ -534,7 +540,7 @@ func (h *CredentialHandler) AdminCreateMemberAPIToken(ctx context.Context, input
 		return nil, err
 	}
 
-	rawToken, hash, err := generateAPIToken()
+	rawToken, hash, err := service.GenerateAPIToken()
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to generate token", err)
 	}
@@ -581,17 +587,19 @@ func (h *CredentialHandler) AdminSetMemberPassword(ctx context.Context, input *a
 		return nil, err
 	}
 
-	newHash, err := bcrypt.GenerateFromPassword([]byte(input.Body.Password), bcrypt.DefaultCost)
+	newHash, err := service.HashPassword(input.Body.Password)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to hash password", err)
 	}
 
-	// Replace existing password if any (upsert via delete+create).
-	if existing, err := h.memberCredRepo.GetByMembershipAndType(ctx, input.MembershipID, model.CredPassword); err == nil {
-		_ = h.memberCredRepo.Delete(ctx, existing.ID, input.MembershipID)
-	}
-
-	if _, err := h.memberCredRepo.Create(ctx, input.MembershipID, model.CredPassword, string(newHash), nil, nil, nil); err != nil {
+	// Atomic upsert: update if exists, create if not.
+	err = h.memberCredRepo.UpdateHashedValue(ctx, input.MembershipID, model.CredPassword, newHash)
+	if errors.Is(err, repository.ErrNotFound) {
+		// No existing password credential — create one.
+		if _, err := h.memberCredRepo.Create(ctx, input.MembershipID, model.CredPassword, newHash, nil, nil, nil); err != nil {
+			return nil, huma.Error500InternalServerError("failed to set password", err)
+		}
+	} else if err != nil {
 		return nil, huma.Error500InternalServerError("failed to set password", err)
 	}
 	return nil, nil
@@ -766,38 +774,8 @@ func (h *CredentialHandler) checkAPITokenEnabled(ctx context.Context, membership
 	if err != nil {
 		return huma.Error500InternalServerError("failed to load workspace", err)
 	}
-	if !credAPITokenEnabled(m.AuthConfig, ws.MemberAuthConfig) {
+	if !model.APITokenEnabled(m.AuthConfig, ws.MemberAuthConfig) {
 		return huma.Error403Forbidden("API token authentication is disabled for this workspace member")
 	}
 	return nil
-}
-
-// credAPITokenEnabled returns true if API token auth is allowed for a member.
-// Per-member setting takes precedence over workspace default; default is enabled.
-func credAPITokenEnabled(memberConfig, wsConfig map[string]any) bool {
-	if v, ok := memberConfig["api_token"]; ok {
-		if b, ok := v.(bool); ok {
-			return b
-		}
-	}
-	if v, ok := wsConfig["api_token"]; ok {
-		if b, ok := v.(bool); ok {
-			return b
-		}
-	}
-	return true
-}
-
-// generateAPIToken creates a new API token.
-// Returns the raw token (shown once to the user) and its SHA-256 hash (stored in DB).
-// At auth time: SHA256(presented_token) is compared against the stored hash.
-func generateAPIToken() (rawToken, hash string, err error) {
-	b := make([]byte, 32)
-	if _, err = rand.Read(b); err != nil {
-		return
-	}
-	rawToken = "gatie_" + hex.EncodeToString(b)
-	h256 := sha256.Sum256([]byte(rawToken))
-	hash = hex.EncodeToString(h256[:])
-	return
 }

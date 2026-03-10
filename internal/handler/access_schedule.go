@@ -26,7 +26,7 @@ type ScheduleOutput struct {
 }
 
 type ListSchedulesOutput struct {
-	Body []*model.AccessSchedule
+	Body PaginatedBody[*model.AccessSchedule]
 }
 
 // --- Create (workspace-level, admin only) ---
@@ -50,12 +50,18 @@ func (h *AccessScheduleHandler) Create(ctx context.Context, input *CreateSchedul
 
 // --- List (workspace-level, any member) ---
 
-func (h *AccessScheduleHandler) List(ctx context.Context, input *WorkspacePathParam) (*ListSchedulesOutput, error) {
-	list, err := h.schedules.List(ctx, input.WorkspaceID)
+type ListSchedulesInput struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	PaginationQuery
+}
+
+func (h *AccessScheduleHandler) List(ctx context.Context, input *ListSchedulesInput) (*ListSchedulesOutput, error) {
+	p := input.Params()
+	list, total, err := h.schedules.List(ctx, input.WorkspaceID, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list schedules", err)
 	}
-	return &ListSchedulesOutput{Body: list}, nil
+	return &ListSchedulesOutput{Body: NewPaginatedBody(list, total, p)}, nil
 }
 
 // --- Get ---
@@ -115,16 +121,17 @@ func (h *AccessScheduleHandler) Delete(ctx context.Context, input *SchedulePathP
 // --- Member personal schedules ---
 
 // ListMine lists the current member's personal schedules.
-func (h *AccessScheduleHandler) ListMine(ctx context.Context, input *WorkspacePathParam) (*ListSchedulesOutput, error) {
+func (h *AccessScheduleHandler) ListMine(ctx context.Context, input *ListSchedulesInput) (*ListSchedulesOutput, error) {
 	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized("unauthorized")
 	}
-	list, err := h.schedules.ListMine(ctx, input.WorkspaceID, membershipID)
+	p := input.Params()
+	list, total, err := h.schedules.ListMine(ctx, input.WorkspaceID, membershipID, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list personal schedules", err)
 	}
-	return &ListSchedulesOutput{Body: list}, nil
+	return &ListSchedulesOutput{Body: NewPaginatedBody(list, total, p)}, nil
 }
 
 // CreateMine creates a personal schedule for the current member.

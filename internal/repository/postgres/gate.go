@@ -428,31 +428,45 @@ func (r *gateRepository) ListIDsForWorkspace(ctx context.Context, wsID uuid.UUID
 	return ids, rows.Err()
 }
 
-func (r *gateRepository) ListForWorkspace(ctx context.Context, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID) ([]model.Gate, error) {
+func (r *gateRepository) ListForWorkspace(ctx context.Context, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID, p model.PaginationParams) ([]model.Gate, int, error) {
+	p = p.Normalize()
 	isAdmin := role == model.RoleOwner || role == model.RoleAdmin
 
 	var (
-		query string
-		args  []any
+		countQuery string
+		dataQuery  string
+		countArgs  []any
+		dataArgs   []any
 	)
 
 	if isAdmin {
-		query = `SELECT ` + colsFull + ` FROM gates WHERE workspace_id = $1 ORDER BY created_at DESC`
-		args = []any{wsID}
+		countQuery = `SELECT COUNT(*) FROM gates WHERE workspace_id = $1`
+		countArgs = []any{wsID}
+		dataQuery = `SELECT ` + colsFull + ` FROM gates WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+		dataArgs = []any{wsID, p.Limit, p.Offset}
 	} else {
-		query = `SELECT DISTINCT g.id, g.workspace_id, g.name, g.integration_type, g.integration_config,
+		countQuery = `SELECT COUNT(DISTINCT g.id) FROM gates g
+		              JOIN access_policies p ON p.gate_id = g.id AND p.subject_type = 'membership' AND p.subject_id = $2
+		              WHERE g.workspace_id = $1`
+		countArgs = []any{wsID, membershipID}
+		dataQuery = `SELECT DISTINCT g.id, g.workspace_id, g.name, g.integration_type, g.integration_config,
 		                g.open_config, g.close_config, g.status_config,
 		                g.status, g.last_seen_at, g.status_metadata, g.meta_config, g.status_rules, g.created_at
 		         FROM gates g
-		         JOIN membership_policies p ON p.gate_id = g.id AND p.membership_id = $2
+		         JOIN access_policies p ON p.gate_id = g.id AND p.subject_type = 'membership' AND p.subject_id = $2
 		         WHERE g.workspace_id = $1
-		         ORDER BY g.created_at DESC`
-		args = []any{wsID, membershipID}
+		         ORDER BY g.created_at DESC LIMIT $3 OFFSET $4`
+		dataArgs = []any{wsID, membershipID, p.Limit, p.Offset}
 	}
 
-	rows, err := r.pool.Query(ctx, query, args...)
+	var total int
+	if err := r.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count gates: %w", err)
+	}
+
+	rows, err := r.pool.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("list gates: %w", err)
+		return nil, 0, fmt.Errorf("list gates: %w", err)
 	}
 	defer rows.Close()
 
@@ -460,11 +474,11 @@ func (r *gateRepository) ListForWorkspace(ctx context.Context, wsID uuid.UUID, r
 	for rows.Next() {
 		var g model.Gate
 		if err := scanGate(rows, &g); err != nil {
-			return nil, fmt.Errorf("scan gate: %w", err)
+			return nil, 0, fmt.Errorf("scan gate: %w", err)
 		}
 		result = append(result, g)
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
 }
 
 func (r *gateRepository) ListWebhookGates(ctx context.Context) ([]model.Gate, error) {

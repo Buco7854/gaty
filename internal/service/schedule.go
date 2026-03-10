@@ -42,27 +42,27 @@ func (s *ScheduleService) CreateMember(ctx context.Context, wsID, membershipID u
 	return s.schedules.Create(ctx, wsID, &membershipID, name, description, expr)
 }
 
-func (s *ScheduleService) List(ctx context.Context, wsID uuid.UUID) ([]*model.AccessSchedule, error) {
-	list, err := s.schedules.List(ctx, wsID)
+func (s *ScheduleService) List(ctx context.Context, wsID uuid.UUID, p model.PaginationParams) ([]*model.AccessSchedule, int, error) {
+	list, total, err := s.schedules.List(ctx, wsID, p)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if list == nil {
 		list = []*model.AccessSchedule{}
 	}
-	return list, nil
+	return list, total, nil
 }
 
 // ListMine returns personal schedules belonging to a specific membership.
-func (s *ScheduleService) ListMine(ctx context.Context, wsID, membershipID uuid.UUID) ([]*model.AccessSchedule, error) {
-	list, err := s.schedules.ListByMembership(ctx, membershipID, wsID)
+func (s *ScheduleService) ListMine(ctx context.Context, wsID, membershipID uuid.UUID, p model.PaginationParams) ([]*model.AccessSchedule, int, error) {
+	list, total, err := s.schedules.ListByMembership(ctx, membershipID, wsID, p)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if list == nil {
 		list = []*model.AccessSchedule{}
 	}
-	return list, nil
+	return list, total, nil
 }
 
 func (s *ScheduleService) Get(ctx context.Context, scheduleID, wsID uuid.UUID) (*model.AccessSchedule, error) {
@@ -255,7 +255,13 @@ func matchesTimeRange(r model.ScheduleRule, now time.Time) bool {
 		return false
 	}
 	nowMins := now.Hour()*60 + now.Minute()
-	return nowMins >= startH*60+startM && nowMins < endH*60+endM
+	startMins := startH*60 + startM
+	endMins := endH*60 + endM
+	if startMins <= endMins {
+		return nowMins >= startMins && nowMins < endMins
+	}
+	// Wrap-around (e.g. 22:00 → 06:00 = night shift)
+	return nowMins >= startMins || nowMins < endMins
 }
 
 func matchesWeekdaysRange(r model.ScheduleRule, now time.Time) bool {

@@ -17,26 +17,26 @@ func NewPolicyService(policies repository.PolicyRepository, schedules repository
 	return &PolicyService{policies: policies, schedules: schedules}
 }
 
-func (s *PolicyService) List(ctx context.Context, gateID uuid.UUID) ([]model.MembershipPolicy, error) {
-	policies, err := s.policies.List(ctx, gateID)
+func (s *PolicyService) List(ctx context.Context, gateID uuid.UUID, p model.PaginationParams) ([]model.MembershipPolicy, int, error) {
+	policies, total, err := s.policies.List(ctx, gateID, p)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if policies == nil {
 		policies = []model.MembershipPolicy{}
 	}
-	return policies, nil
+	return policies, total, nil
 }
 
-func (s *PolicyService) ListForMembership(ctx context.Context, membershipID uuid.UUID) ([]model.MembershipPolicy, error) {
-	policies, err := s.policies.ListForMembership(ctx, membershipID)
+func (s *PolicyService) ListForMembership(ctx context.Context, membershipID uuid.UUID, p model.PaginationParams) ([]model.MembershipPolicy, int, error) {
+	policies, total, err := s.policies.ListForMembership(ctx, membershipID, p)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if policies == nil {
 		policies = []model.MembershipPolicy{}
 	}
-	return policies, nil
+	return policies, total, nil
 }
 
 func (s *PolicyService) Grant(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) error {

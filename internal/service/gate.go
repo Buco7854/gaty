@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -143,10 +144,10 @@ func (s *GateService) Create(ctx context.Context, wsID uuid.UUID, params CreateG
 	return gate, nil
 }
 
-func (s *GateService) List(ctx context.Context, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID) ([]model.Gate, error) {
-	gates, err := s.gates.ListForWorkspace(ctx, wsID, role, membershipID)
+func (s *GateService) List(ctx context.Context, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID, p model.PaginationParams) ([]model.Gate, int, error) {
+	gates, total, err := s.gates.ListForWorkspace(ctx, wsID, role, membershipID, p)
 	if err != nil {
-		return nil, fmt.Errorf("list gates: %w", err)
+		return nil, 0, fmt.Errorf("list gates: %w", err)
 	}
 	if gates == nil {
 		gates = []model.Gate{}
@@ -154,7 +155,7 @@ func (s *GateService) List(ctx context.Context, wsID uuid.UUID, role model.Works
 	for i := range gates {
 		gates[i].Status = gates[i].EffectiveStatus()
 	}
-	return gates, nil
+	return gates, total, nil
 }
 
 func (s *GateService) Get(ctx context.Context, gateID, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID) (*model.Gate, error) {
@@ -246,23 +247,37 @@ func (s *GateService) Trigger(ctx context.Context, gateID, wsID uuid.UUID, role 
 	}
 
 	// 1. Check credential-level schedule (user-defined time restriction on the token).
+	// Fail-closed: if the schedule lookup fails (DB/Redis error), deny access.
 	if credentialID != uuid.Nil {
-		if scheduleID, err := s.credPolicies.GetScheduleID(ctx, credentialID); err == nil {
-			if schedule, err := s.schedules.GetPublic(ctx, scheduleID); err == nil {
-				if err := s.schedules.Check(schedule, time.Now()); err != nil {
-					slog.Info("gate trigger: credential schedule rejected", "credential_id", credentialID, "gate_id", gateID)
-					return ErrScheduleDenied
-				}
+		scheduleID, err := s.credPolicies.GetScheduleID(ctx, credentialID)
+		if err == nil {
+			schedule, err := s.schedules.GetPublic(ctx, scheduleID)
+			if err != nil {
+				slog.Error("gate trigger: failed to load credential schedule", "credential_id", credentialID, "schedule_id", scheduleID, "error", err)
+				return fmt.Errorf("load credential schedule: %w", err)
 			}
+			if err := s.schedules.Check(schedule, time.Now()); err != nil {
+				slog.Info("gate trigger: credential schedule rejected", "credential_id", credentialID, "gate_id", gateID)
+				return ErrScheduleDenied
+			}
+		} else if !errors.Is(err, repository.ErrNotFound) {
+			slog.Error("gate trigger: failed to lookup credential schedule", "credential_id", credentialID, "error", err)
+			return fmt.Errorf("lookup credential schedule: %w", err)
 		}
 	}
 
 	// 2. Permission check: credential policies take precedence if set, else fall back to membership policies.
 	needsMembershipCheck := role == model.RoleMember
 	if credentialID != uuid.Nil {
-		hasCredPolicies, _ := s.credPolicies.HasAny(ctx, credentialID)
+		hasCredPolicies, err := s.credPolicies.HasAny(ctx, credentialID)
+		if err != nil {
+			return fmt.Errorf("check credential policies: %w", err)
+		}
 		if hasCredPolicies {
-			ok, _ := s.credPolicies.HasPermission(ctx, credentialID, gateID, permCode)
+			ok, err := s.credPolicies.HasPermission(ctx, credentialID, gateID, permCode)
+			if err != nil {
+				return fmt.Errorf("check credential permission: %w", err)
+			}
 			if !ok {
 				return model.ErrUnauthorized
 			}
@@ -280,14 +295,22 @@ func (s *GateService) Trigger(ctx context.Context, gateID, wsID uuid.UUID, role 
 	}
 
 	// 3. Membership-level schedule: admin-defined ceiling — always applies for members and token users.
+	// Fail-closed: if the schedule lookup fails (DB/Redis error), deny access.
 	if role == model.RoleMember || credentialID != uuid.Nil {
-		if scheduleID, err := s.policies.GetMemberGateScheduleID(ctx, membershipID, gateID); err == nil {
-			if schedule, err := s.schedules.GetPublic(ctx, scheduleID); err == nil {
-				if err := s.schedules.Check(schedule, time.Now()); err != nil {
-					slog.Info("gate trigger: membership schedule rejected", "membership_id", membershipID, "gate_id", gateID)
-					return ErrScheduleDenied
-				}
+		scheduleID, err := s.policies.GetMemberGateScheduleID(ctx, membershipID, gateID)
+		if err == nil {
+			schedule, err := s.schedules.GetPublic(ctx, scheduleID)
+			if err != nil {
+				slog.Error("gate trigger: failed to load membership schedule", "membership_id", membershipID, "schedule_id", scheduleID, "error", err)
+				return fmt.Errorf("load membership schedule: %w", err)
 			}
+			if err := s.schedules.Check(schedule, time.Now()); err != nil {
+				slog.Info("gate trigger: membership schedule rejected", "membership_id", membershipID, "gate_id", gateID)
+				return ErrScheduleDenied
+			}
+		} else if !errors.Is(err, repository.ErrNotFound) {
+			slog.Error("gate trigger: failed to lookup membership schedule", "membership_id", membershipID, "gate_id", gateID, "error", err)
+			return fmt.Errorf("lookup membership schedule: %w", err)
 		}
 	}
 

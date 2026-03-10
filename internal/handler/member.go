@@ -61,8 +61,13 @@ type MemberOutput struct {
 	Body *membershipBody
 }
 
+type ListMembersInput struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	PaginationQuery
+}
+
 type ListMembersOutput struct {
-	Body []*membershipBody
+	Body PaginatedBody[*membershipBody]
 }
 
 // --- Create local member ---
@@ -138,8 +143,9 @@ func (h *MemberHandler) InviteUser(ctx context.Context, input *InviteUserInput) 
 
 // --- List ---
 
-func (h *MemberHandler) List(ctx context.Context, input *MemberWorkspacePathParam) (*ListMembersOutput, error) {
-	members, err := h.memberships.List(ctx, input.WorkspaceID)
+func (h *MemberHandler) List(ctx context.Context, input *ListMembersInput) (*ListMembersOutput, error) {
+	p := input.Params()
+	members, total, err := h.memberships.List(ctx, input.WorkspaceID, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list members", err)
 	}
@@ -147,7 +153,7 @@ func (h *MemberHandler) List(ctx context.Context, input *MemberWorkspacePathPara
 	for i, m := range members {
 		bodies[i] = toMembershipBody(m)
 	}
-	return &ListMembersOutput{Body: bodies}, nil
+	return &ListMembersOutput{Body: NewPaginatedBody(bodies, total, p)}, nil
 }
 
 // --- Get ---

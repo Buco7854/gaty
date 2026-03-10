@@ -21,46 +21,61 @@ func NewPolicyHandler(policies *service.PolicyService) *PolicyHandler {
 }
 
 type ListPoliciesOutput struct {
-	Body []model.MembershipPolicy
+	Body PaginatedBody[model.MembershipPolicy]
 }
 
 // --- List for gate ---
 
-func (h *PolicyHandler) List(ctx context.Context, input *GatePathParam) (*ListPoliciesOutput, error) {
-	policies, err := h.policies.List(ctx, input.GateID)
+type ListPoliciesInput struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	GateID      uuid.UUID `path:"gate_id"`
+	PaginationQuery
+}
+
+func (h *PolicyHandler) List(ctx context.Context, input *ListPoliciesInput) (*ListPoliciesOutput, error) {
+	p := input.Params()
+	policies, total, err := h.policies.List(ctx, input.GateID, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list policies", err)
 	}
-	return &ListPoliciesOutput{Body: policies}, nil
+	return &ListPoliciesOutput{Body: NewPaginatedBody(policies, total, p)}, nil
 }
 
 // --- List for membership ---
 
-type MembershipPoliciesPathParam struct {
+type ListMembershipPoliciesInput struct {
 	WorkspaceID  uuid.UUID `path:"ws_id"`
 	MembershipID uuid.UUID `path:"membership_id"`
+	PaginationQuery
 }
 
-func (h *PolicyHandler) ListByMembership(ctx context.Context, input *MembershipPoliciesPathParam) (*ListPoliciesOutput, error) {
-	policies, err := h.policies.ListForMembership(ctx, input.MembershipID)
+func (h *PolicyHandler) ListByMembership(ctx context.Context, input *ListMembershipPoliciesInput) (*ListPoliciesOutput, error) {
+	p := input.Params()
+	policies, total, err := h.policies.ListForMembership(ctx, input.MembershipID, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list membership policies", err)
 	}
-	return &ListPoliciesOutput{Body: policies}, nil
+	return &ListPoliciesOutput{Body: NewPaginatedBody(policies, total, p)}, nil
 }
 
 // --- List mine (authenticated member's own policies) ---
 
-func (h *PolicyHandler) ListMine(ctx context.Context, input *WorkspacePathParam) (*ListPoliciesOutput, error) {
+type ListMyPoliciesInput struct {
+	WorkspaceID uuid.UUID `path:"ws_id"`
+	PaginationQuery
+}
+
+func (h *PolicyHandler) ListMine(ctx context.Context, input *ListMyPoliciesInput) (*ListPoliciesOutput, error) {
 	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized("not authenticated")
 	}
-	policies, err := h.policies.ListForMembership(ctx, membershipID)
+	p := input.Params()
+	policies, total, err := h.policies.ListForMembership(ctx, membershipID, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list policies", err)
 	}
-	return &ListPoliciesOutput{Body: policies}, nil
+	return &ListPoliciesOutput{Body: NewPaginatedBody(policies, total, p)}, nil
 }
 
 // --- Grant ---

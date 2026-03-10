@@ -105,10 +105,11 @@ func (h *CustomDomainHandler) addDomain(ctx context.Context, in *addDomainInput)
 type listDomainsInput struct {
 	WorkspaceID uuid.UUID `path:"ws_id"`
 	GateID      uuid.UUID `path:"gate_id"`
+	PaginationQuery
 }
 
 type listDomainsOutput struct {
-	Body []customDomainView
+	Body PaginatedBody[customDomainView]
 }
 
 func (h *CustomDomainHandler) listDomains(ctx context.Context, in *listDomainsInput) (*listDomainsOutput, error) {
@@ -116,7 +117,8 @@ func (h *CustomDomainHandler) listDomains(ctx context.Context, in *listDomainsIn
 		return nil, err
 	}
 
-	list, err := h.domains.ListByGate(ctx, in.GateID)
+	p := in.Params()
+	list, total, err := h.domains.ListByGate(ctx, in.GateID, p)
 	if err != nil {
 		slog.Error("list custom domains", "error", err)
 		return nil, huma.Error500InternalServerError("internal error", err)
@@ -126,7 +128,7 @@ func (h *CustomDomainHandler) listDomains(ctx context.Context, in *listDomainsIn
 	for _, d := range list {
 		views = append(views, toDomainView(d))
 	}
-	return &listDomainsOutput{Body: views}, nil
+	return &listDomainsOutput{Body: NewPaginatedBody(views, total, p)}, nil
 }
 
 // --- DELETE /api/workspaces/{ws_id}/gates/{gate_id}/domains/{domain_id} ---

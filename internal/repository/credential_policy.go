@@ -10,7 +10,7 @@ import (
 // CredentialPolicyRepository manages access policies and schedule links for API credentials.
 // Uses access_policies (subject_type='credential') and schedule_links (subject_type='credential', gate_id IS NULL).
 type CredentialPolicyRepository interface {
-	List(ctx context.Context, credentialID uuid.UUID) ([]model.CredentialPolicy, error)
+	List(ctx context.Context, credentialID uuid.UUID, p model.PaginationParams) ([]model.CredentialPolicy, int, error)
 	HasAny(ctx context.Context, credentialID uuid.UUID) (bool, error)
 	HasPermission(ctx context.Context, credentialID, gateID uuid.UUID, permCode string) (bool, error)
 	Grant(ctx context.Context, credentialID, gateID uuid.UUID, permCode string) error

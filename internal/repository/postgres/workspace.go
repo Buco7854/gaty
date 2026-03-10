@@ -71,17 +71,28 @@ func (r *workspaceRepository) GetByID(ctx context.Context, id uuid.UUID) (*model
 	))
 }
 
-func (r *workspaceRepository) ListForUser(ctx context.Context, userID uuid.UUID) ([]model.WorkspaceWithRole, error) {
+func (r *workspaceRepository) ListForUser(ctx context.Context, userID uuid.UUID, p model.PaginationParams) ([]model.WorkspaceWithRole, int, error) {
+	p = p.Normalize()
+
+	var total int
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM workspace_memberships WHERE user_id = $1`,
+		userID,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count workspaces: %w", err)
+	}
+
 	rows, err := r.pool.Query(ctx,
 		`SELECT w.id, w.name, w.owner_id, w.sso_settings, w.member_auth_config, w.created_at, wm.role
 		 FROM workspaces w
 		 JOIN workspace_memberships wm ON wm.workspace_id = w.id
 		 WHERE wm.user_id = $1
-		 ORDER BY w.created_at DESC`,
-		userID,
+		 ORDER BY w.created_at DESC
+		 LIMIT $2 OFFSET $3`,
+		userID, p.Limit, p.Offset,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list workspaces: %w", err)
+		return nil, 0, fmt.Errorf("list workspaces: %w", err)
 	}
 	defer rows.Close()
 
@@ -89,11 +100,11 @@ func (r *workspaceRepository) ListForUser(ctx context.Context, userID uuid.UUID)
 	for rows.Next() {
 		var wsr model.WorkspaceWithRole
 		if err := rows.Scan(&wsr.ID, &wsr.Name, &wsr.OwnerID, &wsr.SSOSettings, &wsr.MemberAuthConfig, &wsr.CreatedAt, &wsr.Role); err != nil {
-			return nil, fmt.Errorf("scan workspace: %w", err)
+			return nil, 0, fmt.Errorf("scan workspace: %w", err)
 		}
 		result = append(result, wsr)
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
 }
 
 func (r *workspaceRepository) UpdateSSOSettings(ctx context.Context, id uuid.UUID, settings map[string]any) (*model.Workspace, error) {

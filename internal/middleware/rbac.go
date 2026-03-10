@@ -55,7 +55,7 @@ var roleOrder = map[model.WorkspaceRole]int{
 	model.RoleOwner:  3,
 }
 
-func workspaceAccess(api huma.API, _ repository.WorkspaceRepository, memberRepo repository.WorkspaceMembershipRepository, minRole model.WorkspaceRole) func(huma.Context, func(huma.Context)) {
+func workspaceAccess(api huma.API, memberRepo repository.WorkspaceMembershipRepository, minRole model.WorkspaceRole) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
 		wsID, err := uuid.Parse(chi.URLParamFromCtx(ctx.Context(), "ws_id"))
 		if err != nil {
@@ -114,15 +114,15 @@ func workspaceAccess(api huma.API, _ repository.WorkspaceRepository, memberRepo 
 
 // WorkspaceMember is a Huma per-operation middleware that requires any role in the workspace.
 // Supports both platform users (workspace_memberships.user_id) and managed members (local JWT).
-func WorkspaceMember(api huma.API, wsRepo repository.WorkspaceRepository, memberRepo repository.WorkspaceMembershipRepository) func(huma.Context, func(huma.Context)) {
-	return workspaceAccess(api, wsRepo, memberRepo, model.RoleMember)
+func WorkspaceMember(api huma.API, memberRepo repository.WorkspaceMembershipRepository) func(huma.Context, func(huma.Context)) {
+	return workspaceAccess(api, memberRepo, model.RoleMember)
 }
 
 // WorkspaceAdmin is a Huma per-operation middleware that requires OWNER or ADMIN.
 // API tokens are rejected regardless of role: tokens are gate-scoped and cannot perform
 // workspace management operations (member management, SSO settings, etc.).
-func WorkspaceAdmin(api huma.API, wsRepo repository.WorkspaceRepository, memberRepo repository.WorkspaceMembershipRepository) func(huma.Context, func(huma.Context)) {
-	inner := workspaceAccess(api, wsRepo, memberRepo, model.RoleAdmin)
+func WorkspaceAdmin(api huma.API, memberRepo repository.WorkspaceMembershipRepository) func(huma.Context, func(huma.Context)) {
+	inner := workspaceAccess(api, memberRepo, model.RoleAdmin)
 	return func(ctx huma.Context, next func(huma.Context)) {
 		if IsAPITokenAuth(ctx.Context()) {
 			huma.WriteErr(api, ctx, http.StatusForbidden, "API tokens cannot perform workspace management operations")
@@ -151,8 +151,8 @@ func IsPrivilegedMember(ctx context.Context) bool {
 // AdminOrGateManager is a Huma per-operation middleware that allows ADMIN/OWNER
 // or any member with gate:manage on at least one gate in the workspace.
 // Must be chained after WorkspaceMember.
-func AdminOrGateManager(api huma.API, wsRepo repository.WorkspaceRepository, memberRepo repository.WorkspaceMembershipRepository, policyRepo repository.PolicyRepository) func(huma.Context, func(huma.Context)) {
-	inner := workspaceAccess(api, wsRepo, memberRepo, model.RoleMember)
+func AdminOrGateManager(api huma.API, memberRepo repository.WorkspaceMembershipRepository, policyRepo repository.PolicyRepository) func(huma.Context, func(huma.Context)) {
+	inner := workspaceAccess(api, memberRepo, model.RoleMember)
 	return func(ctx huma.Context, next func(huma.Context)) {
 		inner(ctx, func(ctx huma.Context) {
 			role, _ := WorkspaceRoleFromContext(ctx.Context())

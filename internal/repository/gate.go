@@ -67,7 +67,7 @@ type GateRepository interface {
 	GetPublicInfo(ctx context.Context, gateID uuid.UUID) (*GatePublicInfo, error)
 	Update(ctx context.Context, gateID, wsID uuid.UUID, p UpdateGateParams) (*model.Gate, error)
 	Delete(ctx context.Context, gateID, wsID uuid.UUID) error
-	ListForWorkspace(ctx context.Context, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID) ([]model.Gate, error)
+	ListForWorkspace(ctx context.Context, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID, p model.PaginationParams) ([]model.Gate, int, error)
 	ListIDsForWorkspace(ctx context.Context, wsID uuid.UUID) ([]uuid.UUID, error)
 	GetByToken(ctx context.Context, gateID uuid.UUID, token string) (*model.Gate, error)
 	GetToken(ctx context.Context, gateID, wsID uuid.UUID) (string, error)
