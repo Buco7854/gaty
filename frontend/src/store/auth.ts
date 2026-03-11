@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import axios from 'axios'
+import { api } from '@/lib/api'
 import type { User, RefreshResponse, WorkspaceRole } from '@/types'
 
 /** Session metadata populated from login/refresh response bodies (tokens are in HttpOnly cookies). */
@@ -28,6 +28,10 @@ interface AuthState {
   isAuthenticated: () => boolean
   hydrate: () => Promise<void>
 }
+
+// Guard against double-invocation in React StrictMode (dev) which would
+// consume the one-time-use refresh token twice, failing on the second call.
+let hydratePromise: Promise<void> | null = null
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   session: (() => {
@@ -64,7 +68,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   async logout() {
-    try { await axios.post('/api/auth/logout') } catch { /* ignore */ }
+    try { await api.post('/auth/logout') } catch { /* ignore */ }
     localStorage.removeItem('gatie_session')
     set({ session: null })
   },
@@ -73,21 +77,25 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     return get().session?.type === 'global'
   },
 
-  async hydrate() {
-    try {
-      const { data } = await axios.post<RefreshResponse>('/api/auth/refresh')
-      const session = refreshResponseToSession(data)
-      if (session) {
-        localStorage.setItem('gatie_session', JSON.stringify(session))
-        set({ session, initializing: false })
-      } else {
+  hydrate() {
+    if (hydratePromise) return hydratePromise
+    hydratePromise = (async () => {
+      try {
+        const { data } = await api.post<RefreshResponse>('/auth/refresh')
+        const session = refreshResponseToSession(data)
+        if (session) {
+          localStorage.setItem('gatie_session', JSON.stringify(session))
+          set({ session, initializing: false })
+        } else {
+          localStorage.removeItem('gatie_session')
+          set({ session: null, initializing: false })
+        }
+      } catch {
         localStorage.removeItem('gatie_session')
         set({ session: null, initializing: false })
       }
-    } catch {
-      localStorage.removeItem('gatie_session')
-      set({ session: null, initializing: false })
-    }
+    })()
+    return hydratePromise
   },
 }))
 
