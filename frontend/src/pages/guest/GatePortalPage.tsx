@@ -11,23 +11,8 @@ import type { GateStatus } from '@/types'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
 import { useAuthStore } from '@/store/auth'
+import { getNestedValue, hasNestedKey } from '@/lib/utils'
 import { useState } from 'react'
-
-function getNestedValue(obj: Record<string, unknown>, key: string): unknown {
-  if (key in obj) return obj[key]
-  if (!key.includes('.')) return undefined
-  const parts = key.split('.')
-  let current: unknown = obj
-  for (const part of parts) {
-    if (current == null || typeof current !== 'object') return undefined
-    current = (current as Record<string, unknown>)[part]
-  }
-  return current
-}
-
-function hasNestedKey(obj: Record<string, unknown>, key: string): boolean {
-  return getNestedValue(obj, key) !== undefined
-}
 
 function getStatusColor(status: GateStatus | undefined): string {
   switch (status) {

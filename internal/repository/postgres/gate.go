@@ -451,7 +451,8 @@ func (r *gateRepository) ListForWorkspace(ctx context.Context, wsID uuid.UUID, r
 		countArgs = []any{wsID, membershipID}
 		dataQuery = `SELECT DISTINCT g.id, g.workspace_id, g.name, g.integration_type, g.integration_config,
 		                g.open_config, g.close_config, g.status_config,
-		                g.status, g.last_seen_at, g.status_metadata, g.meta_config, g.status_rules, g.created_at
+		                g.status, g.last_seen_at, g.status_metadata, g.meta_config, g.status_rules,
+		                g.custom_statuses, g.ttl_seconds, g.status_transitions, g.created_at
 		         FROM gates g
 		         JOIN access_policies p ON p.gate_id = g.id AND p.subject_type = 'membership' AND p.subject_id = $2
 		         WHERE g.workspace_id = $1

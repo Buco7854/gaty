@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/Buco7854/gatie/internal/service"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -23,12 +25,13 @@ const (
 // SSEHandler streams gate events to authenticated clients via Server-Sent Events.
 // Implemented as a raw chi handler (not Huma) to support long-lived connections.
 type SSEHandler struct {
-	authSvc *service.AuthService
-	redis   *redis.Client
+	authSvc     *service.AuthService
+	memberships repository.WorkspaceMembershipRepository
+	redis       *redis.Client
 }
 
-func NewSSEHandler(authSvc *service.AuthService, redisClient *redis.Client) *SSEHandler {
-	return &SSEHandler{authSvc: authSvc, redis: redisClient}
+func NewSSEHandler(authSvc *service.AuthService, memberships repository.WorkspaceMembershipRepository, redisClient *redis.Client) *SSEHandler {
+	return &SSEHandler{authSvc: authSvc, memberships: memberships, redis: redisClient}
 }
 
 func (h *SSEHandler) RegisterRoutes(r chi.Router) {
@@ -36,31 +39,45 @@ func (h *SSEHandler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/workspaces/{ws_id}/events", h.stream)
 }
 
-// issueTicket authenticates via gatie_access cookie and returns a one-time ticket for SSE.
-func (h *SSEHandler) issueTicket(w http.ResponseWriter, r *http.Request) {
+// validateSSEAuth validates an access token and checks workspace membership.
+// Returns true if the caller is authorized to receive events for the given workspace.
+func (h *SSEHandler) validateSSEAuth(r *http.Request, wsID string) bool {
 	var token string
 	if c, err := r.Cookie("gatie_access"); err == nil {
 		token = c.Value
 	}
 	if token == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+		return false
 	}
 
+	parsedWsID, err := uuid.Parse(wsID)
+	if err != nil {
+		return false
+	}
+
+	// Try global JWT first — must verify workspace membership.
+	if userID, err := h.authSvc.ValidateAccessToken(token); err == nil {
+		if _, memberErr := h.memberships.GetByUserID(r.Context(), parsedWsID, userID); memberErr != nil {
+			return false
+		}
+		return true
+	}
+
+	// Try local JWT — workspace must match.
+	if _, tokenWSID, _, err := h.authSvc.ValidateMemberToken(token); err == nil {
+		return tokenWSID.String() == wsID
+	}
+
+	return false
+}
+
+// issueTicket authenticates via gatie_access cookie and returns a one-time ticket for SSE.
+func (h *SSEHandler) issueTicket(w http.ResponseWriter, r *http.Request) {
 	wsID := chi.URLParam(r, "ws_id")
 
-	// Validate token: accept global (user) or local (member) JWT.
-	_, globalErr := h.authSvc.ValidateAccessToken(token)
-	if globalErr != nil {
-		_, tokenWSID, _, localErr := h.authSvc.ValidateMemberToken(token)
-		if localErr != nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		if tokenWSID.String() != wsID {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
+	if !h.validateSSEAuth(r, wsID) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
 	}
 
 	b := make([]byte, 32)
@@ -82,7 +99,7 @@ func (h *SSEHandler) issueTicket(w http.ResponseWriter, r *http.Request) {
 func (h *SSEHandler) stream(w http.ResponseWriter, r *http.Request) {
 	wsID := chi.URLParam(r, "ws_id")
 
-	// Authenticate via one-time ticket (preferred) or Authorization header.
+	// Authenticate via one-time ticket (preferred) or cookie.
 	authenticated := false
 	if ticket := r.URL.Query().Get("ticket"); ticket != "" {
 		ticketWSID, err := h.redis.GetDel(r.Context(), sseTicketPrefix+ticket).Result()
@@ -103,25 +120,9 @@ func (h *SSEHandler) stream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !authenticated {
-		var token string
-		if c, err := r.Cookie("gatie_access"); err == nil {
-			token = c.Value
-		}
-		if token == "" {
+		if !h.validateSSEAuth(r, wsID) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
-		}
-		_, globalErr := h.authSvc.ValidateAccessToken(token)
-		if globalErr != nil {
-			_, tokenWSID, _, localErr := h.authSvc.ValidateMemberToken(token)
-			if localErr != nil {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
-			if tokenWSID.String() != wsID {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
 		}
 	}
 

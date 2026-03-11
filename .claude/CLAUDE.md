@@ -81,11 +81,11 @@ access_schedules(id, workspace_id→workspaces, name, description, rules JSONB, 
 
 permissions(code PK, description)
 
-membership_policies(membership_id→workspace_memberships, gate_id→gates, permission_code→permissions
-    PRIMARY KEY(membership_id, gate_id, permission_code))
+access_policies(subject_type∈{membership,credential}, subject_id UUID, gate_id→gates, permission_code→permissions
+    PRIMARY KEY(subject_type, subject_id, gate_id, permission_code))
 
-membership_gate_schedules(membership_id, gate_id, schedule_id→access_schedules
-    PRIMARY KEY(membership_id, gate_id))
+schedule_links(subject_type∈{membership,credential}, subject_id UUID, gate_id→gates NULL,
+    schedule_id→access_schedules, PRIMARY KEY(subject_type, subject_id, COALESCE(gate_id, '0')))
 
 custom_domains(id, gate_id, workspace_id, domain UNIQUE, dns_challenge_token,
                verified_at, created_at)

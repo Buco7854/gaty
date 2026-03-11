@@ -7,6 +7,7 @@ import type { Gate, GatePin, CustomDomain, WorkspaceWithRole, AccessSchedule, Me
 import { useAuthStore } from '@/store/auth'
 import { useTranslation } from 'react-i18next'
 import { notifySuccess, notifyError } from '@/lib/notify'
+import { getNestedValue, hasNestedKey } from '@/lib/utils'
 import { QueryError } from '@/components/QueryError'
 import { useGateEvents } from '@/hooks/useGateEvents'
 import type { GateEvent } from '@/hooks/useGateEvents'
@@ -23,27 +24,6 @@ import {
 } from 'lucide-react'
 
 // ---------- helpers ----------
-
-/**
- * Resolve a dot-notated key path against a nested object.
- * Flat keys containing dots are tried first for backwards compatibility.
- */
-function getNestedValue(obj: Record<string, unknown>, key: string): unknown {
-  if (key in obj) return obj[key]
-  if (!key.includes('.')) return undefined
-  const parts = key.split('.')
-  let current: unknown = obj
-  for (const part of parts) {
-    if (current == null || typeof current !== 'object') return undefined
-    current = (current as Record<string, unknown>)[part]
-  }
-  return current
-}
-
-/** Check whether a dot-notated key exists in a (potentially nested) object. */
-function hasNestedKey(obj: Record<string, unknown>, key: string): boolean {
-  return getNestedValue(obj, key) !== undefined
-}
 
 /**
  * Collect all leaf-key paths from a nested object using dot notation.

@@ -11,6 +11,7 @@ import {
 import { CheckCircle2, XCircle } from 'lucide-react'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
+import { isSafeRedirect } from '@/lib/utils'
 
 type PageState = 'idle' | 'loading' | 'success' | 'error'
 
@@ -49,10 +50,6 @@ export default function MemberLoginPage() {
       .catch(() => {})
       .finally(() => setResolving(false))
   }, [gateId, wsId, navigate])
-
-  function isSafeRedirect(path: string | null): path is string {
-    return !!path && path.startsWith('/') && !path.startsWith('//')
-  }
 
   function redirectAfterLogin(role: string) {
     const authState = { state: { justAuthenticated: true } }
