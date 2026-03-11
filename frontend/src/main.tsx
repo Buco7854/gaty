@@ -12,6 +12,7 @@ import './index.css'
 import { router } from './router'
 import { setupApi } from './api'
 import { useAuthStore } from './store/auth'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import SetupPage from './pages/setup/SetupPage'
 
 const queryClient = new QueryClient({
@@ -90,9 +91,11 @@ createRoot(document.getElementById('root')!).render(
     <ColorSchemeScript defaultColorScheme="auto" />
     <MantineProvider theme={theme} defaultColorScheme="auto">
       <Notifications position="top-right" />
-      <QueryClientProvider client={queryClient}>
-        <AppRoot />
-      </QueryClientProvider>
+      <ErrorBoundary>
+        <QueryClientProvider client={queryClient}>
+          <AppRoot />
+        </QueryClientProvider>
+      </ErrorBoundary>
     </MantineProvider>
   </StrictMode>,
 )

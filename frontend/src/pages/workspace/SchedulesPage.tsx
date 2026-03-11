@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import type { AxiosError } from 'axios'
 import { useParams } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { schedulesApi } from '@/api'
@@ -13,6 +12,7 @@ import {
 import { useDisclosure } from '@mantine/hooks'
 import { Plus, Trash2, Pencil, CalendarClock, Lock, User } from 'lucide-react'
 import { QueryError } from '@/components/QueryError'
+import { extractApiError } from '@/lib/notify'
 import { useAuthStore } from '@/store/auth'
 
 // 0=Sun, 1=Mon, …, 6=Sat (Go's time.Weekday)
@@ -344,16 +344,6 @@ function ExprNodeEditor({ node, onChange, onDelete, depth, ruleTypeOptions }: {
   )
 }
 
-type ApiErrorBody = { detail?: string; errors?: { message: string; location?: string }[] }
-
-function extractApiError(err: unknown): string {
-  const data = (err as AxiosError<ApiErrorBody>).response?.data
-  if (data?.errors?.length) {
-    return data.errors.map((e) => e.location ? `${e.location}: ${e.message}` : e.message).join('\n')
-  }
-  return data?.detail ?? 'An error occurred'
-}
-
 // Shared schedule card component
 function ScheduleCard({
   s,
@@ -556,13 +546,13 @@ export default function SchedulesPage() {
   const wsCreateMut = useMutation({
     mutationFn: () => schedulesApi.create(wsId!, { name: wsForm.name.trim(), description: wsForm.description.trim() || undefined, expr: wsForm.expr }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['schedules', wsId] }); wsForm.closeModal() },
-    onError: (err) => wsForm.setSaveError(extractApiError(err)),
+    onError: (err) => wsForm.setSaveError(extractApiError(err, 'An error occurred')),
   })
 
   const wsUpdateMut = useMutation({
     mutationFn: () => schedulesApi.update(wsId!, wsForm.editing!.id, { name: wsForm.name.trim(), description: wsForm.description.trim() || undefined, expr: wsForm.expr }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['schedules', wsId] }); wsForm.closeModal() },
-    onError: (err) => wsForm.setSaveError(extractApiError(err)),
+    onError: (err) => wsForm.setSaveError(extractApiError(err, 'An error occurred')),
   })
 
   const wsDeleteMut = useMutation({
@@ -588,13 +578,13 @@ export default function SchedulesPage() {
   const myCreateMut = useMutation({
     mutationFn: () => schedulesApi.createMine(wsId!, { name: myForm.name.trim(), description: myForm.description.trim() || undefined, expr: myForm.expr }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['member-schedules', wsId] }); myForm.closeModal() },
-    onError: (err) => myForm.setSaveError(extractApiError(err)),
+    onError: (err) => myForm.setSaveError(extractApiError(err, 'An error occurred')),
   })
 
   const myUpdateMut = useMutation({
     mutationFn: () => schedulesApi.updateMine(wsId!, myForm.editing!.id, { name: myForm.name.trim(), description: myForm.description.trim() || undefined, expr: myForm.expr }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['member-schedules', wsId] }); myForm.closeModal() },
-    onError: (err) => myForm.setSaveError(extractApiError(err)),
+    onError: (err) => myForm.setSaveError(extractApiError(err, 'An error occurred')),
   })
 
   const myDeleteMut = useMutation({

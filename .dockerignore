@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+.git
+.vscode
+.idea
+tmp/
+bin/
+frontend/node_modules/
+frontend/dist/
+.claude/
+*.md
+!README.md

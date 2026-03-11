@@ -24,7 +24,7 @@ GATIE is a multi-tenant SaaS platform for centralized control of physical gates 
 
 | Tool | Purpose |
 |------|---------|
-| Go ≥ 1.22 | Backend runtime |
+| Go ≥ 1.25 | Backend runtime |
 | Node.js ≥ 20 + npm | Frontend toolchain |
 | Docker Desktop | Infrastructure services |
 | [go-task](https://taskfile.dev/installation/) | Task runner (`task` CLI) |
@@ -293,9 +293,45 @@ http://localhost:8080/api/openapi.json
 
 ---
 
+## Docker
+
+```bash
+# Build the production image (multi-stage: Go binary + React build)
+docker build -t gatie .
+
+# Run with the existing docker-compose (add the app service)
+docker compose up -d
+```
+
+The Dockerfile produces a minimal Alpine image (~30MB) with:
+- Compiled Go binary (no runtime needed)
+- Pre-built React frontend (`frontend/dist/`)
+- Migration files (`migrations/`)
+
+---
+
+## Security
+
+- Passwords hashed with **bcrypt** (configurable policy: length, uppercase, lowercase, digit)
+- **JWT access tokens** (15 min TTL) + refresh tokens (SHA-256 hashed in Redis)
+- **SSRF protection** on HTTP gate drivers (private IP blocking with configurable allowlist)
+- **Rate limiting** on auth endpoints (Redis-backed, fail-closed)
+- **PIN brute-force protection** (per-IP and per-gate rate limits)
+- **CORS** with explicit origins only (wildcard rejected)
+- **HttpOnly + SameSite=Lax cookies** for session tokens
+- **API tokens** prefixed (`gatie_`) and SHA-256 hashed at rest
+
+---
+
 ## Development Tips
 
 - **Backend hot-reload**: `air` watches all `.go` files and rebuilds automatically.
 - **Database reset**: `task migrate-down && task migrate-up` (or `migrate -path migrations -database "$DATABASE_URL" drop -f && task migrate-up`)
 - **MQTT testing**: Use [MQTT Explorer](https://mqtt-explorer.com/) to inspect topics on `localhost:1883`.
 - **API tokens**: Format `gatie_<64 hex chars>`, stored as SHA-256 in the DB.
+
+---
+
+## License
+
+[MIT](LICENSE)

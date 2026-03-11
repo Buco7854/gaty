@@ -245,7 +245,7 @@ func main() {
 	handler.NewGateInboundHandler(gateSvc).RegisterRoutes(api)
 
 	// SSE: raw chi route (long-lived, not Huma)
-	handler.NewSSEHandler(authSvc, redisClient).RegisterRoutes(router)
+	handler.NewSSEHandler(authSvc, membershipRepo, redisClient).RegisterRoutes(router)
 
 	srv := &http.Server{
 		Addr:           fmt.Sprintf(":%d", cfg.Port),

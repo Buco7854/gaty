@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 
 	"github.com/Buco7854/gatie/internal/model"
 	"github.com/Buco7854/gatie/internal/repository"
@@ -16,6 +17,7 @@ type SetupHandler struct {
 	users        repository.UserRepository
 	authSvc      *service.AuthService
 	cookieSecure bool
+	initMu       sync.Mutex // serializes init to prevent race conditions
 }
 
 func NewSetupHandler(users repository.UserRepository, authSvc *service.AuthService, cookieSecure bool) *SetupHandler {
@@ -58,6 +60,11 @@ type SetupInitOutput struct {
 }
 
 func (h *SetupHandler) init(ctx context.Context, input *SetupInitInput) (*SetupInitOutput, error) {
+	// Serialize init requests to prevent race conditions where two concurrent
+	// requests both pass the HasAny check and create two admin users.
+	h.initMu.Lock()
+	defer h.initMu.Unlock()
+
 	hasAny, err := h.users.HasAny(ctx)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to check setup status", err)
