@@ -7,33 +7,35 @@ import type { Gate, GateStatus } from '@/types'
 import { useGateEvents } from '@/hooks/useGateEvents'
 import type { GateEvent } from '@/hooks/useGateEvents'
 import { useTranslation } from 'react-i18next'
-import {
-  Container, Title, Text, Group, Button, Modal, TextInput, Textarea, Stack, Badge,
-  SimpleGrid, Card, ActionIcon, Select, Center, Tooltip, Loader, Collapse, Anchor,
-} from '@mantine/core'
-import { useDisclosure } from '@mantine/hooks'
-import { Plus, DoorOpen, Zap, ChevronRight } from 'lucide-react'
+import { Plus, DoorOpen, Zap, ChevronRight, Loader2 } from 'lucide-react'
 import { notifySuccess, notifyError } from '@/lib/notify'
 import { QueryError } from '@/components/QueryError'
 import { useAuthStore } from '@/store/auth'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Badge } from '@/components/ui/badge'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { SimpleSelect } from '@/components/ui/select'
+import { SimpleTooltip } from '@/components/ui/tooltip'
 
 
-function getStatusColor(status: GateStatus | undefined): string {
+function getStatusVariant(status: GateStatus | undefined): 'success' | 'destructive' | 'warning' | 'secondary' {
   switch (status) {
     case 'online':
-    case 'open': return 'green'
+    case 'open': return 'success'
     case 'offline':
-    case 'closed': return 'red'
+    case 'closed': return 'destructive'
     case 'unresponsive':
-    case 'unavailable': return 'orange'
-    default: return 'gray'
+    case 'unavailable': return 'warning'
+    default: return 'secondary'
   }
 }
 
 function StatusBadge({ status }: { status: Gate['status'] }) {
   const { t } = useTranslation()
   return (
-    <Badge color={getStatusColor(status)} variant="dot" size="sm">
+    <Badge variant={getStatusVariant(status)}>
       {t(`common.${status}`, { defaultValue: status })}
     </Badge>
   )
@@ -52,11 +54,11 @@ function ActionConfigForm({
   const driverType = value?.type ?? 'NONE'
 
   return (
-    <Stack gap="xs">
-      <Select
+    <div className="space-y-2">
+      <SimpleSelect
         label={label}
         value={driverType}
-        onChange={(v) => {
+        onValueChange={(v) => {
           const type = (v ?? 'NONE') as ActionConfig['type']
           if (type === 'NONE') {
             onChange(null)
@@ -83,12 +85,12 @@ function ActionConfigForm({
             } catch { /* ignore invalid JSON */ }
           }}
           placeholder={'{\n  "cmd": 1\n}'}
-          minRows={3}
-          styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+          rows={3}
+          className="font-mono text-xs"
         />
       )}
       {driverType === 'HTTP' && (
-        <TextInput
+        <Input
           label={t('gates.httpUrl')}
           value={(value?.config?.url as string) ?? ''}
           onChange={(e) =>
@@ -97,7 +99,7 @@ function ActionConfigForm({
           placeholder="https://api.example.com/open"
         />
       )}
-    </Stack>
+    </div>
   )
 }
 
@@ -109,7 +111,7 @@ export default function DashboardPage() {
   const member = session?.type === 'member' ? session.member : null
   const isAdmin = member?.role === 'ADMIN'
 
-  const [opened, { open, close }] = useDisclosure(false)
+  const [opened, setOpened] = useState(false)
   const [advancedOpened, setAdvancedOpened] = useState(false)
   const [gateName, setGateName] = useState('')
   const [openConfig, setOpenConfig] = useState<ActionConfig | null>({ type: 'MQTT_GATIE' })
@@ -162,7 +164,7 @@ export default function DashboardPage() {
       }),
     onSuccess: (gate) => {
       qc.invalidateQueries({ queryKey: ['gates'] })
-      close()
+      setOpened(false)
       setGateName('')
       setOpenConfig({ type: 'MQTT_GATIE' })
       setCloseConfig(null)
@@ -194,124 +196,128 @@ export default function DashboardPage() {
   }
 
   return (
-    <Container size="lg" py="xl">
-      <Group justify="space-between" mb="xl">
+    <div className="max-w-5xl mx-auto py-8 px-4">
+      <div className="flex items-center justify-between mb-8">
         <div>
-          <Title order={2}>{t('gates.title')}</Title>
-          <Text c="dimmed" size="sm">{t('gates.subtitle')}</Text>
+          <h2 className="text-xl font-bold">{t('gates.title')}</h2>
+          <p className="text-sm text-muted-foreground">{t('gates.subtitle')}</p>
         </div>
         {isAdmin && (
-          <Button leftSection={<Plus size={16} />} onClick={open}>
+          <Button onClick={() => setOpened(true)}>
+            <Plus size={16} />
             {t('gates.add')}
           </Button>
         )}
-      </Group>
+      </div>
 
       {isAdmin && (
-        <Modal opened={opened} onClose={close} title={t('gates.add')} size="md">
-          <form onSubmit={(e) => { e.preventDefault(); createGate.mutate() }}>
-            <Stack>
-              <TextInput
-                label={t('common.name')}
-                value={gateName}
-                onChange={(e) => setGateName(e.target.value)}
-                required
-                placeholder="Parking entrance"
-              />
-              <Anchor
-                component="button"
-                type="button"
-                size="xs"
-                c="dimmed"
-                onClick={() => setAdvancedOpened((o) => !o)}
-              >
-                {t('gates.advancedOptions')} {advancedOpened ? '▲' : '▼'}
-              </Anchor>
-              <Collapse in={advancedOpened}>
-                <Stack gap="sm">
-                  <ActionConfigForm
-                    label={t('gates.openAction')}
-                    value={openConfig}
-                    onChange={setOpenConfig}
-                  />
-                  <ActionConfigForm
-                    label={t('gates.closeAction')}
-                    value={closeConfig}
-                    onChange={setCloseConfig}
-                  />
-                  <ActionConfigForm
-                    label={t('gates.statusAction')}
-                    value={statusConfig}
-                    onChange={setStatusConfig}
-                  />
-                </Stack>
-              </Collapse>
-              <Group justify="flex-end">
-                <Button variant="default" onClick={close}>{t('common.cancel')}</Button>
-                <Button type="submit" loading={createGate.isPending}>{t('common.add')}</Button>
-              </Group>
-            </Stack>
-          </form>
-        </Modal>
+        <Dialog open={opened} onOpenChange={setOpened}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{t('gates.add')}</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={(e) => { e.preventDefault(); createGate.mutate() }}>
+              <div className="space-y-4">
+                <Input
+                  label={t('common.name')}
+                  value={gateName}
+                  onChange={(e) => setGateName(e.target.value)}
+                  required
+                  placeholder="Parking entrance"
+                />
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:underline cursor-pointer"
+                  onClick={() => setAdvancedOpened((o) => !o)}
+                >
+                  {t('gates.advancedOptions')} {advancedOpened ? '\u25B2' : '\u25BC'}
+                </button>
+                {advancedOpened && (
+                  <div className="space-y-3">
+                    <ActionConfigForm
+                      label={t('gates.openAction')}
+                      value={openConfig}
+                      onChange={setOpenConfig}
+                    />
+                    <ActionConfigForm
+                      label={t('gates.closeAction')}
+                      value={closeConfig}
+                      onChange={setCloseConfig}
+                    />
+                    <ActionConfigForm
+                      label={t('gates.statusAction')}
+                      value={statusConfig}
+                      onChange={setStatusConfig}
+                    />
+                  </div>
+                )}
+                <div className="flex items-center justify-end gap-2">
+                  <Button variant="outline" type="button" onClick={() => setOpened(false)}>{t('common.cancel')}</Button>
+                  <Button type="submit" loading={createGate.isPending}>{t('common.add')}</Button>
+                </div>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
       )}
 
       {isLoading ? (
-        <Center py={80}><Loader /></Center>
+        <div className="flex justify-center py-20">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
       ) : isError ? (
         <QueryError error={error} />
       ) : gates?.length === 0 ? (
-        <Center py={80}>
-          <Stack align="center" gap="xs">
-            <DoorOpen size={40} opacity={0.3} />
-            <Text fw={500}>{t('gates.noGates')}</Text>
-            {isAdmin && <Text size="sm" c="dimmed">{t('gates.noGatesHint')}</Text>}
-          </Stack>
-        </Center>
+        <div className="flex flex-col items-center justify-center py-20 gap-2">
+          <DoorOpen size={40} className="opacity-30" />
+          <p className="font-medium">{t('gates.noGates')}</p>
+          {isAdmin && <p className="text-sm text-muted-foreground">{t('gates.noGatesHint')}</p>}
+        </div>
       ) : (
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {gates?.map((gate) => (
-            <Card key={gate.id} withBorder radius="md" p="md">
-              <Group justify="space-between" mb="xs" wrap="nowrap">
-                <Text fw={600} truncate style={{ flex: 1 }}>{gate.name}</Text>
+            <div key={gate.id} className="border rounded-lg p-4">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="font-semibold truncate flex-1">{gate.name}</p>
                 <StatusBadge status={gate.status} />
-              </Group>
+              </div>
               {isAdmin && (
-                <Text size="xs" c="dimmed" mb="md">
+                <p className="text-xs text-muted-foreground mb-4">
                   {(() => {
                     const types = [gate.open_config, gate.close_config, gate.status_config]
                       .map(c => c?.type)
-                      .filter((t): t is string => !!t && t !== 'NONE');
+                      .filter((t): t is NonNullable<typeof t> => !!t && t !== 'NONE');
                     const unique = [...new Set(types)];
                     return unique.length > 0 ? unique.join(' / ') : t('gates.noDriver');
                   })()}
-                </Text>
+                </p>
               )}
-              <Group gap="xs">
+              <div className="flex items-center gap-2">
                 <Button
-                  size="xs"
-                  leftSection={<Zap size={12} />}
+                  size="sm"
                   loading={triggeringId === gate.id}
                   onClick={() => triggerGate(gate.id)}
-                  style={{ flex: 1 }}
+                  className="flex-1"
                 >
+                  <Zap size={12} />
                   {t('gates.open')}
                 </Button>
                 {canManageGate(gate.id) && (
-                  <Tooltip label={t('common.details')}>
-                    <ActionIcon
-                      variant="default"
-                      size="sm"
+                  <SimpleTooltip label={t('common.details')}>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
                       onClick={() => navigate(`/gates/${gate.id}`)}
                     >
                       <ChevronRight size={14} />
-                    </ActionIcon>
-                  </Tooltip>
+                    </Button>
+                  </SimpleTooltip>
                 )}
-              </Group>
-            </Card>
+              </div>
+            </div>
           ))}
-        </SimpleGrid>
+        </div>
       )}
-    </Container>
+    </div>
   )
 }

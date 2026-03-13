@@ -2,17 +2,16 @@ import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { RouterProvider } from 'react-router'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { MantineProvider, createTheme, ColorSchemeScript, Center, Paper, Stack, Group, Avatar, Text, LoadingOverlay } from '@mantine/core'
-import { Notifications } from '@mantine/notifications'
-import { DoorOpen } from 'lucide-react'
-import '@mantine/core/styles.css'
-import '@mantine/notifications/styles.css'
+import { Toaster } from 'sonner'
+import { DoorOpen, Loader2 } from 'lucide-react'
 import './i18n'
 import './index.css'
 import { router } from './router'
 import { setupApi } from './api'
 import { useAuthStore } from './store/auth'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { ThemeProvider } from './components/ThemeProvider'
+import { TooltipProvider } from './components/ui/tooltip'
 import SetupPage from './pages/setup/SetupPage'
 
 const queryClient = new QueryClient({
@@ -21,27 +20,6 @@ const queryClient = new QueryClient({
       staleTime: 30_000,
       retry: 1,
     },
-  },
-})
-
-const theme = createTheme({
-  primaryColor: 'indigo',
-  defaultRadius: 'md',
-  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
-  colors: {
-    // Dark grey palette — zinc-900-ish, not pure black
-    dark: [
-      '#C1C2C5',
-      '#A6A7AB',
-      '#909296',
-      '#5c5f66',
-      '#373A40',
-      '#2C2E33',
-      '#25262b',
-      '#1A1B1E',
-      '#141517',
-      '#101113',
-    ],
   },
 })
 
@@ -62,24 +40,28 @@ function AppRoot() {
   })
 
   if (!hydrated || initializing || isLoading) {
-    return <LoadingOverlay visible />
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    )
   }
 
   if (data?.setup_required) {
     return (
-      <Center mih="100vh" p="md">
-        <Stack w="100%" maw={400} gap="xl">
-          <Group justify="center" gap="xs">
-            <Avatar size={32} color="indigo" radius="md">
-              <DoorOpen size={16} />
-            </Avatar>
-            <Text fw={700} size="lg" ff="mono">GATIE</Text>
-          </Group>
-          <Paper p="xl" radius="lg" withBorder>
+      <div className="flex items-center justify-center min-h-screen p-4">
+        <div className="w-full max-w-md space-y-8">
+          <div className="flex items-center justify-center gap-2">
+            <div className="flex items-center justify-center h-8 w-8 rounded-md bg-primary/10 text-primary">
+              <DoorOpen className="h-4 w-4" />
+            </div>
+            <span className="font-bold text-lg font-mono">GATIE</span>
+          </div>
+          <div className="border rounded-lg p-6">
             <SetupPage />
-          </Paper>
-        </Stack>
-      </Center>
+          </div>
+        </div>
+      </div>
     )
   }
 
@@ -88,14 +70,15 @@ function AppRoot() {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ColorSchemeScript defaultColorScheme="auto" />
-    <MantineProvider theme={theme} defaultColorScheme="auto">
-      <Notifications position="top-right" />
-      <ErrorBoundary>
-        <QueryClientProvider client={queryClient}>
-          <AppRoot />
-        </QueryClientProvider>
-      </ErrorBoundary>
-    </MantineProvider>
+    <ThemeProvider>
+      <TooltipProvider>
+        <Toaster position="top-right" richColors closeButton />
+        <ErrorBoundary>
+          <QueryClientProvider client={queryClient}>
+            <AppRoot />
+          </QueryClientProvider>
+        </ErrorBoundary>
+      </TooltipProvider>
+    </ThemeProvider>
   </StrictMode>,
 )

@@ -1,67 +1,54 @@
 import { useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router'
-import { Center, Loader, Stack, Text } from '@mantine/core'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/store/auth'
-import axios from 'axios'
+import { api } from '@/lib/api'
+import { Loader2 } from 'lucide-react'
 
 export default function SsoCallbackPage() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const location = useLocation()
-  const { t } = useTranslation()
-  const exchangedRef = useRef(false)
+  const setMemberSession = useAuthStore((s) => s.setMemberSession)
+  const processed = useRef(false)
 
   useEffect(() => {
-    if (exchangedRef.current) return
-    exchangedRef.current = true
+    if (processed.current) return
+    processed.current = true
+
     const params = new URLSearchParams(location.search)
     const code = params.get('code')
-    const error = params.get('error')
+    const state = params.get('state')
     const gateId = params.get('gate_id')
 
-    // Clear sensitive params from browser history/URL immediately.
-    if (code) {
-      window.history.replaceState({}, '', '/auth/sso/callback')
+    if (!code || !state) {
+      navigate('/login')
+      return
     }
 
-    if (!error && code) {
-      axios.post<{ member: { id: string; username: string; display_name?: string; role: string; auth_config: Record<string, unknown>; created_at: string }; gate_id?: string }>(
-        '/api/auth/sso/exchange',
-        { code },
-        { withCredentials: true },
-      ).then(({ data }) => {
-        // Store member session metadata in zustand (cookies set by backend)
-        useAuthStore.getState().setMemberSession(data.member as import('@/types').Member)
-
-        const effectiveGateId = data.gate_id || gateId
-        if (effectiveGateId) {
-          navigate(`/gates/${effectiveGateId}/public`, { replace: true, state: { justAuthenticated: true } })
+    api.post('/auth/sso/exchange', { code, state })
+      .then((res) => {
+        const member = res.data?.member
+        if (member) {
+          setMemberSession(member)
+          if (gateId) {
+            navigate(`/gates/${gateId}/public`)
+          } else {
+            navigate('/gates')
+          }
         } else {
-          navigate('/gates', { replace: true, state: { justAuthenticated: true } })
+          navigate('/login')
         }
-      }).catch(() => {
-        navigate('/login', { replace: true })
       })
-      return
-    }
-
-    if (error) {
-      if (import.meta.env.DEV) console.error('[SSO] callback error:', error)
-      const errParams = new URLSearchParams({ error })
-      if (gateId) errParams.set('gate_id', gateId)
-      navigate(`/member-login?${errParams.toString()}`, { replace: true })
-      return
-    }
-
-    navigate('/login', { replace: true })
-  }, [navigate, location.search])
+      .catch(() => navigate('/login'))
+  }, [location.search, navigate, setMemberSession])
 
   return (
-    <Center mih="100vh">
-      <Stack align="center" gap="md">
-        <Loader />
-        <Text size="sm" c="dimmed">{t('common.loading')}</Text>
-      </Stack>
-    </Center>
+    <div className="flex items-center justify-center min-h-screen">
+      <div className="text-center space-y-4">
+        <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
+      </div>
+    </div>
   )
 }

@@ -11,24 +11,28 @@ import { getNestedValue, hasNestedKey } from '@/lib/utils'
 import { QueryError } from '@/components/QueryError'
 import { useGateEvents } from '@/hooks/useGateEvents'
 import type { GateEvent } from '@/hooks/useGateEvents'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
+import { SimpleSelect } from '@/components/ui/select'
+import { SimpleTooltip } from '@/components/ui/tooltip'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Separator } from '@/components/ui/separator'
 import {
-  Container, Title, Text, Group, Button, Stack, Paper, Badge, ActionIcon,
-  TextInput, PasswordInput, Select, Switch, Tooltip, Modal, Code, Alert, Textarea,
-  NumberInput, Checkbox,
-} from '@mantine/core'
-import { useDisclosure, useClipboard } from '@mantine/hooks'
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
-  ArrowLeft, Zap, Hash, Globe, Plus, Trash2, CheckCircle2, XCircle,
+  ArrowLeft, Hash, Globe, Plus, Trash2, CheckCircle2, XCircle,
   Clock, Copy, Check, Settings2, Pencil, Info, CalendarClock,
   Key, RefreshCw, Activity, DoorOpen, DoorClosed,
 } from 'lucide-react'
 
 // ---------- helpers ----------
 
-/**
- * Collect all leaf-key paths from a nested object using dot notation.
- * e.g. { lora: { snr: 1, rssi: 2 }, battery: 85 } → ["lora.snr", "lora.rssi", "battery"]
- */
 function flattenKeys(obj: Record<string, unknown>, prefix = ''): string[] {
   const keys: string[] = []
   for (const [k, v] of Object.entries(obj)) {
@@ -42,18 +46,17 @@ function flattenKeys(obj: Record<string, unknown>, prefix = ''): string[] {
   return keys
 }
 
-/** Default gate statuses that cannot be removed. */
 const DEFAULT_STATUSES = ['open', 'closed', 'unavailable']
 
-function getStatusColor(status: GateStatus | undefined): string {
+function getStatusVariant(status: GateStatus | undefined): 'success' | 'destructive' | 'warning' | 'secondary' {
   switch (status) {
     case 'online':
-    case 'open': return 'green'
+    case 'open': return 'success'
     case 'offline':
-    case 'closed': return 'red'
+    case 'closed': return 'destructive'
     case 'unresponsive':
-    case 'unavailable': return 'orange'
-    default: return 'gray'
+    case 'unavailable': return 'warning'
+    default: return 'secondary'
   }
 }
 
@@ -72,12 +75,11 @@ function ActionConfigForm({
   const driverType = rawDriver && VALID_ACTION_TYPES.includes(rawDriver) ? rawDriver : 'NONE'
 
   return (
-    <Stack gap="xs">
-      <Select
+    <div className="space-y-2">
+      <SimpleSelect
         label={label}
         value={driverType}
-        allowDeselect={false}
-        onChange={(v) => {
+        onValueChange={(v) => {
           const type = (v ?? 'NONE') as ActionConfig['type']
           if (type === 'NONE') {
             onChange(null)
@@ -93,24 +95,26 @@ function ActionConfigForm({
         ]}
       />
       {driverType === 'MQTT_CUSTOM' && (
-        <Textarea
-          label={t('gates.mqttCustomPayload')}
-          description={t('gates.mqttCustomPayloadDesc')}
-          defaultValue={JSON.stringify(value?.config?.payload ?? {}, null, 2)}
-          onBlur={(e) => {
-            try {
-              const parsed = JSON.parse(e.target.value)
-              onChange({ type: 'MQTT_CUSTOM', config: { ...value?.config, payload: parsed } })
-            } catch { /* ignore invalid JSON */ }
-          }}
-          placeholder={'{\n  "cmd": 1\n}'}
-          minRows={3}
-          styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
-        />
+        <div>
+          <label className="text-sm font-medium">{t('gates.mqttCustomPayload')}</label>
+          <p className="text-xs text-muted-foreground mb-1">{t('gates.mqttCustomPayloadDesc')}</p>
+          <textarea
+            className="w-full rounded-md border bg-background px-3 py-2 text-sm font-mono"
+            defaultValue={JSON.stringify(value?.config?.payload ?? {}, null, 2)}
+            onBlur={(e) => {
+              try {
+                const parsed = JSON.parse(e.target.value)
+                onChange({ type: 'MQTT_CUSTOM', config: { ...value?.config, payload: parsed } })
+              } catch { /* ignore invalid JSON */ }
+            }}
+            placeholder={'{\n  "cmd": 1\n}'}
+            rows={3}
+          />
+        </div>
       )}
       {driverType === 'HTTP' && (
         <>
-          <TextInput
+          <Input
             label={t('gates.httpUrl')}
             value={(value?.config?.url as string) ?? ''}
             onChange={(e) =>
@@ -119,27 +123,22 @@ function ActionConfigForm({
             placeholder="https://api.example.com/open"
             required
           />
-          <Select
+          <SimpleSelect
             label={t('gates.httpMethod')}
             value={(value?.config?.method as string) ?? 'POST'}
-            onChange={(v) =>
+            onValueChange={(v) =>
               onChange({ type: 'HTTP', config: { ...value?.config, method: v ?? 'POST' } })
             }
             data={['POST', 'GET', 'PUT', 'PATCH']}
           />
         </>
       )}
-    </Stack>
+    </div>
   )
 }
 
 type StatusDriverType = 'NONE' | 'MQTT_GATIE' | 'MQTT_CUSTOM' | 'HTTP_INBOUND' | 'HTTP_WEBHOOK'
 
-/**
- * Full status source configuration form.
- * Replaces the generic ActionConfigForm for the status_config field.
- * Supports NONE / MQTT / HTTP_INBOUND / HTTP_WEBHOOK modes with payload mapping.
- */
 function StatusConfigForm({
   value,
   onChange,
@@ -188,12 +187,11 @@ function StatusConfigForm({
   const hEntries = Object.entries(headersObj)
 
   return (
-    <Stack gap="sm">
-      <Select
+    <div className="space-y-3">
+      <SimpleSelect
         label={t('gates.statusMode')}
         value={type}
-        allowDeselect={false}
-        onChange={(v) => {
+        onValueChange={(v) => {
           const nt = (v ?? 'NONE') as StatusDriverType
           if (nt === 'NONE') { onChange(null); return }
           onChange({ type: nt as ActionConfig['type'], config: cfg })
@@ -208,41 +206,43 @@ function StatusConfigForm({
       />
 
       {type === 'HTTP_WEBHOOK' && (
-        <Stack gap="xs">
-          <TextInput
+        <div className="space-y-2">
+          <Input
             label={t('gates.httpUrl')}
             value={url}
             onChange={(e) => setCfgField('url', e.target.value)}
             placeholder="http://192.168.1.100/api/status"
           />
-          <Group grow>
-            <Select
+          <div className="grid grid-cols-2 gap-2">
+            <SimpleSelect
               label={t('gates.httpMethod')}
               value={method}
-              onChange={(v) => setCfgField('method', v ?? 'GET')}
+              onValueChange={(v) => setCfgField('method', v ?? 'GET')}
               data={['GET', 'POST', 'PUT', 'PATCH']}
             />
-            <NumberInput
+            <Input
               label={t('gates.webhookInterval')}
-              value={intervalSeconds}
-              onChange={(v) => setCfgField('interval_seconds', typeof v === 'number' ? v : 60)}
+              type="number"
+              value={String(intervalSeconds)}
+              onChange={(e) => setCfgField('interval_seconds', Number(e.target.value) || 60)}
               min={1}
               placeholder={t('gates.webhookIntervalPlaceholder')}
             />
-          </Group>
+          </div>
 
           <div>
-            <Group justify="space-between" mb={4}>
-              <Text size="sm" fw={500}>{t('gates.httpHeaders')}</Text>
-              <Button size="xs" variant="subtle" leftSection={<Plus size={12} />}
-                onClick={() => setCfgField('headers', { ...headersObj, [`Header-${hEntries.length + 1}`]: '' })}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm font-medium">{t('gates.httpHeaders')}</span>
+              <Button size="sm" variant="ghost" onClick={() => setCfgField('headers', { ...headersObj, [`Header-${hEntries.length + 1}`]: '' })}>
+                <Plus className="h-3 w-3" />
                 {t('common.add')}
               </Button>
-            </Group>
-            <Stack gap={4}>
+            </div>
+            <div className="space-y-1">
               {hEntries.map(([k, v], idx) => (
-                <Group key={idx} gap="xs">
-                  <TextInput
+                <div key={idx} className="flex items-center gap-1">
+                  <input
+                    className="flex-1 rounded-md border bg-background px-2 py-1 text-xs font-mono"
                     placeholder="Authorization"
                     defaultValue={k}
                     onBlur={(e) => {
@@ -251,116 +251,115 @@ function StatusConfigForm({
                       for (const [hk, hv] of Object.entries(headersObj)) newH[hk === k ? e.target.value : hk] = hv
                       setCfgField('headers', newH)
                     }}
-                    style={{ flex: 1 }}
-                    styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
                   />
-                  <TextInput
+                  <input
+                    className="flex-[2] rounded-md border bg-background px-2 py-1 text-xs"
                     placeholder="Bearer …"
                     value={v}
                     onChange={(e) => setCfgField('headers', { ...headersObj, [k]: e.target.value })}
-                    style={{ flex: 2 }}
                   />
-                  <ActionIcon variant="subtle" color="red" onClick={() => {
+                  <Button variant="ghost" size="icon-sm" className="text-destructive" onClick={() => {
                     const newH = { ...headersObj }; delete newH[k]; setCfgField('headers', newH)
                   }}>
-                    <Trash2 size={14} />
-                  </ActionIcon>
-                </Group>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
               ))}
-            </Stack>
+            </div>
           </div>
 
-          <TextInput
+          <Input
             label={t('gates.httpBody')}
             value={body}
             onChange={(e) => setCfgField('body', e.target.value)}
             placeholder='{"action": "status"}'
-            styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+            className="font-mono text-xs"
           />
 
           <div>
-            <Group justify="space-between" mb={4}>
-              <Text size="sm" fw={500}>{t('gates.successStatusCodes')}</Text>
-              <Button size="xs" variant="subtle" leftSection={<Plus size={12} />}
-                onClick={() => setCfgField('success_status_codes', [...successStatusCodes, { from: 200, to: 299 }])}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm font-medium">{t('gates.successStatusCodes')}</span>
+              <Button size="sm" variant="ghost" onClick={() => setCfgField('success_status_codes', [...successStatusCodes, { from: 200, to: 299 }])}>
+                <Plus className="h-3 w-3" />
                 {t('common.add')}
               </Button>
-            </Group>
+            </div>
             {successStatusCodes.length === 0 && (
-              <Text size="xs" c="dimmed">{t('gates.successStatusCodesDefault')}</Text>
+              <p className="text-xs text-muted-foreground">{t('gates.successStatusCodesDefault')}</p>
             )}
-            <Stack gap={4}>
+            <div className="space-y-1">
               {successStatusCodes.map((range, idx) => (
-                <Group key={idx} gap="xs">
-                  <NumberInput
+                <div key={idx} className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    className="flex-1 rounded-md border bg-background px-2 py-1 text-xs font-mono"
                     value={range.from}
-                    onChange={(v) => {
+                    onChange={(e) => {
                       const updated = [...successStatusCodes]
-                      updated[idx] = { ...updated[idx], from: typeof v === 'number' ? v : 200 }
+                      updated[idx] = { ...updated[idx], from: Number(e.target.value) || 200 }
                       setCfgField('success_status_codes', updated)
                     }}
                     min={100} max={599}
                     placeholder="200"
-                    style={{ flex: 1 }}
-                    styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
                   />
-                  <Text size="sm">–</Text>
-                  <NumberInput
+                  <span className="text-sm text-muted-foreground">–</span>
+                  <input
+                    type="number"
+                    className="flex-1 rounded-md border bg-background px-2 py-1 text-xs font-mono"
                     value={range.to}
-                    onChange={(v) => {
+                    onChange={(e) => {
                       const updated = [...successStatusCodes]
-                      updated[idx] = { ...updated[idx], to: typeof v === 'number' ? v : 299 }
+                      updated[idx] = { ...updated[idx], to: Number(e.target.value) || 299 }
                       setCfgField('success_status_codes', updated)
                     }}
                     min={100} max={599}
                     placeholder="299"
-                    style={{ flex: 1 }}
-                    styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
                   />
-                  <ActionIcon variant="subtle" color="red" onClick={() => {
+                  <Button variant="ghost" size="icon-sm" className="text-destructive" onClick={() => {
                     setCfgField('success_status_codes', successStatusCodes.filter((_, i) => i !== idx))
                   }}>
-                    <Trash2 size={14} />
-                  </ActionIcon>
-                </Group>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
               ))}
-            </Stack>
+            </div>
           </div>
-        </Stack>
+        </div>
       )}
 
       {type === 'MQTT_GATIE' && (
-        <Text size="xs" c="dimmed">{t('gates.mqttGatieInfo')}</Text>
+        <p className="text-xs text-muted-foreground">{t('gates.mqttGatieInfo')}</p>
       )}
 
       {type !== 'NONE' && type !== 'MQTT_GATIE' && (
-        <Stack gap="sm">
-          <TextInput
-            label={t('gates.statusField')}
-            description={t('gates.statusFieldHint')}
-            value={statusField}
-            onChange={(e) => setStatusM({ field: e.target.value })}
-            placeholder={t('gates.statusFieldPlaceholder')}
-            styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
-          />
-
-          {/* Status value mappings */}
+        <div className="space-y-3">
           <div>
-            <Group justify="space-between" mb={4}>
+            <Input
+              label={t('gates.statusField')}
+              description={t('gates.statusFieldHint')}
+              value={statusField}
+              onChange={(e) => setStatusM({ field: e.target.value })}
+              placeholder={t('gates.statusFieldPlaceholder')}
+              className="font-mono text-xs"
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
               <div>
-                <Text size="sm" fw={500}>{t('gates.statusValues')}</Text>
-                <Text size="xs" c="dimmed">{t('gates.statusValuesDesc')}</Text>
+                <p className="text-sm font-medium">{t('gates.statusValues')}</p>
+                <p className="text-xs text-muted-foreground">{t('gates.statusValuesDesc')}</p>
               </div>
-              <Button size="xs" variant="subtle" leftSection={<Plus size={12} />}
-                onClick={() => setStatusM({ values: { ...statusValues, [`val_${svEntries.length + 1}`]: '' } })}>
+              <Button size="sm" variant="ghost" onClick={() => setStatusM({ values: { ...statusValues, [`val_${svEntries.length + 1}`]: '' } })}>
+                <Plus className="h-3 w-3" />
                 {t('gates.statusValuesAdd')}
               </Button>
-            </Group>
-            <Stack gap={4}>
+            </div>
+            <div className="space-y-1">
               {svEntries.map(([raw, mapped], idx) => (
-                <Group key={idx} gap="xs" align="flex-end">
-                  <TextInput
-                    label={idx === 0 ? t('gates.statusValuesRaw') : undefined}
+                <div key={idx} className="flex items-center gap-1">
+                  <input
+                    className="flex-1 rounded-md border bg-background px-2 py-1 text-xs font-mono"
                     placeholder={t('gates.statusValuesRawPlaceholder')}
                     defaultValue={raw}
                     onBlur={(e) => {
@@ -369,35 +368,31 @@ function StatusConfigForm({
                       for (const [vk, vv] of Object.entries(statusValues)) newV[vk === raw ? e.target.value : vk] = vv
                       setStatusM({ values: newV })
                     }}
-                    style={{ flex: 1 }}
-                    styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
                   />
-                  <Text size="lg" c="dimmed" mb={idx === 0 ? 2 : 6}>→</Text>
-                  <Select
-                    label={idx === 0 ? t('gates.statusValuesMapped') : undefined}
+                  <span className="text-muted-foreground">→</span>
+                  <select
+                    className="flex-[2] rounded-md border bg-background px-2 py-1 text-xs"
                     value={mapped}
-                    onChange={(v) => setStatusM({ values: { ...statusValues, [raw]: v ?? '' } })}
-                    data={allStatuses.map(s => ({ value: s, label: s }))}
-                    searchable
-                    allowDeselect={false}
-                    style={{ flex: 2 }}
-                  />
-                  <ActionIcon variant="subtle" color="red" mb={idx === 0 ? 2 : 0}
+                    onChange={(e) => setStatusM({ values: { ...statusValues, [raw]: e.target.value } })}
+                  >
+                    {allStatuses.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                  <Button variant="ghost" size="icon-sm" className="text-destructive"
                     onClick={() => { const nv = { ...statusValues }; delete nv[raw]; setStatusM({ values: nv }) }}>
-                    <Trash2 size={14} />
-                  </ActionIcon>
-                </Group>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
               ))}
-            </Stack>
+            </div>
           </div>
-
-        </Stack>
+        </div>
       )}
-    </Stack>
+    </div>
   )
 }
 
-/** Inline editor for a list of MetaField entries. */
 function MetaConfigEditor({
   value,
   onChange,
@@ -412,60 +407,47 @@ function MetaConfigEditor({
   }
 
   return (
-    <Stack gap="sm">
-      <Group justify="space-between">
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
         <div>
-          <Text size="sm" fw={500}>{t('gates.metaConfig')}</Text>
-          <Text size="xs" c="dimmed">{t('gates.metaConfigDesc')}</Text>
+          <p className="text-sm font-medium">{t('gates.metaConfig')}</p>
+          <p className="text-xs text-muted-foreground">{t('gates.metaConfigDesc')}</p>
         </div>
-        <Button
-          size="xs"
-          variant="subtle"
-          leftSection={<Plus size={12} />}
-          onClick={() => onChange([...value, { key: '', label: '', unit: '' }])}
-        >
+        <Button size="sm" variant="ghost" onClick={() => onChange([...value, { key: '', label: '', unit: '' }])}>
+          <Plus className="h-3 w-3" />
           {t('gates.metaConfigAdd')}
         </Button>
-      </Group>
+      </div>
       {value.map((field, idx) => (
-        <Group key={idx} gap="xs" align="flex-end">
-          <TextInput
-            label={idx === 0 ? t('gates.metaConfigKey') : undefined}
+        <div key={idx} className="flex items-center gap-1">
+          <input
+            className="flex-[2] rounded-md border bg-background px-2 py-1 text-xs font-mono"
             placeholder={t('gates.metaConfigKeyPlaceholder')}
             value={field.key}
             onChange={(e) => updateField(idx, { key: e.target.value })}
-            style={{ flex: 2 }}
-            styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
           />
-          <TextInput
-            label={idx === 0 ? t('gates.metaConfigLabel') : undefined}
+          <input
+            className="flex-[2] rounded-md border bg-background px-2 py-1 text-xs"
             placeholder={t('gates.metaConfigLabelPlaceholder')}
             value={field.label}
             onChange={(e) => updateField(idx, { label: e.target.value })}
-            style={{ flex: 2 }}
           />
-          <TextInput
-            label={idx === 0 ? t('gates.metaConfigUnit') : undefined}
+          <input
+            className="flex-1 rounded-md border bg-background px-2 py-1 text-xs"
             placeholder={t('gates.metaConfigUnitPlaceholder')}
             value={field.unit ?? ''}
             onChange={(e) => updateField(idx, { unit: e.target.value })}
-            style={{ flex: 1 }}
           />
-          <ActionIcon
-            variant="subtle"
-            color="red"
-            mb={idx === 0 ? 0 : undefined}
-            onClick={() => onChange(value.filter((_, i) => i !== idx))}
-          >
-            <Trash2 size={14} />
-          </ActionIcon>
-        </Group>
+          <Button variant="ghost" size="icon-sm" className="text-destructive"
+            onClick={() => onChange(value.filter((_, i) => i !== idx))}>
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       ))}
-    </Stack>
+    </div>
   )
 }
 
-/** Editor for user-defined custom statuses (in addition to defaults). */
 function CustomStatusesEditor({
   value,
   onChange,
@@ -484,57 +466,49 @@ function CustomStatusesEditor({
   }
 
   return (
-    <Stack gap="sm">
+    <div className="space-y-3">
       <div>
-        <Text size="sm" fw={500}>{t('gates.customStatuses')}</Text>
-        <Text size="xs" c="dimmed">{t('gates.customStatusesDesc')}</Text>
+        <p className="text-sm font-medium">{t('gates.customStatuses')}</p>
+        <p className="text-xs text-muted-foreground">{t('gates.customStatusesDesc')}</p>
       </div>
-      <Group gap="xs" wrap="wrap">
+      <div className="flex flex-wrap gap-1.5">
         {DEFAULT_STATUSES.map((s) => (
-          <Badge key={s} variant="light" color={getStatusColor(s)}>
+          <Badge key={s} variant={getStatusVariant(s as GateStatus)}>
             {t(`common.${s}`, { defaultValue: s })}
           </Badge>
         ))}
         {value.map((s, idx) => (
-          <Badge
-            key={s}
-            variant="light"
-            color="gray"
-            rightSection={
-              <ActionIcon
-                size="xs"
-                variant="transparent"
-                color="red"
-                onClick={() => onChange(value.filter((_, i) => i !== idx))}
-              >
-                <Trash2 size={10} />
-              </ActionIcon>
-            }
-          >
+          <Badge key={s} variant="secondary" className="gap-1">
             {s}
+            <button
+              type="button"
+              className="text-destructive hover:text-destructive/80 cursor-pointer"
+              onClick={() => onChange(value.filter((_, i) => i !== idx))}
+            >
+              <Trash2 className="h-2.5 w-2.5" />
+            </button>
           </Badge>
         ))}
-      </Group>
-      <Group gap="xs">
-        <TextInput
+      </div>
+      <div className="flex items-center gap-1">
+        <input
+          className="flex-1 rounded-md border bg-background px-2 py-1 text-xs font-mono"
           placeholder={t('gates.customStatusPlaceholder')}
           value={newStatus}
           onChange={(e) => setNewStatus(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addStatus() } }}
-          style={{ flex: 1 }}
-          styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
         />
-        <Button size="xs" variant="subtle" leftSection={<Plus size={12} />} onClick={addStatus}>
+        <Button size="sm" variant="ghost" onClick={addStatus}>
+          <Plus className="h-3 w-3" />
           {t('common.add')}
         </Button>
-      </Group>
-    </Stack>
+      </div>
+    </div>
   )
 }
 
 const STATUS_RULE_OPS = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte'] as const
 
-/** Inline editor for a list of StatusRule entries. */
 function StatusRulesEditor({
   value,
   onChange,
@@ -550,75 +524,60 @@ function StatusRulesEditor({
     onChange(value.map((r, i) => (i === idx ? { ...r, ...patch } : r)))
   }
 
-  const opData = STATUS_RULE_OPS.map((op) => ({
-    value: op,
-    label: t(`gates.statusRulesOp${op.charAt(0).toUpperCase()}${op.slice(1)}`),
-  }))
-
-  const statusData = allStatuses.map((s) => ({
-    value: s,
-    label: t(`common.${s}`, { defaultValue: s }),
-  }))
-
   return (
-    <Stack gap="sm">
-      <Group justify="space-between">
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
         <div>
-          <Text size="sm" fw={500}>{t('gates.statusRules')}</Text>
-          <Text size="xs" c="dimmed">{t('gates.statusRulesDesc')}</Text>
+          <p className="text-sm font-medium">{t('gates.statusRules')}</p>
+          <p className="text-xs text-muted-foreground">{t('gates.statusRulesDesc')}</p>
         </div>
-        <Button
-          size="xs"
-          variant="subtle"
-          leftSection={<Plus size={12} />}
-          onClick={() => onChange([...value, { key: '', op: 'lt', value: '', set_status: allStatuses[0] ?? '' }])}
-        >
+        <Button size="sm" variant="ghost"
+          onClick={() => onChange([...value, { key: '', op: 'lt', value: '', set_status: allStatuses[0] ?? '' }])}>
+          <Plus className="h-3 w-3" />
           {t('gates.statusRulesAdd')}
         </Button>
-      </Group>
+      </div>
       {value.map((rule, idx) => (
-        <Group key={idx} gap="xs" align="flex-end">
-          <TextInput
-            label={idx === 0 ? t('gates.statusRulesKey') : undefined}
+        <div key={idx} className="flex items-center gap-1">
+          <input
+            className="flex-[2] rounded-md border bg-background px-2 py-1 text-xs font-mono"
             placeholder={t('gates.statusRulesKeyPlaceholder')}
             value={rule.key}
             onChange={(e) => updateRule(idx, { key: e.target.value })}
-            style={{ flex: 2 }}
-            styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
           />
-          <Select
-            label={idx === 0 ? t('gates.statusRulesOp') : undefined}
+          <select
+            className="flex-[2] rounded-md border bg-background px-2 py-1 text-xs"
             value={rule.op}
-            onChange={(v) => updateRule(idx, { op: v ?? 'lt' })}
-            data={opData}
-            style={{ flex: 2 }}
-          />
-          <TextInput
-            label={idx === 0 ? t('gates.statusRulesValue') : undefined}
+            onChange={(e) => updateRule(idx, { op: e.target.value })}
+          >
+            {STATUS_RULE_OPS.map((op) => (
+              <option key={op} value={op}>
+                {t(`gates.statusRulesOp${op.charAt(0).toUpperCase()}${op.slice(1)}`)}
+              </option>
+            ))}
+          </select>
+          <input
+            className="flex-1 rounded-md border bg-background px-2 py-1 text-xs font-mono"
             placeholder={t('gates.statusRulesValuePlaceholder')}
             value={rule.value}
             onChange={(e) => updateRule(idx, { value: e.target.value })}
-            style={{ flex: 1 }}
-            styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
           />
-          <Select
-            label={idx === 0 ? t('gates.statusRulesSetStatus') : undefined}
+          <select
+            className="flex-[2] rounded-md border bg-background px-2 py-1 text-xs"
             value={rule.set_status}
-            onChange={(v) => updateRule(idx, { set_status: v ?? '' })}
-            data={statusData}
-            style={{ flex: 2 }}
-          />
-          <ActionIcon
-            variant="subtle"
-            color="red"
-            mb={idx === 0 ? 0 : undefined}
-            onClick={() => onChange(value.filter((_, i) => i !== idx))}
+            onChange={(e) => updateRule(idx, { set_status: e.target.value })}
           >
-            <Trash2 size={14} />
-          </ActionIcon>
-        </Group>
+            {allStatuses.map((s) => (
+              <option key={s} value={s}>{t(`common.${s}`, { defaultValue: s })}</option>
+            ))}
+          </select>
+          <Button variant="ghost" size="icon-sm" className="text-destructive"
+            onClick={() => onChange(value.filter((_, i) => i !== idx))}>
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       ))}
-    </Stack>
+    </div>
   )
 }
 
@@ -629,8 +588,15 @@ export default function GatePage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { t } = useTranslation()
-  const clipboard = useClipboard({ timeout: 2000 })
-  const tokenClipboard = useClipboard({ timeout: 2000 })
+
+  const [copied, setCopied] = useState(false)
+  const [tokenCopied, setTokenCopied] = useState(false)
+
+  function copyText(text: string, setFn: (v: boolean) => void) {
+    navigator.clipboard.writeText(text)
+    setFn(true)
+    setTimeout(() => setFn(false), 2000)
+  }
 
   const session = useAuthStore((s) => s.session)
   const isAdmin = session?.type === 'member' && session.member?.role === 'ADMIN'
@@ -645,11 +611,11 @@ export default function GatePage() {
   const canViewStatus =
     isAdmin || myPolicies?.some((p) => p.gate_id === gateId && p.permission_code === 'gate:read_status')
 
-  // Modal state
-  const [pinModalOpened, { open: openPinModal, close: closePinModal }] = useDisclosure(false)
-  const [domainModalOpened, { open: openDomainModal, close: closeDomainModal }] = useDisclosure(false)
-  const [configModalOpened, { open: openConfigModal, close: closeConfigModal }] = useDisclosure(false)
-  const [tokenWarningOpened, { open: openTokenWarning, close: closeTokenWarning }] = useDisclosure(false)
+  // Dialog state
+  const [pinModalOpen, setPinModalOpen] = useState(false)
+  const [domainModalOpen, setDomainModalOpen] = useState(false)
+  const [configModalOpen, setConfigModalOpen] = useState(false)
+  const [tokenWarningOpen, setTokenWarningOpen] = useState(false)
 
   // Token visibility
   const [showToken, setShowToken] = useState(false)
@@ -683,17 +649,18 @@ export default function GatePage() {
   const [editStatusTransitions, setEditStatusTransitions] = useState<StatusTransition[]>([])
 
   const PIN_SESSION_PRESETS = [
+    { value: '__none__', label: t('common.none') },
     { value: '0', label: t('members.sessionInfinite') },
     { value: 'custom', label: t('members.sessionCustom') },
     { value: '3600', label: t('members.session1h') },
     { value: '28800', label: t('members.session8h') },
     { value: '86400', label: t('members.session24h') },
-    { value: '', label: t('members.session7d') },
+    { value: '604800', label: t('members.session7d') },
     { value: '2592000', label: t('members.session30d') },
   ]
 
   function resolvePinSessionDurationSeconds(): number | undefined {
-    if (pinSessionDuration === '') return undefined
+    if (pinSessionDuration === '' || pinSessionDuration === '__none__') return undefined
     if (pinSessionDuration === '0') return 0
     if (pinSessionDuration === 'custom') {
       const n = typeof pinCustomValue === 'number' ? pinCustomValue : parseFloat(String(pinCustomValue))
@@ -710,7 +677,6 @@ export default function GatePage() {
     refetchInterval: 15_000,
   })
 
-  // SSE: update gate data in real-time (both detail and list caches)
   const handleGateEvent = useCallback(
     (event: GateEvent) => {
       if (event.gate_id !== gateId) return
@@ -747,7 +713,6 @@ export default function GatePage() {
     enabled: canManageGate,
   })
 
-  // Lazy token fetch: only triggered when admin clicks "Show token"
   const { data: tokenData } = useQuery({
     queryKey: ['gate-token', gateId],
     queryFn: () => gatesApi.getToken(gateId!),
@@ -760,7 +725,7 @@ export default function GatePage() {
     onSuccess: (data) => {
       qc.setQueryData(['gate-token', gateId], data)
       setShowToken(true)
-      closeTokenWarning()
+      setTokenWarningOpen(false)
       notifySuccess(t('gates.tokenRotated'))
     },
     onError: (err: unknown) => notifyError(err, t('common.error')),
@@ -795,7 +760,7 @@ export default function GatePage() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['gate', gateId] })
-      closeConfigModal()
+      setConfigModalOpen(false)
       notifySuccess(t('common.saved'))
     },
     onError: (err: unknown) => notifyError(err, t('common.error')),
@@ -819,7 +784,7 @@ export default function GatePage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pins', gateId] })
-      closePinModal()
+      setPinModalOpen(false)
       resetPinForm()
       notifySuccess(t('common.created'))
     },
@@ -844,10 +809,10 @@ export default function GatePage() {
     setPinExpiresAt(meta.expires_at ? new Date(meta.expires_at).toISOString().slice(0, 16) : '')
     setPinPermissions(meta.permissions ?? ['gate:trigger_open'])
     const sd = meta.session_duration
-    setPinSessionDuration(sd === undefined ? '' : sd === 0 ? '0' : String(sd))
+    setPinSessionDuration(sd === undefined ? '__none__' : sd === 0 ? '0' : String(sd))
     setPinMaxUses(meta.max_uses ?? '')
     setPinScheduleId(pin.schedule_id ?? '')
-    openPinModal()
+    setPinModalOpen(true)
   }
 
   const updatePin = useMutation({
@@ -867,7 +832,7 @@ export default function GatePage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pins', gateId] })
-      closePinModal()
+      setPinModalOpen(false)
       resetPinForm()
       notifySuccess(t('common.saved'))
     },
@@ -884,7 +849,7 @@ export default function GatePage() {
     mutationFn: () => domainsApi.create(gateId!, domainValue),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['domains', gateId] })
-      closeDomainModal()
+      setDomainModalOpen(false)
       setDomainValue('')
       notifySuccess(t('common.created'))
     },
@@ -920,16 +885,14 @@ export default function GatePage() {
     setEditCustomStatuses(gate?.custom_statuses ?? [])
     setEditTTLSeconds(gate?.ttl_seconds ?? null)
     setEditStatusTransitions(gate?.status_transitions ?? [])
-    openConfigModal()
+    setConfigModalOpen(true)
   }
 
-  // All statuses available for status rules: defaults + custom
   const allStatuses = useMemo(
     () => [...DEFAULT_STATUSES, ...editCustomStatuses],
     [editCustomStatuses]
   )
 
-  // Build metadata display rows: mapped fields + unmapped raw fields (admin only)
   const metaRows = useMemo(() => {
     if (!gate?.status_metadata) return []
     const meta = gate.status_metadata as Record<string, unknown>
@@ -953,9 +916,8 @@ export default function GatePage() {
     return mapped
   }, [gate, isAdmin])
 
-  const statusColor = getStatusColor(gate?.status)
   const scheduleSelectData = [
-    { value: '', label: t('common.none') },
+    { value: '__none__', label: t('common.none') },
     ...schedules.map((s) => ({ value: s.id, label: s.name })),
   ]
   const scheduleById = useMemo(() => {
@@ -965,541 +927,545 @@ export default function GatePage() {
   }, [schedules])
 
   return (
-    <Container size="sm" py="xl">
+    <div className="max-w-xl mx-auto p-6">
       {/* Back button */}
       <Button
-        variant="subtle"
-        color="gray"
-        size="xs"
-        leftSection={<ArrowLeft size={14} />}
-        mb="md"
+        variant="ghost"
+        size="sm"
+        className="mb-4"
         onClick={() => navigate('/gates')}
       >
+        <ArrowLeft className="h-3.5 w-3.5" />
         {t('common.back')}
       </Button>
 
       {gateError && <QueryError error={gateFetchError} />}
 
       {/* Header */}
-      <Group justify="space-between" mb="xl">
-        <div>
-          <Group gap="sm">
-            <Title order={2}>{gate?.name ?? '…'}</Title>
-            {gate && (
-              <Badge color={statusColor} variant="light">
-                {t(`common.${gate.status}`, { defaultValue: gate.status })}
-              </Badge>
-            )}
-          </Group>
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-2">
+          <h2 className="text-xl font-bold">{gate?.name ?? '…'}</h2>
+          {gate && (
+            <Badge variant={getStatusVariant(gate.status)}>
+              {t(`common.${gate.status}`, { defaultValue: gate.status })}
+            </Badge>
+          )}
         </div>
-        <Group>
+        <div className="flex items-center gap-2">
           {canManageGate && (
-            <Tooltip label={t('gates.integration')}>
-              <ActionIcon variant="default" size="lg" onClick={openConfig}>
-                <Settings2 size={16} />
-              </ActionIcon>
-            </Tooltip>
+            <SimpleTooltip label={t('gates.integration')}>
+              <Button variant="outline" size="icon" onClick={openConfig}>
+                <Settings2 className="h-4 w-4" />
+              </Button>
+            </SimpleTooltip>
           )}
           {gate?.close_config && (
             <Button
-              leftSection={<DoorClosed size={16} />}
-              variant="default"
+              variant="outline"
               loading={trigger.isPending}
               onClick={() => trigger.mutate('close')}
             >
+              <DoorClosed className="h-4 w-4" />
               {t('gates.close')}
             </Button>
           )}
           <Button
-            leftSection={<DoorOpen size={16} />}
             loading={trigger.isPending}
             onClick={() => trigger.mutate('open')}
           >
+            <DoorOpen className="h-4 w-4" />
             {t('gates.open')}
           </Button>
-        </Group>
-      </Group>
+        </div>
+      </div>
 
-      {/* Live data (status metadata) */}
+      {/* Live data */}
       {canViewStatus && (
-        <Paper withBorder p="md" radius="md" mb="md">
-          <Group gap="xs" mb={metaRows.length > 0 ? 'sm' : 0}>
-            <Activity size={16} opacity={0.6} />
-            <Text fw={600}>{t('gates.liveData')}</Text>
-          </Group>
+        <div className="border rounded-lg p-4 mb-4">
+          <div className="flex items-center gap-1.5 mb-2">
+            <Activity className="h-4 w-4 opacity-60" />
+            <span className="font-semibold">{t('gates.liveData')}</span>
+          </div>
           {metaRows.length === 0 ? (
-            <Text size="sm" c="dimmed">{t('gates.noLiveData')}</Text>
+            <p className="text-sm text-muted-foreground">{t('gates.noLiveData')}</p>
           ) : (
-            <Stack gap={4}>
+            <div className="space-y-1">
               {metaRows.map((row) => (
-                <Group key={row.label} justify="space-between" py={2}>
-                  <Text size="sm" c={row.raw ? 'dimmed' : undefined} ff={row.raw ? 'mono' : undefined}>
+                <div key={row.label} className="flex items-center justify-between py-0.5">
+                  <span className={`text-sm ${row.raw ? 'text-muted-foreground font-mono' : ''}`}>
                     {row.label}
-                    {row.raw && <Text component="span" size="xs" c="dimmed"> ({t('gates.metaConfigRaw')})</Text>}
-                  </Text>
-                  <Text size="sm" fw={500} ff="mono">
+                    {row.raw && <span className="text-xs text-muted-foreground"> ({t('gates.metaConfigRaw')})</span>}
+                  </span>
+                  <span className="text-sm font-medium font-mono">
                     {row.value}{row.unit ? ` ${row.unit}` : ''}
-                  </Text>
-                </Group>
+                  </span>
+                </div>
               ))}
-            </Stack>
+            </div>
           )}
-        </Paper>
+        </div>
       )}
 
       {/* Gate token (admin only) */}
       {isAdmin && (
-        <Paper withBorder p="md" radius="md" mb="md">
-          <Group justify="space-between" mb="xs">
-            <Group gap="xs">
-              <Key size={16} opacity={0.6} />
-              <Text fw={600}>{t('gates.tokenSection')}</Text>
-            </Group>
-            <Group gap="xs">
-              <Button size="xs" variant="subtle" onClick={() => setShowToken((v) => !v)}>
+        <div className="border rounded-lg p-4 mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5">
+              <Key className="h-4 w-4 opacity-60" />
+              <span className="font-semibold">{t('gates.tokenSection')}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button size="sm" variant="ghost" onClick={() => setShowToken((v) => !v)}>
                 {showToken ? t('gates.tokenHide') : t('gates.tokenShow')}
               </Button>
               <Button
-                size="xs"
-                variant="light"
-                color="orange"
-                leftSection={<RefreshCw size={12} />}
+                size="sm"
+                variant="outline"
+                className="text-orange-600"
                 loading={rotateToken.isPending}
-                onClick={openTokenWarning}
+                onClick={() => setTokenWarningOpen(true)}
               >
+                <RefreshCw className="h-3 w-3" />
                 {t('gates.tokenRotate')}
               </Button>
-            </Group>
-          </Group>
-          <Text size="xs" c="dimmed" mb="sm">{t('gates.tokenDesc')}</Text>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground mb-2">{t('gates.tokenDesc')}</p>
 
           {showToken && (
             gateToken ? (
-              <Group gap="xs" wrap="nowrap">
-                <Code style={{ flex: 1, fontSize: 11, wordBreak: 'break-all' }}>{gateToken}</Code>
-                <Tooltip label={tokenClipboard.copied ? t('common.copied') : t('common.copy')}>
-                  <ActionIcon
-                    variant="subtle"
-                    size="sm"
-                    onClick={() => tokenClipboard.copy(gateToken)}
-                  >
-                    {tokenClipboard.copied ? <Check size={12} /> : <Copy size={12} />}
-                  </ActionIcon>
-                </Tooltip>
-              </Group>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-[11px] break-all bg-muted rounded px-2 py-1">{gateToken}</code>
+                <SimpleTooltip label={tokenCopied ? t('common.copied') : t('common.copy')}>
+                  <Button variant="ghost" size="icon-sm" onClick={() => copyText(gateToken, setTokenCopied)}>
+                    {tokenCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                  </Button>
+                </SimpleTooltip>
+              </div>
             ) : (
-              <Text size="sm" c="dimmed">…</Text>
+              <p className="text-sm text-muted-foreground">…</p>
             )
           )}
-        </Paper>
+        </div>
       )}
 
-      {/* Rotate token warning modal */}
-      <Modal
-        opened={tokenWarningOpened}
-        onClose={closeTokenWarning}
-        title={t('gates.tokenRotate')}
-        size="lg"
-      >
-        <Stack gap="lg">
-          <Alert color="orange" variant="light" icon={<Info size={16} />} p="md">
-            <Text size="sm">{t('gates.tokenRotateWarning')}</Text>
-          </Alert>
-          <Group grow gap="sm">
-            <Button size="md" variant="default" onClick={closeTokenWarning}>{t('common.cancel')}</Button>
-            <Button size="md" color="orange" loading={rotateToken.isPending} onClick={() => rotateToken.mutate()}>
-              {t('gates.tokenRotate')}
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
+      {/* Rotate token warning dialog */}
+      <Dialog open={tokenWarningOpen} onOpenChange={setTokenWarningOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('gates.tokenRotate')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Alert variant="warning">
+              <Info className="h-4 w-4" />
+              <AlertDescription>{t('gates.tokenRotateWarning')}</AlertDescription>
+            </Alert>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setTokenWarningOpen(false)}>
+                {t('common.cancel')}
+              </Button>
+              <Button className="flex-1 bg-orange-600 hover:bg-orange-700" loading={rotateToken.isPending} onClick={() => rotateToken.mutate()}>
+                {t('gates.tokenRotate')}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
-      {/* Integration config modal */}
-      <Modal
-        opened={configModalOpened}
-        onClose={closeConfigModal}
-        title={t('gates.integration')}
-        size="lg"
-      >
-        <form onSubmit={(e) => { e.preventDefault(); updateConfig.mutate() }}>
-          <Stack gap="xl">
-            <div>
-              <Text fw={600} mb="sm">{t('gates.actionsSection')}</Text>
-              <Stack gap="md">
-                <ActionConfigForm
-                  label={t('gates.openAction')}
-                  value={editOpenConfig}
-                  onChange={setEditOpenConfig}
+      {/* Integration config dialog */}
+      <Dialog open={configModalOpen} onOpenChange={setConfigModalOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t('gates.integration')}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={(e) => { e.preventDefault(); updateConfig.mutate() }}>
+            <div className="space-y-6">
+              <div>
+                <p className="font-semibold mb-2">{t('gates.actionsSection')}</p>
+                <div className="space-y-4">
+                  <ActionConfigForm label={t('gates.openAction')} value={editOpenConfig} onChange={setEditOpenConfig} />
+                  <ActionConfigForm label={t('gates.closeAction')} value={editCloseConfig} onChange={setEditCloseConfig} />
+                </div>
+              </div>
+              <Separator />
+              <div>
+                <p className="font-semibold mb-2">{t('gates.statusAction')}</p>
+                <StatusConfigForm value={editStatusConfig} onChange={setEditStatusConfig} allStatuses={allStatuses} />
+              </div>
+              <Separator />
+              <MetaConfigEditor value={editMetaConfig} onChange={setEditMetaConfig} />
+              <Separator />
+              <CustomStatusesEditor value={editCustomStatuses} onChange={setEditCustomStatuses} />
+              <Separator />
+              <StatusRulesEditor value={editStatusRules} onChange={setEditStatusRules} allStatuses={allStatuses} />
+              <Separator />
+              <div>
+                <p className="font-semibold mb-2">{t('gates.ttlSection')}</p>
+                <Input
+                  label={t('gates.ttlSeconds')}
+                  description={t('gates.ttlSecondsHint')}
+                  type="number"
+                  value={editTTLSeconds != null ? String(editTTLSeconds) : ''}
+                  onChange={(e) => setEditTTLSeconds(e.target.value ? Number(e.target.value) : null)}
+                  min={1}
+                  max={3600}
+                  placeholder="30"
+                  className="w-28"
                 />
-                <ActionConfigForm
-                  label={t('gates.closeAction')}
-                  value={editCloseConfig}
-                  onChange={setEditCloseConfig}
-                />
-              </Stack>
+              </div>
+              <Separator />
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="font-semibold">{t('gates.statusTransitions')}</p>
+                  <Button size="sm" variant="ghost" type="button"
+                    onClick={() => setEditStatusTransitions([...editStatusTransitions, { from: 'open', to: 'closed', after_seconds: 30 }])}>
+                    <Plus className="h-3 w-3" />
+                    {t('common.add')}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground mb-2">{t('gates.statusTransitionsHint')}</p>
+                <div className="space-y-1">
+                  {editStatusTransitions.map((tr, idx) => (
+                    <div key={idx} className="flex items-center gap-1">
+                      <select
+                        className="flex-1 rounded-md border bg-background px-2 py-1 text-xs"
+                        value={tr.from}
+                        onChange={(e) => {
+                          const updated = [...editStatusTransitions]
+                          updated[idx] = { ...updated[idx], from: e.target.value }
+                          setEditStatusTransitions(updated)
+                        }}
+                      >
+                        {allStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                      <span className="text-sm text-muted-foreground">→</span>
+                      <select
+                        className="flex-1 rounded-md border bg-background px-2 py-1 text-xs"
+                        value={tr.to}
+                        onChange={(e) => {
+                          const updated = [...editStatusTransitions]
+                          updated[idx] = { ...updated[idx], to: e.target.value }
+                          setEditStatusTransitions(updated)
+                        }}
+                      >
+                        {allStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                      <input
+                        type="number"
+                        className="flex-1 rounded-md border bg-background px-2 py-1 text-xs"
+                        value={tr.after_seconds}
+                        onChange={(e) => {
+                          const updated = [...editStatusTransitions]
+                          updated[idx] = { ...updated[idx], after_seconds: Number(e.target.value) || 30 }
+                          setEditStatusTransitions(updated)
+                        }}
+                        min={1}
+                        placeholder="30"
+                      />
+                      <label className="flex items-center gap-1 text-xs whitespace-nowrap">
+                        <input
+                          type="checkbox"
+                          checked={tr.persist_on_change ?? false}
+                          onChange={(e) => {
+                            const updated = [...editStatusTransitions]
+                            updated[idx] = { ...updated[idx], persist_on_change: e.target.checked }
+                            setEditStatusTransitions(updated)
+                          }}
+                          className="rounded border"
+                        />
+                        {t('gates.persistOnChange')}
+                      </label>
+                      <Button variant="ghost" size="icon-sm" type="button" className="text-destructive"
+                        onClick={() => setEditStatusTransitions(editStatusTransitions.filter((_, i) => i !== idx))}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" type="button" onClick={() => setConfigModalOpen(false)}>{t('common.cancel')}</Button>
+                <Button type="submit" loading={updateConfig.isPending}>{t('common.save')}</Button>
+              </div>
             </div>
-            <div>
-              <Text fw={600} mb="sm">{t('gates.statusAction')}</Text>
-              <StatusConfigForm
-                value={editStatusConfig}
-                onChange={setEditStatusConfig}
-                allStatuses={allStatuses}
-              />
-            </div>
-            <MetaConfigEditor value={editMetaConfig} onChange={setEditMetaConfig} />
-            <CustomStatusesEditor value={editCustomStatuses} onChange={setEditCustomStatuses} />
-            <StatusRulesEditor value={editStatusRules} onChange={setEditStatusRules} allStatuses={allStatuses} />
-            <div>
-              <Text fw={600} mb="sm">{t('gates.ttlSection')}</Text>
-              <NumberInput
-                label={t('gates.ttlSeconds')}
-                description={t('gates.ttlSecondsHint')}
-                value={editTTLSeconds ?? ''}
-                onChange={(v) => setEditTTLSeconds(typeof v === 'number' ? v : null)}
-                min={1}
-                max={3600}
-                placeholder="30"
-              />
-            </div>
-            <div>
-              <Group justify="space-between" mb={4}>
-                <Text fw={600}>{t('gates.statusTransitions')}</Text>
-                <Button size="xs" variant="subtle" leftSection={<Plus size={12} />}
-                  onClick={() => setEditStatusTransitions([...editStatusTransitions, { from: 'open', to: 'closed', after_seconds: 30 }])}>
-                  {t('common.add')}
-                </Button>
-              </Group>
-              <Text size="xs" c="dimmed" mb="xs">{t('gates.statusTransitionsHint')}</Text>
-              <Stack gap={4}>
-                {editStatusTransitions.map((tr, idx) => (
-                  <Group key={idx} gap="xs">
-                    <Select
-                      data={allStatuses}
-                      value={tr.from}
-                      onChange={(v) => {
-                        const updated = [...editStatusTransitions]
-                        updated[idx] = { ...updated[idx], from: v ?? 'open' }
-                        setEditStatusTransitions(updated)
-                      }}
-                      placeholder="from"
-                      style={{ flex: 1 }}
-                    />
-                    <Text size="sm">→</Text>
-                    <Select
-                      data={allStatuses}
-                      value={tr.to}
-                      onChange={(v) => {
-                        const updated = [...editStatusTransitions]
-                        updated[idx] = { ...updated[idx], to: v ?? 'closed' }
-                        setEditStatusTransitions(updated)
-                      }}
-                      placeholder="to"
-                      style={{ flex: 1 }}
-                    />
-                    <NumberInput
-                      value={tr.after_seconds}
-                      onChange={(v) => {
-                        const updated = [...editStatusTransitions]
-                        updated[idx] = { ...updated[idx], after_seconds: typeof v === 'number' ? v : 30 }
-                        setEditStatusTransitions(updated)
-                      }}
-                      min={1}
-                      placeholder="30"
-                      suffix="s"
-                      style={{ flex: 1 }}
-                    />
-                    <Switch
-                      label={t('gates.persistOnChange')}
-                      checked={tr.persist_on_change ?? false}
-                      onChange={(e) => {
-                        const updated = [...editStatusTransitions]
-                        updated[idx] = { ...updated[idx], persist_on_change: e.currentTarget.checked }
-                        setEditStatusTransitions(updated)
-                      }}
-                    />
-                    <ActionIcon variant="subtle" color="red" onClick={() =>
-                      setEditStatusTransitions(editStatusTransitions.filter((_, i) => i !== idx))
-                    }>
-                      <Trash2 size={14} />
-                    </ActionIcon>
-                  </Group>
-                ))}
-              </Stack>
-            </div>
-            <Group justify="flex-end">
-              <Button variant="default" onClick={closeConfigModal}>{t('common.cancel')}</Button>
-              <Button type="submit" loading={updateConfig.isPending}>{t('common.save')}</Button>
-            </Group>
-          </Stack>
-        </form>
-      </Modal>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Access codes */}
-      <Paper withBorder p="md" radius="md" mb="md">
-        <Group justify="space-between" mb="sm">
-          <Group gap="xs">
-            <Hash size={16} opacity={0.6} />
-            <Text fw={600}>{t('pins.title')}</Text>
-            <Badge variant="light" size="xs">{pins?.length ?? 0}</Badge>
-          </Group>
+      <div className="border rounded-lg p-4 mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-1.5">
+            <Hash className="h-4 w-4 opacity-60" />
+            <span className="font-semibold">{t('pins.title')}</span>
+            <Badge variant="secondary">{pins?.length ?? 0}</Badge>
+          </div>
           {canManageGate && (
-            <Button
-              size="xs"
-              variant="subtle"
-              leftSection={<Plus size={14} />}
-              onClick={() => { resetPinForm(); openPinModal() }}
-            >
+            <Button size="sm" variant="ghost" onClick={() => { resetPinForm(); setPinModalOpen(true) }}>
+              <Plus className="h-3.5 w-3.5" />
               {t('pins.add')}
             </Button>
           )}
-        </Group>
+        </div>
         {(pins?.length ?? 0) === 0 ? (
-          <Text size="sm" c="dimmed">{t('pins.noPins')}</Text>
+          <p className="text-sm text-muted-foreground">{t('pins.noPins')}</p>
         ) : (
-          <Stack gap={2}>
+          <div className="space-y-0.5">
             {pins?.map((pin) => {
               const codeType = (pin.metadata.code_type as 'pin' | 'password') ?? 'pin'
               const schedule = pin.schedule_id ? scheduleById[pin.schedule_id] : null
               return (
-                <Group key={pin.id} justify="space-between" py={4}>
-                  <Group gap="sm">
-                    <Hash size={14} opacity={0.5} />
-                    <Text size="sm">{pin.label}</Text>
-                    <Badge size="xs" variant="dot" color={codeType === 'pin' ? 'indigo' : 'violet'}>
+                <div key={pin.id} className="flex items-center justify-between py-1">
+                  <div className="flex items-center gap-2">
+                    <Hash className="h-3.5 w-3.5 opacity-50" />
+                    <span className="text-sm">{pin.label}</span>
+                    <Badge variant={codeType === 'pin' ? 'default' : 'secondary'}>
                       {codeType === 'pin' ? 'PIN' : t('pins.passwords')}
                     </Badge>
                     {(pin.metadata as { expires_at?: string }).expires_at && (
-                      <Group gap={4}>
-                        <Clock size={12} opacity={0.5} />
-                        <Text size="xs" c="dimmed">
+                      <div className="flex items-center gap-1">
+                        <Clock className="h-3 w-3 opacity-50" />
+                        <span className="text-xs text-muted-foreground">
                           {new Date((pin.metadata as { expires_at: string }).expires_at).toLocaleDateString()}
-                        </Text>
-                      </Group>
+                        </span>
+                      </div>
                     )}
                     {schedule && (
-                      <Tooltip label={schedule.name}>
-                        <Badge size="xs" variant="light" color="orange" leftSection={<CalendarClock size={10} />}>
+                      <SimpleTooltip label={schedule.name}>
+                        <Badge variant="warning">
+                          <CalendarClock className="h-2.5 w-2.5" />
                           {schedule.name}
                         </Badge>
-                      </Tooltip>
+                      </SimpleTooltip>
                     )}
-                  </Group>
+                  </div>
                   {canManageGate && (
-                    <Group gap={4}>
-                      <ActionIcon variant="subtle" size="sm" onClick={() => openEditModal(pin)}>
-                        <Pencil size={14} />
-                      </ActionIcon>
-                      <ActionIcon
-                        variant="subtle"
-                        color="red"
-                        size="sm"
-                        onClick={() => deletePin.mutate(pin.id)}
-                      >
-                        <Trash2 size={14} />
-                      </ActionIcon>
-                    </Group>
+                    <div className="flex items-center gap-1">
+                      <Button variant="ghost" size="icon-sm" onClick={() => openEditModal(pin)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="ghost" size="icon-sm" className="text-destructive" onClick={() => deletePin.mutate(pin.id)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   )}
-                </Group>
+                </div>
               )
             })}
-          </Stack>
+          </div>
         )}
-      </Paper>
+      </div>
 
-      {/* Access code create/edit modal */}
-      <Modal
-        opened={pinModalOpened}
-        onClose={() => { closePinModal(); resetPinForm() }}
-        title={pinModalMode === 'edit' ? t('pins.editCode') : t('pins.add')}
-      >
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            pinModalMode === 'edit' ? updatePin.mutate() : createPin.mutate()
-          }}
-        >
-          <Stack gap="xl">
-            <div>
-              <Text fw={600} mb="sm">{t('pins.identification')}</Text>
-              <Stack gap="md">
-                <TextInput
-                  label={t('pins.label')}
-                  value={pinLabel}
-                  onChange={(e) => setPinLabel(e.target.value)}
-                  placeholder={t('pins.labelPlaceholder')}
-                  required
-                />
-                <Select
-                  label={t('pins.codeType')}
-                  value={pinCodeType}
-                  allowDeselect={false}
-                  onChange={(v) => { setPinCodeType((v as 'pin' | 'password') ?? 'pin'); setPinValue('') }}
-                  data={[
-                    { value: 'pin', label: t('pins.codeTypePin') },
-                    { value: 'password', label: t('pins.codeTypePassword') },
-                  ]}
-                />
-                <Alert color="blue" variant="light" icon={<Info size={14} />}>
-                  {pinCodeType === 'pin' ? t('pins.methodWarningPin') : t('pins.methodWarningPassword')}
-                </Alert>
-                {pinModalMode === 'create' && (
-                  <PasswordInput
-                    label={t('pins.code')}
-                    value={pinValue}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      setPinValue(pinCodeType === 'pin' ? v.replace(/\D/g, '') : v)
-                    }}
+      {/* Access code create/edit dialog */}
+      <Dialog open={pinModalOpen} onOpenChange={(open) => { setPinModalOpen(open); if (!open) resetPinForm() }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{pinModalMode === 'edit' ? t('pins.editCode') : t('pins.add')}</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              pinModalMode === 'edit' ? updatePin.mutate() : createPin.mutate()
+            }}
+          >
+            <div className="space-y-6">
+              <div>
+                <p className="font-semibold mb-2">{t('pins.identification')}</p>
+                <div className="space-y-3">
+                  <Input
+                    label={t('pins.label')}
+                    value={pinLabel}
+                    onChange={(e) => setPinLabel(e.target.value)}
+                    placeholder={t('pins.labelPlaceholder')}
                     required
-                    minLength={1}
-                    inputMode={pinCodeType === 'pin' ? 'numeric' : undefined}
-                    styles={
-                      pinCodeType === 'pin'
-                        ? { input: { fontFamily: 'monospace', letterSpacing: '0.2em' } }
-                        : undefined
-                    }
                   />
-                )}
-              </Stack>
-            </div>
+                  <SimpleSelect
+                    label={t('pins.codeType')}
+                    value={pinCodeType}
+                    onValueChange={(v) => { setPinCodeType((v as 'pin' | 'password') ?? 'pin'); setPinValue('') }}
+                    data={[
+                      { value: 'pin', label: t('pins.codeTypePin') },
+                      { value: 'password', label: t('pins.codeTypePassword') },
+                    ]}
+                  />
+                  <Alert>
+                    <Info className="h-3.5 w-3.5" />
+                    <AlertDescription>
+                      {pinCodeType === 'pin' ? t('pins.methodWarningPin') : t('pins.methodWarningPassword')}
+                    </AlertDescription>
+                  </Alert>
+                  {pinModalMode === 'create' && (
+                    <Input
+                      label={t('pins.code')}
+                      type="password"
+                      value={pinValue}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setPinValue(pinCodeType === 'pin' ? v.replace(/\D/g, '') : v)
+                      }}
+                      required
+                      minLength={1}
+                      inputMode={pinCodeType === 'pin' ? 'numeric' : undefined}
+                      className={pinCodeType === 'pin' ? 'font-mono tracking-widest' : ''}
+                    />
+                  )}
+                </div>
+              </div>
 
-            <div>
-              <Text fw={600} mb="sm">{t('pins.accessRules')}</Text>
-              <Stack gap="md">
-                <Stack gap="xs">
-                  <Select
+              <div>
+                <p className="font-semibold mb-2">{t('pins.accessRules')}</p>
+                <div className="space-y-3">
+                  <SimpleSelect
                     label={t('pins.sessionDuration')}
                     description={t('pins.sessionDurationDesc')}
-                    value={pinSessionDuration}
-                    onChange={(v) => setPinSessionDuration(v ?? '')}
+                    value={pinSessionDuration || '__none__'}
+                    onValueChange={(v) => setPinSessionDuration(v === '__none__' ? '' : v)}
                     data={PIN_SESSION_PRESETS}
                   />
                   {pinSessionDuration === 'custom' && (
-                    <Group gap="xs" grow>
-                      <NumberInput
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
                         label={t('members.sessionCustomValue')}
-                        value={pinCustomValue}
-                        onChange={setPinCustomValue}
+                        type="number"
+                        value={String(pinCustomValue)}
+                        onChange={(e) => setPinCustomValue(Number(e.target.value) || 1)}
                         min={1}
                         step={1}
                       />
-                      <Select
+                      <SimpleSelect
                         label={t('members.sessionCustomUnit')}
                         value={pinCustomUnit}
-                        onChange={(v) => setPinCustomUnit(v ?? 'days')}
+                        onValueChange={(v) => setPinCustomUnit(v ?? 'days')}
                         data={[
                           { value: 'minutes', label: t('members.sessionUnitMinutes') },
                           { value: 'hours', label: t('members.sessionUnitHours') },
                           { value: 'days', label: t('members.sessionUnitDays') },
                         ]}
                       />
-                    </Group>
+                    </div>
                   )}
-                </Stack>
-                <NumberInput
-                  label={t('pins.maxUses')}
-                  description={t('pins.maxUsesDesc')}
-                  value={pinMaxUses}
-                  onChange={setPinMaxUses}
-                  min={1}
-                  step={1}
-                  allowDecimal={false}
-                />
-                <Checkbox.Group
-                  label={t('pins.permissions')}
-                  value={pinPermissions}
-                  onChange={setPinPermissions}
-                >
-                  <Stack gap="xs" mt={4}>
-                    <Checkbox value="gate:trigger_open" label={t('permissions.triggerOpen')} />
-                    <Checkbox value="gate:trigger_close" label={t('permissions.triggerClose')} />
-                    <Checkbox value="gate:read_status" label={t('permissions.viewStatus')} />
-                  </Stack>
-                </Checkbox.Group>
-                <TextInput
-                  label={t('pins.expires')}
-                  description={t('common.optional')}
-                  type="datetime-local"
-                  value={pinExpiresAt}
-                  onChange={(e) => setPinExpiresAt(e.target.value)}
-                />
-                <Select
-                  label={t('pins.schedule')}
-                  description={t('pins.scheduleDesc')}
-                  value={pinScheduleId}
-                  onChange={(v) => setPinScheduleId(v ?? '')}
-                  data={scheduleSelectData}
-                  clearable
-                />
-              </Stack>
-            </div>
+                  <Input
+                    label={t('pins.maxUses')}
+                    description={t('pins.maxUsesDesc')}
+                    type="number"
+                    value={String(pinMaxUses)}
+                    onChange={(e) => setPinMaxUses(e.target.value === '' ? '' : Number(e.target.value))}
+                    min={1}
+                    step={1}
+                  />
+                  <div>
+                    <label className="text-sm font-medium">{t('pins.permissions')}</label>
+                    <div className="space-y-2 mt-1.5">
+                      {[
+                        { value: 'gate:trigger_open', label: t('permissions.triggerOpen') },
+                        { value: 'gate:trigger_close', label: t('permissions.triggerClose') },
+                        { value: 'gate:read_status', label: t('permissions.viewStatus') },
+                      ].map((perm) => (
+                        <Checkbox
+                          key={perm.value}
+                          label={perm.label}
+                          checked={pinPermissions.includes(perm.value)}
+                          onCheckedChange={(checked) => {
+                            setPinPermissions((prev) =>
+                              checked
+                                ? [...prev, perm.value]
+                                : prev.filter((p) => p !== perm.value)
+                            )
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <Input
+                    label={t('pins.expires')}
+                    description={t('common.optional')}
+                    type="datetime-local"
+                    value={pinExpiresAt}
+                    onChange={(e) => setPinExpiresAt(e.target.value)}
+                  />
+                  <SimpleSelect
+                    label={t('pins.schedule')}
+                    description={t('pins.scheduleDesc')}
+                    value={pinScheduleId || '__none__'}
+                    onValueChange={(v) => setPinScheduleId(v === '__none__' ? '' : v)}
+                    data={scheduleSelectData}
+                  />
+                </div>
+              </div>
 
-            <Group justify="flex-end">
-              <Button variant="default" onClick={() => { closePinModal(); resetPinForm() }}>
-                {t('common.cancel')}
-              </Button>
-              <Button type="submit" loading={createPin.isPending || updatePin.isPending}>
-                {pinModalMode === 'edit' ? t('common.save') : t('common.add')}
-              </Button>
-            </Group>
-          </Stack>
-        </form>
-      </Modal>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" type="button" onClick={() => { setPinModalOpen(false); resetPinForm() }}>
+                  {t('common.cancel')}
+                </Button>
+                <Button type="submit" loading={createPin.isPending || updatePin.isPending}>
+                  {pinModalMode === 'edit' ? t('common.save') : t('common.add')}
+                </Button>
+              </div>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Custom domains */}
-      <Paper withBorder p="md" radius="md" mb="md">
-        <Group justify="space-between" mb="sm">
-          <Group gap="xs">
-            <Globe size={16} opacity={0.6} />
-            <Text fw={600}>{t('domains.title')}</Text>
-            <Badge variant="light" size="xs">{domains?.length ?? 0}</Badge>
-          </Group>
+      <div className="border rounded-lg p-4 mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-1.5">
+            <Globe className="h-4 w-4 opacity-60" />
+            <span className="font-semibold">{t('domains.title')}</span>
+            <Badge variant="secondary">{domains?.length ?? 0}</Badge>
+          </div>
           {canManageGate && (
-            <Button size="xs" variant="subtle" leftSection={<Plus size={14} />} onClick={openDomainModal}>
+            <Button size="sm" variant="ghost" onClick={() => setDomainModalOpen(true)}>
+              <Plus className="h-3.5 w-3.5" />
               {t('domains.add')}
             </Button>
           )}
-        </Group>
+        </div>
 
-        <Modal opened={domainModalOpened} onClose={closeDomainModal} title={t('domains.add')}>
-          <form onSubmit={(e) => { e.preventDefault(); addDomain.mutate() }}>
-            <Stack>
-              <TextInput
-                label={t('domains.domain')}
-                value={domainValue}
-                onChange={(e) => setDomainValue(e.target.value)}
-                required
-                placeholder={t('domains.domainPlaceholder')}
-                styles={{ input: { fontFamily: 'monospace' } }}
-              />
-              <Group justify="flex-end">
-                <Button variant="default" onClick={closeDomainModal}>{t('common.cancel')}</Button>
-                <Button type="submit" loading={addDomain.isPending}>{t('common.add')}</Button>
-              </Group>
-            </Stack>
-          </form>
-        </Modal>
+        <Dialog open={domainModalOpen} onOpenChange={setDomainModalOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{t('domains.add')}</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={(e) => { e.preventDefault(); addDomain.mutate() }}>
+              <div className="space-y-4">
+                <Input
+                  label={t('domains.domain')}
+                  value={domainValue}
+                  onChange={(e) => setDomainValue(e.target.value)}
+                  required
+                  placeholder={t('domains.domainPlaceholder')}
+                  className="font-mono"
+                />
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" type="button" onClick={() => setDomainModalOpen(false)}>{t('common.cancel')}</Button>
+                  <Button type="submit" loading={addDomain.isPending}>{t('common.add')}</Button>
+                </div>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
 
         {domains?.length === 0 ? (
-          <Text size="sm" c="dimmed">{t('domains.noDomains')}</Text>
+          <p className="text-sm text-muted-foreground">{t('domains.noDomains')}</p>
         ) : (
-          <Stack gap="sm">
+          <div className="space-y-2">
             {domains?.map((d) => (
-              <Paper key={d.id} withBorder p="sm" radius="sm">
-                <Group justify="space-between" mb={d.verified_at ? 0 : 'xs'}>
-                  <Group gap="xs">
+              <div key={d.id} className="border rounded-md p-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
                     {d.verified_at
-                      ? <CheckCircle2 size={16} color="var(--mantine-color-green-6)" />
-                      : <XCircle size={16} color="var(--mantine-color-orange-6)" />
+                      ? <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                      : <XCircle className="h-4 w-4 text-orange-500" />
                     }
-                    <Text size="sm" ff="mono">{d.domain}</Text>
-                  </Group>
-                  <Group gap="xs">
+                    <span className="text-sm font-mono">{d.domain}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
                     {!d.verified_at && canManageGate && (
                       <Button
-                        size="xs"
-                        variant="light"
-                        color="orange"
+                        size="sm"
+                        variant="outline"
+                        className="text-orange-600"
                         loading={verifyDomain.isPending}
                         onClick={() => verifyDomain.mutate(d.id)}
                       >
@@ -1507,45 +1473,36 @@ export default function GatePage() {
                       </Button>
                     )}
                     {canManageGate && (
-                      <ActionIcon
-                        variant="subtle"
-                        color="red"
-                        size="sm"
-                        onClick={() => deleteDomain.mutate(d.id)}
-                      >
-                        <Trash2 size={14} />
-                      </ActionIcon>
+                      <Button variant="ghost" size="icon-sm" className="text-destructive" onClick={() => deleteDomain.mutate(d.id)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     )}
-                  </Group>
-                </Group>
+                  </div>
+                </div>
 
                 {!d.verified_at && (
-                  <Alert variant="light" color="gray" mt="xs">
-                    <Text size="xs" c="dimmed" mb={4}>{t('domains.dnsInstructions')}</Text>
-                    <Group gap="xs" wrap="nowrap">
-                      <Code style={{ flex: 1, fontSize: 11 }}>
+                  <div className="mt-2 bg-muted rounded-md p-2">
+                    <p className="text-xs text-muted-foreground mb-1">{t('domains.dnsInstructions')}</p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-[11px] break-all">
                         _gatie.{d.domain} → {d.dns_challenge_token}
-                      </Code>
-                      <Tooltip label={clipboard.copied ? t('common.copied') : t('common.copy')}>
-                        <ActionIcon
-                          variant="subtle"
-                          size="sm"
-                          onClick={() => clipboard.copy(d.dns_challenge_token)}
-                        >
-                          {clipboard.copied ? <Check size={12} /> : <Copy size={12} />}
-                        </ActionIcon>
-                      </Tooltip>
-                    </Group>
+                      </code>
+                      <SimpleTooltip label={copied ? t('common.copied') : t('common.copy')}>
+                        <Button variant="ghost" size="icon-sm" onClick={() => copyText(d.dns_challenge_token, setCopied)}>
+                          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                        </Button>
+                      </SimpleTooltip>
+                    </div>
                     {verifyResult[d.id] && !verifyResult[d.id].verified && (
-                      <Text size="xs" c="red" mt={4}>{verifyResult[d.id].message}</Text>
+                      <p className="text-xs text-destructive mt-1">{verifyResult[d.id].message}</p>
                     )}
-                  </Alert>
+                  </div>
                 )}
-              </Paper>
+              </div>
             ))}
-          </Stack>
+          </div>
         )}
-      </Paper>
-    </Container>
+      </div>
+    </div>
   )
 }

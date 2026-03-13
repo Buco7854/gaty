@@ -1,21 +1,23 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { TextInput, PasswordInput, Button, Stack, Text, Alert, Title } from '@mantine/core'
 import { AlertCircle } from 'lucide-react'
 import { setupApi } from '@/api'
 import { useAuthStore } from '@/store/auth'
 import { extractApiError } from '@/lib/notify'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 export default function SetupPage() {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
+  const setMemberSession = useAuthStore((s) => s.setMemberSession)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const setMemberSession = useAuthStore((s) => s.setMemberSession)
-  const qc = useQueryClient()
-  const { t } = useTranslation()
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -23,60 +25,63 @@ export default function SetupPage() {
       setError(t('auth.passwordMismatch'))
       return
     }
-    setError(null)
     setLoading(true)
+    setError('')
     try {
-      const data = await setupApi.init(username, password)
-      setMemberSession(data.member)
+      const { member } = await setupApi.init(username, password)
+      setMemberSession(member)
       qc.setQueryData(['setup-status'], { setup_required: false })
-    } catch (err: unknown) {
+    } catch (err) {
       setError(extractApiError(err, t('setup.failed')))
+    } finally {
       setLoading(false)
     }
   }
 
   return (
-    <Stack gap="lg">
-      <Stack gap={4} align="center">
-        <Title order={2}>{t('setup.title')}</Title>
-        <Text size="sm" c="dimmed">{t('setup.subtitle')}</Text>
-      </Stack>
+    <div className="space-y-4">
+      <div className="text-center">
+        <h2 className="text-xl font-bold">{t('setup.title')}</h2>
+        <p className="text-sm text-muted-foreground mt-1">{t('setup.subtitle')}</p>
+      </div>
 
-      <form onSubmit={handleSubmit}>
-        <Stack gap="md">
-          <TextInput
-            label={t('auth.username')}
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            required
-            autoComplete="username"
-            placeholder={t('auth.usernamePlaceholder')}
-          />
-          <PasswordInput
-            label={t('auth.password')}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            autoComplete="new-password"
-            placeholder={t('auth.passwordPlaceholder')}
-          />
-          <PasswordInput
-            label={t('auth.confirmPassword')}
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            required
-            autoComplete="new-password"
-          />
-          {error && (
-            <Alert icon={<AlertCircle size={16} />} color="red" variant="light">
-              {error}
-            </Alert>
-          )}
-          <Button type="submit" loading={loading} fullWidth>
-            {t('setup.createAdmin')}
-          </Button>
-        </Stack>
+      <form onSubmit={handleSubmit} className="space-y-3">
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        <Input
+          label={t('auth.username')}
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          placeholder={t('auth.usernamePlaceholder')}
+          required
+          autoFocus
+        />
+        <Input
+          label={t('auth.password')}
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder={t('auth.passwordPlaceholder')}
+          required
+          minLength={8}
+        />
+        <Input
+          label={t('auth.confirmPassword')}
+          type="password"
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          placeholder={t('auth.passwordPlaceholder')}
+          required
+          minLength={8}
+        />
+        <Button type="submit" className="w-full" loading={loading}>
+          {t('setup.createAdmin')}
+        </Button>
       </form>
-    </Stack>
+    </div>
   )
 }

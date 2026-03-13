@@ -3,24 +3,26 @@ import { useQuery, useMutation, useQueryClient, useQueries } from '@tanstack/rea
 import { membersApi, gatesApi, policiesApi, schedulesApi } from '@/api'
 import type { Member, Gate, MemberPolicy, AccessSchedule } from '@/types'
 import { useTranslation } from 'react-i18next'
-import {
-  Container, Title, Text, Group, Button, Modal, Stack, Alert,
-  TextInput, PasswordInput, Select, Badge, Avatar, ActionIcon, Center, Skeleton,
-  Checkbox, Paper, SegmentedControl, Drawer,
-} from '@mantine/core'
 import { GatePermissionsGrid, useGatePermissions } from '@/components/GatePermissionsGrid'
-import { useDisclosure, useMediaQuery } from '@mantine/hooks'
-import { UserPlus, Trash2, Users, AlertCircle, Settings2, X, Pencil } from 'lucide-react'
+import { UserPlus, Trash2, Users, AlertCircle, Settings2, Pencil } from 'lucide-react'
 import { notifySuccess, notifyError, extractApiError } from '@/lib/notify'
 import { QueryError } from '@/components/QueryError'
-import { Tabs } from '@mantine/core'
 
-const ROLE_COLOR: Record<string, string> = {
-  ADMIN: 'blue',
-  MEMBER: 'gray',
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
+import { SimpleSelect } from '@/components/ui/select'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { SimpleTooltip } from '@/components/ui/tooltip'
+
+const ROLE_VARIANT: Record<string, 'default' | 'secondary'> = {
+  ADMIN: 'default',
+  MEMBER: 'secondary',
 }
-
-type PermCode = 'gate:read_status' | 'gate:trigger_open' | 'gate:trigger_close' | 'gate:manage'
 
 const AUTH_METHODS = [
   { key: 'password', labelKey: 'settings.passwordAuth' },
@@ -28,7 +30,7 @@ const AUTH_METHODS = [
   { key: 'api_token', labelKey: 'settings.apiTokenAuth' },
 ] as const
 
-// ---------- Schedule tab for member drawer ----------
+// ---------- Schedule tab for member dialog ----------
 
 function MemberSchedulesTab({
   member,
@@ -57,13 +59,13 @@ function MemberSchedulesTab({
   })
 
   const scheduleSelectData = [
-    { value: '', label: t('common.none') },
+    { value: '__none__', label: t('common.none') },
     ...schedules.map((s) => ({ value: s.id, label: s.name })),
   ]
 
   async function handleScheduleChange(gate: Gate, scheduleId: string) {
     try {
-      if (scheduleId === '') {
+      if (scheduleId === '__none__') {
         await policiesApi.removeMemberGateSchedule(gate.id, member.id)
       } else {
         await policiesApi.setMemberGateSchedule(gate.id, member.id, scheduleId)
@@ -76,39 +78,37 @@ function MemberSchedulesTab({
   }
 
   if (gates.length === 0) {
-    return <Text size="sm" c="dimmed">{t('gates.noGates')}</Text>
+    return <p className="text-sm text-muted-foreground">{t('gates.noGates')}</p>
   }
 
   return (
-    <Stack gap="sm">
-      <Text size="xs" c="dimmed">{t('members.schedulesHint')}</Text>
+    <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">{t('members.schedulesHint')}</p>
       {gates.map((gate, i) => {
         const query = scheduleQueries[i]
         const currentSchedule = query.data as AccessSchedule | null | undefined
-        const currentValue = currentSchedule?.id ?? ''
+        const currentValue = currentSchedule?.id ?? '__none__'
         return (
-          <Group key={gate.id} justify="space-between" align="center">
-            <Text size="sm" truncate maw={140}>{gate.name}</Text>
-            <Select
-              size="xs"
-              value={query.isLoading ? null : currentValue}
-              onChange={(v) => handleScheduleChange(gate, v ?? '')}
+          <div key={gate.id} className="flex items-center justify-between gap-2">
+            <p className="text-sm truncate max-w-[140px]">{gate.name}</p>
+            <SimpleSelect
+              value={query.isLoading ? '__none__' : currentValue}
+              onValueChange={(v) => handleScheduleChange(gate, v)}
               data={scheduleSelectData}
               disabled={query.isLoading}
               placeholder={query.isLoading ? t('common.loading') : undefined}
-              style={{ width: 180 }}
-              comboboxProps={{ withinPortal: true }}
+              className="w-[180px]"
             />
-          </Group>
+          </div>
         )
       })}
-    </Stack>
+    </div>
   )
 }
 
-// ---------- Member settings Drawer ----------
+// ---------- Member settings Dialog ----------
 
-function MemberSettingsDrawer({
+function MemberSettingsDialog({
   member,
   gates,
   opened,
@@ -175,68 +175,70 @@ function MemberSettingsDrawer({
   const memberName = member.display_name ?? member.username ?? member.id.slice(0, 8)
 
   return (
-    <Drawer
-      opened={opened}
-      onClose={onClose}
-      title={
-        <Group gap="sm">
-          <Avatar color="indigo" radius="xl" size={28}>{memberName[0].toUpperCase()}</Avatar>
-          <Text fw={600} size="sm">{memberName}</Text>
-        </Group>
-      }
-      position="right"
-      size="md"
-      styles={{ body: { padding: 0 } }}
-    >
-      <Tabs defaultValue="permissions">
-        <Tabs.List px="md" pt="xs">
-          <Tabs.Tab value="permissions">{t('members.gatePermissions')}</Tabs.Tab>
-          <Tabs.Tab value="schedules">{t('members.schedules')}</Tabs.Tab>
-          <Tabs.Tab value="auth">{t('members.authOverrides')}</Tabs.Tab>
-        </Tabs.List>
+    <Dialog open={opened} onOpenChange={(open) => { if (!open) onClose() }}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>
+            <div className="flex items-center gap-2">
+              <Avatar className="h-7 w-7">
+                <AvatarFallback>{memberName[0].toUpperCase()}</AvatarFallback>
+              </Avatar>
+              <span>{memberName}</span>
+            </div>
+          </DialogTitle>
+        </DialogHeader>
 
-        <Tabs.Panel value="permissions" p="md">
-          <Text size="xs" c="dimmed" mb="sm">{t('members.gatePermissionsHint')}</Text>
-          {gates.length === 0 ? (
-            <Text size="sm" c="dimmed">{t('gates.noGates')}</Text>
-          ) : (
-            <GatePermissionsGrid
-              gates={gates}
-              permissions={gatePermissions}
-              isChecked={hasPermission}
-              onToggle={(gateId, code) => toggle(gateId, code, hasPermission(gateId, code))}
-              withColumnSelect
-            />
-          )}
-        </Tabs.Panel>
+        <Tabs defaultValue="permissions">
+          <TabsList className="w-full">
+            <TabsTrigger value="permissions" className="flex-1">{t('members.gatePermissions')}</TabsTrigger>
+            <TabsTrigger value="schedules" className="flex-1">{t('members.schedules')}</TabsTrigger>
+            <TabsTrigger value="auth" className="flex-1">{t('members.authOverrides')}</TabsTrigger>
+          </TabsList>
 
-        <Tabs.Panel value="schedules" p="md">
-          <MemberSchedulesTab member={member} gates={gates} schedules={schedules} />
-        </Tabs.Panel>
+          <TabsContent value="permissions">
+            <p className="text-xs text-muted-foreground mb-3">{t('members.gatePermissionsHint')}</p>
+            {gates.length === 0 ? (
+              <p className="text-sm text-muted-foreground">{t('gates.noGates')}</p>
+            ) : (
+              <GatePermissionsGrid
+                gates={gates}
+                permissions={gatePermissions}
+                isChecked={hasPermission}
+                onToggle={(gateId, code) => toggle(gateId, code, hasPermission(gateId, code))}
+              />
+            )}
+          </TabsContent>
 
-        <Tabs.Panel value="auth" p="md">
-          <Stack gap="md">
-            <Text size="xs" c="dimmed">{t('members.authOverridesHint')}</Text>
-            {AUTH_METHODS.map(({ key, labelKey }) => (
-              <Stack key={key} gap={4}>
-                <Text size="sm" fw={500}>{t(labelKey as Parameters<typeof t>[0])}</Text>
-                <SegmentedControl
-                  size="xs"
-                  value={getAuthValue(key)}
-                  onChange={(v) => setAuthValue(key, v)}
-                  data={[
-                    { value: 'inherit', label: t('members.authInherit') },
-                    { value: 'on', label: 'On' },
-                    { value: 'off', label: 'Off' },
-                  ]}
-                />
-              </Stack>
-            ))}
-          </Stack>
-        </Tabs.Panel>
+          <TabsContent value="schedules">
+            <MemberSchedulesTab member={member} gates={gates} schedules={schedules} />
+          </TabsContent>
 
-      </Tabs>
-    </Drawer>
+          <TabsContent value="auth">
+            <div className="space-y-4">
+              <p className="text-xs text-muted-foreground">{t('members.authOverridesHint')}</p>
+              {AUTH_METHODS.map(({ key, labelKey }) => (
+                <div key={key} className="space-y-1">
+                  <p className="text-sm font-medium">{t(labelKey as Parameters<typeof t>[0])}</p>
+                  <div className="flex gap-1">
+                    {(['inherit', 'on', 'off'] as const).map((val) => (
+                      <Button
+                        key={val}
+                        size="sm"
+                        variant={getAuthValue(key) === val ? 'default' : 'outline'}
+                        onClick={() => setAuthValue(key, val)}
+                        className="flex-1"
+                      >
+                        {val === 'inherit' ? t('members.authInherit') : val === 'on' ? 'On' : 'Off'}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </TabsContent>
+        </Tabs>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -275,38 +277,48 @@ function EditMemberModal({
   })
 
   return (
-    <Modal opened={opened} onClose={onClose} title={t('members.editMemberInfo')}>
-      <form onSubmit={(e) => { e.preventDefault(); setError(null); update.mutate() }}>
-        <Stack>
-          <TextInput
-            label={t('members.displayName')}
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            placeholder={t('members.displayNamePlaceholder')}
-          />
-          <TextInput
-            label={t('members.username')}
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder={t('members.usernamePlaceholder')}
-          />
-          <Select
-            label={t('common.role')}
-            value={role}
-            onChange={(v) => v && setRole(v as Member['role'])}
-            data={[
-              { value: 'MEMBER', label: 'Member' },
-              { value: 'ADMIN', label: 'Admin' },
-            ]}
-          />
-          {error && <Alert icon={<AlertCircle size={16} />} color="red" variant="light">{error}</Alert>}
-          <Group justify="flex-end">
-            <Button variant="default" onClick={onClose}>{t('common.cancel')}</Button>
-            <Button type="submit" loading={update.isPending}>{t('common.save')}</Button>
-          </Group>
-        </Stack>
-      </form>
-    </Modal>
+    <Dialog open={opened} onOpenChange={(open) => { if (!open) onClose() }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t('members.editMemberInfo')}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={(e) => { e.preventDefault(); setError(null); update.mutate() }}>
+          <div className="space-y-4">
+            <Input
+              label={t('members.displayName')}
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder={t('members.displayNamePlaceholder')}
+            />
+            <Input
+              label={t('members.username')}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder={t('members.usernamePlaceholder')}
+            />
+            <SimpleSelect
+              label={t('common.role')}
+              value={role}
+              onValueChange={(v) => setRole(v as Member['role'])}
+              data={[
+                { value: 'MEMBER', label: 'Member' },
+                { value: 'ADMIN', label: 'Admin' },
+              ]}
+            />
+            {error && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" type="button" onClick={onClose}>{t('common.cancel')}</Button>
+              <Button type="submit" loading={update.isPending}>{t('common.save')}</Button>
+            </div>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -316,7 +328,7 @@ export default function MembersPage() {
   const qc = useQueryClient()
   const { t } = useTranslation()
 
-  const [addOpened, { open: openAdd, close: closeAdd }] = useDisclosure(false)
+  const [addOpened, setAddOpened] = useState(false)
   const [username, setUsername] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
@@ -325,9 +337,6 @@ export default function MembersPage() {
 
   const [drawerMember, setDrawerMember] = useState<Member | null>(null)
   const [editMember, setEditMember] = useState<Member | null>(null)
-  const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set())
-  const [bulkLoading, setBulkLoading] = useState(false)
-  const [bulkMode, setBulkMode] = useState<'permissions' | 'auth'>('permissions')
 
   const { data: members, isLoading, isError, error } = useQuery<Member[]>({
     queryKey: ['members'],
@@ -360,9 +369,8 @@ export default function MembersPage() {
     onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
-
   function resetAndClose() {
-    closeAdd()
+    setAddOpened(false)
     setUsername(''); setDisplayName(''); setPassword('')
     setRole('MEMBER'); setAddError(null)
   }
@@ -373,169 +381,139 @@ export default function MembersPage() {
     createMember.mutate()
   }
 
-  function toggleSelected(memberId: string) {
-    setSelectedMembers((prev) => {
-      const next = new Set(prev)
-      if (next.has(memberId)) next.delete(memberId)
-      else next.add(memberId)
-      return next
-    })
-  }
-
-  async function bulkTogglePermission(permCode: PermCode, grant: boolean) {
-    if (selectedMembers.size === 0) return
-    setBulkLoading(true)
-    try {
-      await Promise.all(
-        Array.from(selectedMembers).flatMap((memberId) =>
-          gates.map((gate) =>
-            grant
-              ? policiesApi.grant(gate.id, memberId, permCode).catch(() => {})
-              : policiesApi.revoke(gate.id, memberId, permCode).catch(() => {})
-          )
-        )
-      )
-      Array.from(selectedMembers).forEach((memberId) =>
-        qc.invalidateQueries({ queryKey: ['member-policies', memberId] })
-      )
-      notifySuccess(t('common.saved'))
-    } catch (err) {
-      notifyError(err, t('common.error'))
-    } finally {
-      setBulkLoading(false)
-    }
-  }
-
-  async function bulkSetAuth(key: string, value: boolean | null) {
-    if (selectedMembers.size === 0) return
-    setBulkLoading(true)
-    try {
-      await Promise.all(Array.from(selectedMembers).map((memberId) =>
-        membersApi.update(memberId, { auth_config: { [key]: value } })
-      ))
-      qc.invalidateQueries({ queryKey: ['members'] })
-      notifySuccess(t('common.saved'))
-    } catch (err) {
-      notifyError(err, t('common.error'))
-    } finally {
-      setBulkLoading(false)
-    }
-  }
-
-  const isMobile = useMediaQuery('(max-width: 768px)') ?? false
-  const selectableMembers = members?.filter((m) => m.role === 'MEMBER') ?? []
-
   return (
-    <Container size="sm" py="xl" style={{ paddingBottom: selectedMembers.size > 0 ? 96 : undefined }}>
-      <Group justify="space-between" mb="xl">
+    <div className="max-w-2xl mx-auto py-8 px-4">
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <Title order={2}>{t('members.title')}</Title>
-          <Text c="dimmed" size="sm">{t('members.subtitle')}</Text>
+          <h2 className="text-2xl font-semibold tracking-tight">{t('members.title')}</h2>
+          <p className="text-sm text-muted-foreground">{t('members.subtitle')}</p>
         </div>
-        <Button leftSection={<UserPlus size={16} />} onClick={openAdd}>{t('members.add')}</Button>
-      </Group>
+        <Button onClick={() => setAddOpened(true)}>
+          <UserPlus size={16} />
+          {t('members.add')}
+        </Button>
+      </div>
 
       {/* Add member modal */}
-      <Modal opened={addOpened} onClose={resetAndClose} title={t('members.add')}>
-        <form onSubmit={handleSubmit}>
-          <Stack>
-            <TextInput label={t('members.username')} value={username} onChange={(e) => setUsername(e.target.value)} required placeholder={t('members.usernamePlaceholder')} />
-            <TextInput label={t('members.displayName')} value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={t('members.displayNamePlaceholder')} />
-            <PasswordInput label={t('auth.password')} value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
-            <Select label={t('common.role')} value={role} onChange={(v) => setRole(v ?? 'MEMBER')}
-              data={[{ value: 'MEMBER', label: 'Member' }, { value: 'ADMIN', label: 'Admin' }]}
-            />
-            {addError && <Alert icon={<AlertCircle size={16} />} color="red" variant="light">{addError}</Alert>}
-            <Group justify="flex-end">
-              <Button variant="default" onClick={resetAndClose}>{t('common.cancel')}</Button>
-              <Button type="submit" loading={createMember.isPending}>{t('common.add')}</Button>
-            </Group>
-          </Stack>
-        </form>
-      </Modal>
+      <Dialog open={addOpened} onOpenChange={(open) => { if (!open) resetAndClose() }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('members.add')}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmit}>
+            <div className="space-y-4">
+              <Input
+                label={t('members.username')}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
+                placeholder={t('members.usernamePlaceholder')}
+              />
+              <Input
+                label={t('members.displayName')}
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder={t('members.displayNamePlaceholder')}
+              />
+              <Input
+                type="password"
+                label={t('auth.password')}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                minLength={8}
+              />
+              <SimpleSelect
+                label={t('common.role')}
+                value={role}
+                onValueChange={(v) => setRole(v)}
+                data={[
+                  { value: 'MEMBER', label: 'Member' },
+                  { value: 'ADMIN', label: 'Admin' },
+                ]}
+              />
+              {addError && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{addError}</AlertDescription>
+                </Alert>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" type="button" onClick={resetAndClose}>{t('common.cancel')}</Button>
+                <Button type="submit" loading={createMember.isPending}>{t('common.add')}</Button>
+              </div>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Member list */}
       {isLoading ? (
-        <Stack>{[0, 1, 2].map((i) => <Skeleton key={i} height={60} radius="md" />)}</Stack>
+        <div className="space-y-2">
+          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-[60px] rounded-md" />)}
+        </div>
       ) : isError ? (
         <QueryError error={error} />
       ) : members?.length === 0 ? (
-        <Center py={80}>
-          <Stack align="center" gap="xs">
-            <Users size={36} opacity={0.3} />
-            <Text size="sm" c="dimmed">{t('members.noMembers')}</Text>
-          </Stack>
-        </Center>
+        <div className="flex flex-col items-center justify-center py-20 gap-2">
+          <Users size={36} className="opacity-30" />
+          <p className="text-sm text-muted-foreground">{t('members.noMembers')}</p>
+        </div>
       ) : (
-        <Stack gap="xs">
-          {/* Select all header */}
-          {selectableMembers.length > 0 && (
-            <Group gap="xs" px={4} mb={2}>
-              <Checkbox
-                size="xs"
-                checked={selectedMembers.size === selectableMembers.length && selectableMembers.length > 0}
-                indeterminate={selectedMembers.size > 0 && selectedMembers.size < selectableMembers.length}
-                onChange={() => {
-                  if (selectedMembers.size === selectableMembers.length) setSelectedMembers(new Set())
-                  else setSelectedMembers(new Set(selectableMembers.map((m) => m.id)))
-                }}
-              />
-              <Text size="xs" c="dimmed">
-                {selectedMembers.size > 0
-                  ? `${selectedMembers.size} / ${selectableMembers.length} selected`
-                  : `${selectableMembers.length} member${selectableMembers.length !== 1 ? 's' : ''}`}
-              </Text>
-            </Group>
-          )}
-
+        <div className="space-y-1.5">
           {members?.map((m) => {
-            const isSelectable = m.role === 'MEMBER'
-            const isSelected = selectedMembers.has(m.id)
             const memberName = m.display_name ?? m.username ?? m.id.slice(0, 8)
 
             return (
-              <Paper key={m.id} withBorder radius="md" p="sm">
-                <Group wrap="nowrap" gap="xs" align="center">
-                  {isSelectable && (
-                    <Checkbox size="xs" checked={isSelected} onChange={() => toggleSelected(m.id)} style={{ flexShrink: 0 }} />
-                  )}
-                  <Avatar color="indigo" radius="xl" size={32} style={{ flexShrink: 0 }}>{memberName[0].toUpperCase()}</Avatar>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <Text size="sm" fw={500} truncate>{memberName}</Text>
+              <div key={m.id} className="border rounded-lg p-3">
+                <div className="flex items-center gap-2">
+                  <Avatar className="h-8 w-8 shrink-0">
+                    <AvatarFallback>{memberName[0].toUpperCase()}</AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{memberName}</p>
                     {m.username && m.display_name && (
-                      <Text size="xs" c="dimmed" ff="mono" truncate>{m.username}</Text>
+                      <p className="text-xs text-muted-foreground font-mono truncate">{m.username}</p>
                     )}
                   </div>
-                  <Badge visibleFrom="xs" color={ROLE_COLOR[m.role]} variant="light" size="sm" style={{ flexShrink: 0 }}>{m.role}</Badge>
-                  <Badge hiddenFrom="xs" color={ROLE_COLOR[m.role]} variant="light" size="sm" style={{ flexShrink: 0 }}>{m.role[0]}</Badge>
-                  <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
-                    <ActionIcon
-                      variant="subtle"
-                      size="sm"
-                      title={t('members.editMemberInfo')}
-                      onClick={() => setEditMember(m)}
-                    >
-                      <Pencil size={14} />
-                    </ActionIcon>
-                    {m.role === 'MEMBER' && (
-                      <ActionIcon
-                        variant="subtle"
-                        size="sm"
-                        title={t('members.editMember')}
-                        onClick={() => setDrawerMember(m)}
+                  <Badge variant={ROLE_VARIANT[m.role] ?? 'secondary'} className="shrink-0">{m.role}</Badge>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <SimpleTooltip label={t('members.editMemberInfo')}>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => setEditMember(m)}
                       >
-                        <Settings2 size={14} />
-                      </ActionIcon>
+                        <Pencil size={14} />
+                      </Button>
+                    </SimpleTooltip>
+                    {m.role === 'MEMBER' && (
+                      <SimpleTooltip label={t('members.editMember')}>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => setDrawerMember(m)}
+                        >
+                          <Settings2 size={14} />
+                        </Button>
+                      </SimpleTooltip>
                     )}
-                    <ActionIcon variant="subtle" color="red" size="sm" onClick={() => deleteMember.mutate(m.id)}>
-                      <Trash2 size={14} />
-                    </ActionIcon>
-                  </Group>
-                </Group>
-              </Paper>
+                    <SimpleTooltip label={t('common.delete')}>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => deleteMember.mutate(m.id)}
+                      >
+                        <Trash2 size={14} />
+                      </Button>
+                    </SimpleTooltip>
+                  </div>
+                </div>
+              </div>
             )
           })}
-        </Stack>
+        </div>
       )}
 
       {/* Edit member modal */}
@@ -547,92 +525,15 @@ export default function MembersPage() {
         />
       )}
 
-      {/* Per-member settings drawer */}
+      {/* Per-member settings dialog */}
       {drawerMember && (
-        <MemberSettingsDrawer
+        <MemberSettingsDialog
           member={members?.find((m) => m.id === drawerMember.id) ?? drawerMember}
           gates={gates}
           opened={!!drawerMember}
           onClose={() => setDrawerMember(null)}
         />
       )}
-
-      {/* Bulk action bar */}
-      {selectedMembers.size > 0 && (
-        <Paper
-          withBorder
-          shadow="md"
-          p="sm"
-          style={isMobile ? {
-            position: 'fixed',
-            bottom: 16,
-            left: 16,
-            right: 16,
-            zIndex: 100,
-          } : {
-            position: 'fixed',
-            bottom: 16,
-            left: 'calc(50% + 140px)',
-            transform: 'translateX(-50%)',
-            zIndex: 100,
-            width: 'calc(100vw - 280px - 32px)',
-            maxWidth: 680,
-          }}
-        >
-          <Stack gap="xs">
-            <Group justify="space-between" align="center" wrap="nowrap">
-              <Text size="sm" fw={600}>{selectedMembers.size} / {selectableMembers.length}</Text>
-              <ActionIcon variant="subtle" color="gray" size="sm" onClick={() => setSelectedMembers(new Set())}>
-                <X size={14} />
-              </ActionIcon>
-            </Group>
-            <SegmentedControl
-              size="xs"
-              fullWidth
-              value={bulkMode}
-              onChange={(v) => setBulkMode(v as 'permissions' | 'auth')}
-              data={[
-                { value: 'permissions', label: t('members.expandPermissions') },
-                { value: 'auth', label: t('members.bulkAuth') },
-              ]}
-            />
-
-            {bulkMode === 'permissions' ? (
-              <Stack gap={4}>
-                {(
-                  [
-                    { code: 'gate:read_status' as PermCode, labelKey: 'permissions.viewStatus' },
-                    { code: 'gate:trigger_open' as PermCode, labelKey: 'permissions.triggerOpen' },
-                    { code: 'gate:trigger_close' as PermCode, labelKey: 'permissions.triggerClose' },
-                    { code: 'gate:manage' as PermCode, labelKey: 'permissions.manage' },
-                  ] as const
-                ).map(({ code, labelKey }) => (
-                  <Group key={code} justify="space-between" align="center" wrap="nowrap">
-                    <Text size="xs" fw={500}>{t(labelKey as Parameters<typeof t>[0])}</Text>
-                    <Group gap={4} wrap="nowrap">
-                      <Button size="compact-xs" variant="light" color="green" loading={bulkLoading} onClick={() => bulkTogglePermission(code, true)}>{t('common.grant')}</Button>
-                      <Button size="compact-xs" variant="light" color="red" loading={bulkLoading} onClick={() => bulkTogglePermission(code, false)}>{t('common.revoke')}</Button>
-                    </Group>
-                  </Group>
-                ))}
-              </Stack>
-            ) : (
-              <Stack gap={6}>
-                {AUTH_METHODS.map(({ key, labelKey }) => (
-                  <Group key={key} justify="space-between" align="center">
-                    <Text size="xs" fw={500}>{t(labelKey as Parameters<typeof t>[0])}</Text>
-                    <Group gap={4}>
-                      <Button size="compact-xs" variant="light" color="green" loading={bulkLoading} onClick={() => bulkSetAuth(key, true)}>On</Button>
-                      <Button size="compact-xs" variant="light" color="red" loading={bulkLoading} onClick={() => bulkSetAuth(key, false)}>Off</Button>
-                      <Button size="compact-xs" variant="subtle" color="gray" loading={bulkLoading} onClick={() => bulkSetAuth(key, null)}>{t('members.authInherit')}</Button>
-                    </Group>
-                  </Group>
-                ))}
-              </Stack>
-            )}
-          </Stack>
-        </Paper>
-      )}
-    </Container>
+    </div>
   )
 }

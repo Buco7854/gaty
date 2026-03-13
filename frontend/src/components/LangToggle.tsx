@@ -1,6 +1,12 @@
-import { Menu, ActionIcon, Text } from '@mantine/core'
 import { useTranslation } from 'react-i18next'
 import { Languages } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 const LANGUAGES = [
   { code: 'fr', label: 'Français' },
@@ -12,25 +18,23 @@ export function LangToggle() {
   const current = i18n.language.startsWith('fr') ? 'fr' : 'en'
 
   return (
-    <Menu position="top-start" width={140} shadow="md" styles={{ dropdown: { padding: 4 }, item: { borderRadius: 'var(--mantine-radius-sm)', marginBottom: 2 } }}>
-      <Menu.Target>
-        <ActionIcon variant="subtle" color="gray" size="sm" title={current.toUpperCase()}>
-          <Languages size={14} />
-        </ActionIcon>
-      </Menu.Target>
-      <Menu.Dropdown>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon-sm">
+          <Languages className="h-3.5 w-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-36">
         {LANGUAGES.map((lang) => (
-          <Menu.Item
+          <DropdownMenuItem
             key={lang.code}
             onClick={() => i18n.changeLanguage(lang.code)}
-            fw={current === lang.code ? 600 : undefined}
-            c={current === lang.code ? 'indigo' : undefined}
-            rightSection={current === lang.code ? <Text size="xs" c="indigo">✓</Text> : null}
+            className={current === lang.code ? 'text-primary font-medium' : ''}
           >
             {lang.label}
-          </Menu.Item>
+          </DropdownMenuItem>
         ))}
-      </Menu.Dropdown>
-    </Menu>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

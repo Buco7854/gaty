@@ -3,11 +3,12 @@ import { useParams, useNavigate } from 'react-router'
 import { publicApi } from '@/api'
 import { useAuthStore } from '@/store/auth'
 import { useTranslation } from 'react-i18next'
-import { Center, Stack, Group, Text, Title, Button, Anchor, PasswordInput } from '@mantine/core'
 import { Delete } from 'lucide-react'
 import { notifyError } from '@/lib/notify'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const DIGITS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫']
 
@@ -23,7 +24,6 @@ export default function PinPadPage() {
 
   const portalPath = gateId ? `/gates/${gateId}/public` : '/'
 
-  // If we already have a pin session, redirect to portal
   useEffect(() => {
     if (!gateId) return
     const session = useAuthStore.getState().session
@@ -76,63 +76,60 @@ export default function PinPadPage() {
   }
 
   return (
-    <div style={{ position: 'relative', minHeight: '100vh' }}>
-      <Group gap="xs" style={{ position: 'absolute', top: 12, right: 16, zIndex: 10 }}>
+    <div className="relative min-h-screen">
+      <div className="absolute top-3 right-4 z-10 flex items-center gap-1">
         <LangToggle />
         <ThemeToggle />
-      </Group>
+      </div>
 
-      <Center mih="100vh" p="md" style={{ userSelect: 'none' }}>
-        <Stack align="center" gap="xl" w="100%" maw={320}>
-          <Stack align="center" gap={4}>
-            <Title order={2}>{gateName ?? 'Gate'}</Title>
-            <Text size="sm" c="dimmed">{t('pinpad.enterPin')}</Text>
-          </Stack>
+      <div className="flex items-center justify-center min-h-screen p-4 select-none">
+        <div className="flex flex-col items-center gap-6 w-full max-w-xs">
+          <div className="text-center space-y-1">
+            <h2 className="text-xl font-bold">{gateName ?? 'Gate'}</h2>
+            <p className="text-sm text-muted-foreground">{t('pinpad.enterPin')}</p>
+          </div>
 
           {usePassword ? (
             <>
-              <form onSubmit={(e) => { e.preventDefault(); submitCode(code) }} style={{ width: '100%' }}>
-                <Stack>
-                  <PasswordInput
-                    placeholder={t('pinpad.enterPin')}
-                    value={code}
-                    onChange={(e) => setCode(e.target.value)}
-                    autoFocus
-                    disabled={submitting}
-                  />
-                  {code.length > 0 && (
-                    <Button type="submit" size="md" radius="xl" loading={submitting}>
-                      {t('common.confirm')}
-                    </Button>
-                  )}
-                </Stack>
+              <form onSubmit={(e) => { e.preventDefault(); submitCode(code) }} className="w-full space-y-3">
+                <Input
+                  type="password"
+                  placeholder={t('pinpad.enterPin')}
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  autoFocus
+                  disabled={submitting}
+                />
+                {code.length > 0 && (
+                  <Button type="submit" size="lg" className="w-full rounded-full" loading={submitting}>
+                    {t('common.confirm')}
+                  </Button>
+                )}
               </form>
-              <Anchor component="button" type="button" size="xs" c="dimmed" onClick={() => switchMode(false)}>
+              <button
+                type="button"
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                onClick={() => switchMode(false)}
+              >
                 {t('pinpad.usePinInstead')}
-              </Anchor>
+              </button>
             </>
           ) : (
             <>
               {/* Dot indicator */}
-              <Group gap="sm">
+              <div className="flex items-center gap-2">
                 {Array.from({ length: Math.max(code.length, 4) }).map((_, i) => (
                   <div
                     key={i}
-                    style={{
-                      width: 12,
-                      height: 12,
-                      borderRadius: '50%',
-                      backgroundColor: i < code.length
-                        ? 'var(--mantine-color-indigo-6)'
-                        : 'var(--mantine-color-default-border)',
-                      transition: 'background-color 150ms',
-                    }}
+                    className={`w-3 h-3 rounded-full transition-colors ${
+                      i < code.length ? 'bg-primary' : 'bg-border'
+                    }`}
                   />
                 ))}
-              </Group>
+              </div>
 
               {/* Numpad */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, width: '100%' }}>
+              <div className="grid grid-cols-3 gap-3 w-full">
                 {DIGITS.map((d, i) => {
                   if (d === '') return <div key={i} />
                   if (d === '⌫') {
@@ -141,21 +138,9 @@ export default function PinPadPage() {
                         key={i}
                         onPointerDown={() => press(d)}
                         disabled={submitting || code.length === 0}
-                        style={{
-                          aspectRatio: '1',
-                          borderRadius: 16,
-                          border: 'none',
-                          backgroundColor: 'var(--mantine-color-default)',
-                          color: 'var(--mantine-color-dimmed)',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          transition: 'opacity 150ms',
-                          opacity: submitting || code.length === 0 ? 0.3 : 1,
-                        }}
+                        className="aspect-square rounded-2xl bg-secondary text-muted-foreground flex items-center justify-center cursor-pointer transition-opacity disabled:opacity-30"
                       >
-                        <Delete size={20} />
+                        <Delete className="h-5 w-5" />
                       </button>
                     )
                   }
@@ -164,21 +149,7 @@ export default function PinPadPage() {
                       key={i}
                       onPointerDown={() => press(d)}
                       disabled={submitting}
-                      style={{
-                        aspectRatio: '1',
-                        borderRadius: 16,
-                        border: '1px solid var(--mantine-color-default-border)',
-                        backgroundColor: 'var(--mantine-color-body)',
-                        fontSize: 22,
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-                        transition: 'opacity 150ms',
-                        opacity: submitting ? 0.3 : 1,
-                      }}
+                      className="aspect-square rounded-2xl border bg-background text-[22px] font-semibold flex items-center justify-center cursor-pointer shadow-sm transition-opacity disabled:opacity-30"
                     >
                       {d}
                     </button>
@@ -187,18 +158,22 @@ export default function PinPadPage() {
               </div>
 
               {code.length > 0 && (
-                <Button onClick={() => submitCode(code)} size="md" radius="xl" px="xl" loading={submitting}>
+                <Button size="lg" className="rounded-full px-8" loading={submitting} onClick={() => submitCode(code)}>
                   {t('common.confirm')}
                 </Button>
               )}
             </>
           )}
 
-          <Anchor component="button" type="button" size="xs" c="dimmed" onClick={() => navigate(portalPath)}>
+          <button
+            type="button"
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+            onClick={() => navigate(portalPath)}
+          >
             {t('pinpad.useAnotherMethod')}
-          </Anchor>
-        </Stack>
-      </Center>
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

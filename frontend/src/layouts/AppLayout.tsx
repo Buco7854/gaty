@@ -1,4 +1,4 @@
-import { NavLink as RouterNavLink, Outlet, useNavigate } from 'react-router'
+import { NavLink as RouterNavLink, Outlet, useNavigate, useLocation } from 'react-router'
 import { useAuthStore } from '@/store/auth'
 import { credentialsApi, gatesApi, schedulesApi } from '@/api'
 import type { MemberCredential, CreatedToken } from '@/api'
@@ -7,32 +7,30 @@ import { GatePermissionsGrid, useGatePermissions } from '@/components/GatePermis
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
 import { useTranslation } from 'react-i18next'
+import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
+import { SimpleSelect } from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Separator } from '@/components/ui/separator'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
-  AppShell,
-  Burger,
-  NavLink,
-  Stack,
-  Group,
-  Text,
-  Avatar,
-  Menu,
-  UnstyledButton,
-  Divider,
-  Tooltip,
-  ActionIcon,
-  ScrollArea,
-  Modal,
-  TextInput,
-  Button,
-  Code,
-  CopyButton,
-  Alert,
-  Skeleton,
-  Drawer,
-  Switch,
-  Select,
-} from '@mantine/core'
-import { useDisclosure } from '@mantine/hooks'
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { SimpleTooltip } from '@/components/ui/tooltip'
 import {
   LayoutGrid,
   Users,
@@ -45,8 +43,31 @@ import {
   Check,
   Trash2,
   CalendarClock,
+  Menu,
+  X,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
+
+function NavItem({ to, label, icon: Icon, onClick }: { to: string; label: string; icon: React.FC<{ className?: string }>; onClick?: () => void }) {
+  const location = useLocation()
+  const isActive = location.pathname === to || location.pathname.startsWith(to + '/')
+
+  return (
+    <RouterNavLink
+      to={to}
+      onClick={onClick}
+      className={cn(
+        'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+        isActive
+          ? 'bg-primary/10 text-primary'
+          : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+      )}
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+    </RouterNavLink>
+  )
+}
 
 export default function AppLayout() {
   const { t } = useTranslation()
@@ -56,8 +77,8 @@ export default function AppLayout() {
   const member = session?.type === 'member' ? session.member : null
   const isAdmin = member?.role === 'ADMIN'
   const navigate = useNavigate()
-  const [navOpened, setNavOpened] = useState(false)
-  const [tokenModalOpened, { open: openTokenModal, close: closeTokenModal }] = useDisclosure(false)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [tokenModalOpen, setTokenModalOpen] = useState(false)
   const [tokens, setTokens] = useState<MemberCredential[]>([])
   const [tokensLoading, setTokensLoading] = useState(false)
   const [tokenLabel, setTokenLabel] = useState('')
@@ -68,19 +89,17 @@ export default function AppLayout() {
   const [tokenScheduleId, setTokenScheduleId] = useState('')
   const [tokenRestrictPerms, setTokenRestrictPerms] = useState(false)
   const [tokenPolicies, setTokenPolicies] = useState<{ gate_id: string; permission_code: string }[]>([])
+  const [copied, setCopied] = useState(false)
 
   async function handleLogout() {
     await logout()
     navigate('/login')
   }
 
-  function handleLogoClick() {
-    navigate('/gates')
-  }
+  const closeMobileNav = useCallback(() => setMobileNavOpen(false), [])
 
-  // Load tokens, gates and schedules when modal opens
   useEffect(() => {
-    if (!tokenModalOpened || !member) return
+    if (!tokenModalOpen || !member) return
     setTokensLoading(true)
     Promise.all([
       credentialsApi.listTokens(),
@@ -91,7 +110,7 @@ export default function AppLayout() {
       setTokenGates(gates as Gate[])
       setTokenSchedules(schedules as AccessSchedule[])
     }).finally(() => setTokensLoading(false))
-  }, [tokenModalOpened, member])
+  }, [tokenModalOpen, member])
 
   function resetTokenForm() {
     setTokenLabel('')
@@ -126,214 +145,168 @@ export default function AppLayout() {
     if (newToken?.id === credId) setNewToken(null)
   }
 
+  function copyToken(text: string) {
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   const initials = member?.username?.slice(0, 2).toUpperCase() ?? 'U'
 
-  // Shared nav body: nav links + footer
-  const renderNavBody = () => (
+  const navContent = (
     <>
-      {/* Navigation */}
-      <ScrollArea style={{ flex: 1 }}>
-        <Stack gap={2} p="xs">
-          <NavLink
-            component={RouterNavLink as React.FC}
-            to="/gates"
-            end
-            label={t('gates.title')}
-            leftSection={<LayoutGrid size={18} />}
-            onClick={() => setNavOpened(false)}
-            styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
-          />
-          <NavLink
-            component={RouterNavLink as React.FC}
-            to="/schedules"
-            label={t('schedules.title')}
-            leftSection={<CalendarClock size={18} />}
-            onClick={() => setNavOpened(false)}
-            styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
-          />
-          {isAdmin && (
-            <>
-              <Divider my={4} label={<Text size="xs" c="dimmed" fw={500}>{t('common.administration')}</Text>} />
-              <NavLink
-                component={RouterNavLink as React.FC}
-                to="/members"
-                label={t('members.title')}
-                leftSection={<Users size={18} />}
-                onClick={() => setNavOpened(false)}
-                styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
-              />
-              <NavLink
-                component={RouterNavLink as React.FC}
-                to="/settings"
-                label={t('settings.title')}
-                leftSection={<Settings size={18} />}
-                onClick={() => setNavOpened(false)}
-                styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
-              />
-            </>
-          )}
-        </Stack>
-      </ScrollArea>
+      <nav className="flex-1 overflow-y-auto p-2 space-y-1">
+        <NavItem to="/gates" label={t('gates.title')} icon={LayoutGrid} onClick={closeMobileNav} />
+        <NavItem to="/schedules" label={t('schedules.title')} icon={CalendarClock} onClick={closeMobileNav} />
+        {isAdmin && (
+          <>
+            <div className="px-3 pt-4 pb-1">
+              <p className="text-xs font-medium text-muted-foreground">{t('common.administration')}</p>
+            </div>
+            <NavItem to="/members" label={t('members.title')} icon={Users} onClick={closeMobileNav} />
+            <NavItem to="/settings" label={t('settings.title')} icon={Settings} onClick={closeMobileNav} />
+          </>
+        )}
+      </nav>
 
       {/* Footer */}
-      <div style={{ borderTop: '1px solid var(--mantine-color-default-border)', padding: '8px 12px', flexShrink: 0 }}>
-        <Group justify="space-between" wrap="nowrap">
-          <Group gap={4} wrap="nowrap">
-            <LangToggle />
-            <ThemeToggle />
-          </Group>
-          <Menu position="top-end" width={190} styles={{ dropdown: { padding: 4 }, item: { borderRadius: 'var(--mantine-radius-sm)', marginBottom: 2 } }}>
-            <Menu.Target>
-              <UnstyledButton style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Avatar size={24} color="indigo" radius="xl">{initials}</Avatar>
-                <ChevronDown size={11} style={{ color: 'var(--mantine-color-dimmed)' }} />
-              </UnstyledButton>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <Menu.Label style={{ fontSize: 10 }}>{member?.username}</Menu.Label>
-              <Menu.Item leftSection={<KeyRound size={14} />} onClick={openTokenModal}>
-                {t('members.apiTokens')}
-              </Menu.Item>
-              <Divider my={4} />
-              <Menu.Item leftSection={<LogOut size={14} />} color="red" onClick={handleLogout}>
-                {t('auth.signOut')}
-              </Menu.Item>
-            </Menu.Dropdown>
-          </Menu>
-        </Group>
+      <div className="border-t p-2 flex items-center justify-between">
+        <div className="flex items-center gap-1">
+          <LangToggle />
+          <ThemeToggle />
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button className="flex items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-accent transition-colors cursor-pointer">
+              <Avatar className="h-6 w-6">
+                <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
+              </Avatar>
+              <ChevronDown className="h-3 w-3 text-muted-foreground" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuLabel className="text-xs">{member?.username}</DropdownMenuLabel>
+            <DropdownMenuItem onClick={() => setTokenModalOpen(true)}>
+              <KeyRound className="h-4 w-4" />
+              {t('members.apiTokens')}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
+              <LogOut className="h-4 w-4" />
+              {t('auth.signOut')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </>
   )
 
   return (
-    <AppShell
-      navbar={{ width: 280, breakpoint: 'sm', collapsed: { mobile: true } }}
-      header={{ height: { base: 56, sm: 0 } }}
-      padding={0}
-    >
-      {/* Mobile header — burger + logo (hidden on desktop via height:0 + hiddenFrom) */}
-      <AppShell.Header hiddenFrom="sm" style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
-        <Group h="100%" px="md" justify="space-between">
-          <Group gap="xs">
-            <Burger opened={navOpened} onClick={() => setNavOpened((o) => !o)} size="sm" />
-            <UnstyledButton
-              onClick={handleLogoClick}
-              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+    <div className="flex h-screen">
+      {/* Desktop sidebar */}
+      <aside className="hidden sm:flex w-64 flex-col border-r bg-sidebar text-sidebar-foreground">
+        <div className="flex items-center gap-2 px-4 h-14 border-b">
+          <button
+            onClick={() => navigate('/gates')}
+            className="flex items-center gap-2 cursor-pointer"
+          >
+            <div className="flex items-center justify-center h-7 w-7 rounded-md bg-primary/10 text-primary">
+              <DoorOpen className="h-3.5 w-3.5" />
+            </div>
+            <span className="font-bold font-mono">GATIE</span>
+          </button>
+        </div>
+        {navContent}
+      </aside>
+
+      {/* Mobile header */}
+      <div className="flex flex-1 flex-col min-w-0">
+        <header className="sm:hidden flex items-center justify-between px-4 h-14 border-b">
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="icon-sm" onClick={() => setMobileNavOpen(true)}>
+              <Menu className="h-4 w-4" />
+            </Button>
+            <button
+              onClick={() => navigate('/gates')}
+              className="flex items-center gap-2 cursor-pointer"
             >
-              <Avatar size={24} color="indigo" radius="md">
-                <DoorOpen size={12} />
-              </Avatar>
-              <Text fw={700} size="md" ff="mono">GATIE</Text>
-            </UnstyledButton>
-          </Group>
-          <Group gap={4}>
+              <div className="flex items-center justify-center h-6 w-6 rounded-md bg-primary/10 text-primary">
+                <DoorOpen className="h-3 w-3" />
+              </div>
+              <span className="font-bold text-sm font-mono">GATIE</span>
+            </button>
+          </div>
+          <div className="flex items-center gap-1">
             <LangToggle />
             <ThemeToggle />
-          </Group>
-        </Group>
-      </AppShell.Header>
+          </div>
+        </header>
 
-      {/* Mobile nav — Drawer rendered in portal, reliable z-index */}
-      <Drawer
-        opened={navOpened}
-        onClose={() => setNavOpened(false)}
-        size={280}
-        padding={0}
-        withCloseButton={false}
-        styles={{ body: { padding: 0, height: '100%', display: 'flex', flexDirection: 'column' } }}
-      >
-        <Stack gap={0} style={{ flex: 1 }}>
-          <Group
-            px="md"
-            h={56}
-            style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}
-          >
-            <UnstyledButton
-              onClick={() => { handleLogoClick(); setNavOpened(false) }}
-              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-            >
-              <Avatar size={28} color="indigo" radius="md">
-                <DoorOpen size={14} />
-              </Avatar>
-              <Text fw={700} size="md" ff="mono">GATIE</Text>
-            </UnstyledButton>
-          </Group>
-          {renderNavBody()}
-        </Stack>
-      </Drawer>
+        {/* Mobile nav overlay */}
+        {mobileNavOpen && (
+          <div className="sm:hidden fixed inset-0 z-50 flex">
+            <div className="fixed inset-0 bg-black/50" onClick={closeMobileNav} />
+            <div className="relative w-64 flex flex-col bg-sidebar border-r z-50">
+              <div className="flex items-center justify-between px-4 h-14 border-b">
+                <button
+                  onClick={() => { navigate('/gates'); closeMobileNav() }}
+                  className="flex items-center gap-2 cursor-pointer"
+                >
+                  <div className="flex items-center justify-center h-7 w-7 rounded-md bg-primary/10 text-primary">
+                    <DoorOpen className="h-3.5 w-3.5" />
+                  </div>
+                  <span className="font-bold font-mono">GATIE</span>
+                </button>
+                <Button variant="ghost" size="icon-sm" onClick={closeMobileNav}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+              {navContent}
+            </div>
+          </div>
+        )}
 
-      {/* Desktop sidebar */}
-      <AppShell.Navbar>
-        <Stack gap={0} h="100%">
-          {/* Logo — desktop only */}
-          <Group
-            px="md"
-            h={56}
-            visibleFrom="sm"
-            style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}
-          >
-            <UnstyledButton
-              onClick={handleLogoClick}
-              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-            >
-              <Avatar size={28} color="indigo" radius="md">
-                <DoorOpen size={14} />
-              </Avatar>
-              <Text fw={700} size="md" ff="mono">GATIE</Text>
-            </UnstyledButton>
-          </Group>
-          {renderNavBody()}
-        </Stack>
-      </AppShell.Navbar>
+        {/* Main content */}
+        <main className="flex-1 overflow-auto">
+          <Outlet />
+        </main>
+      </div>
 
-      <AppShell.Main style={{ overflow: 'auto' }}>
-        <Outlet />
-      </AppShell.Main>
+      {/* API token management dialog */}
+      <Dialog open={tokenModalOpen} onOpenChange={(open) => { setTokenModalOpen(open); if (!open) { setNewToken(null); resetTokenForm() } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t('members.apiTokens')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6">
+            {newToken && (
+              <Alert variant="success">
+                <AlertTitle>{t('members.tokenCreated')}</AlertTitle>
+                <AlertDescription>
+                  <p className="text-sm mb-2">{t('members.tokenCreatedHint')}</p>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 text-xs break-all bg-background/50 rounded px-2 py-1">{newToken.token}</code>
+                    <SimpleTooltip label={copied ? t('common.copied') : t('common.copy')}>
+                      <Button variant="ghost" size="icon-sm" onClick={() => copyToken(newToken.token)}>
+                        {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                      </Button>
+                    </SimpleTooltip>
+                  </div>
+                </AlertDescription>
+              </Alert>
+            )}
 
-      {/* API token management modal */}
-      <Modal
-        opened={tokenModalOpened}
-        onClose={() => { closeTokenModal(); setNewToken(null); resetTokenForm() }}
-        title={t('members.apiTokens')}
-        size="lg"
-      >
-        <Stack gap="xl">
-          {newToken && (
-            <Alert
-              color="green"
-              variant="light"
-              withCloseButton
-              onClose={() => setNewToken(null)}
-              title={t('members.tokenCreated')}
-            >
-              <Text size="sm" mb={4}>{t('members.tokenCreatedHint')}</Text>
-              <Group gap={4} align="center">
-                <Code style={{ flex: 1, wordBreak: 'break-all', fontSize: 12 }}>{newToken.token}</Code>
-                <CopyButton value={newToken.token}>
-                  {({ copied, copy }) => (
-                    <Tooltip label={copied ? t('common.copied') : t('common.copy')}>
-                      <ActionIcon size="sm" variant="subtle" onClick={copy}>
-                        {copied ? <Check size={14} /> : <Copy size={14} />}
-                      </ActionIcon>
-                    </Tooltip>
-                  )}
-                </CopyButton>
-              </Group>
-            </Alert>
-          )}
-
-          <div>
-            <Text fw={600} mb="sm">{t('members.newToken')}</Text>
-            <form onSubmit={handleCreateToken}>
-              <Stack gap="sm">
-                <TextInput
+            <div>
+              <h4 className="font-semibold mb-3">{t('members.newToken')}</h4>
+              <form onSubmit={handleCreateToken} className="space-y-3">
+                <Input
                   label={t('members.tokenLabel')}
                   placeholder={t('members.tokenLabelPlaceholder')}
                   value={tokenLabel}
                   onChange={(e) => setTokenLabel(e.target.value)}
-                  withAsterisk
+                  required
                 />
-                <TextInput
+                <Input
                   label={`${t('members.tokenExpiresAt')} (${t('common.optional')})`}
                   type="date"
                   value={tokenExpiresAt}
@@ -341,16 +314,15 @@ export default function AppLayout() {
                 />
 
                 {tokenSchedules.length > 0 && (
-                  <Select
+                  <SimpleSelect
                     label={t('members.tokenSchedule')}
                     description={t('members.tokenScheduleHint')}
-                    value={tokenScheduleId}
-                    onChange={(v) => setTokenScheduleId(v ?? '')}
+                    value={tokenScheduleId || '__none__'}
+                    onValueChange={(v) => setTokenScheduleId(v === '__none__' ? '' : v)}
                     data={[
-                      { value: '', label: t('common.none') },
+                      { value: '__none__', label: t('common.none') },
                       ...tokenSchedules.map((s) => ({ value: s.id, label: s.name })),
                     ]}
-                    clearable
                   />
                 )}
 
@@ -359,16 +331,16 @@ export default function AppLayout() {
                     label={t('members.tokenRestrictPerms')}
                     description={t('members.tokenRestrictPermsHint')}
                     checked={tokenRestrictPerms}
-                    onChange={(e) => {
-                      setTokenRestrictPerms(e.currentTarget.checked)
-                      if (!e.currentTarget.checked) setTokenPolicies([])
+                    onCheckedChange={(checked) => {
+                      setTokenRestrictPerms(!!checked)
+                      if (!checked) setTokenPolicies([])
                     }}
                   />
                 )}
 
                 {tokenRestrictPerms && tokenGates.length > 0 && (
                   <div>
-                    <Text size="sm" fw={600} mb={6}>{t('members.gatePermissions')}</Text>
+                    <p className="text-sm font-semibold mb-2">{t('members.gatePermissions')}</p>
                     <GatePermissionsGrid
                       gates={tokenGates}
                       permissions={tokenPermissions}
@@ -376,47 +348,47 @@ export default function AppLayout() {
                         tokenPolicies.some((p) => p.gate_id === gateId && p.permission_code === code)
                       }
                       onToggle={togglePolicy}
-                      withColumnSelect
                       maxHeight={200}
                     />
                   </div>
                 )}
 
-                <Button type="submit" disabled={!tokenLabel.trim()} fullWidth>
+                <Button type="submit" disabled={!tokenLabel.trim()} className="w-full">
                   {t('common.add')}
                 </Button>
-              </Stack>
-            </form>
-          </div>
+              </form>
+            </div>
 
-          <div>
-            <Text fw={600} mb="sm">{t('members.existingTokens')}</Text>
-            {tokensLoading ? (
-              <Skeleton h={40} />
-            ) : tokens.length === 0 ? (
-              <Text size="sm" c="dimmed">{t('members.noTokens')}</Text>
-            ) : (
-              <Stack gap={4}>
-                {tokens.map((cred) => (
-                  <Group key={cred.id} justify="space-between" wrap="nowrap" p={8}
-                    style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 6 }}>
-                    <Stack gap={0} style={{ minWidth: 0 }}>
-                      <Text size="sm" fw={500} truncate>{cred.label || '—'}</Text>
-                      <Text size="xs" c="dimmed">
-                        {cred.created_at ? new Date(cred.created_at).toLocaleDateString() : '—'}
-                        {cred.expires_at && ` → ${new Date(cred.expires_at).toLocaleDateString()}`}
-                      </Text>
-                    </Stack>
-                    <ActionIcon size="sm" color="red" variant="subtle" onClick={() => handleDeleteToken(cred.id)}>
-                      <Trash2 size={14} />
-                    </ActionIcon>
-                  </Group>
-                ))}
-              </Stack>
-            )}
+            <Separator />
+
+            <div>
+              <h4 className="font-semibold mb-3">{t('members.existingTokens')}</h4>
+              {tokensLoading ? (
+                <Skeleton className="h-10 w-full" />
+              ) : tokens.length === 0 ? (
+                <p className="text-sm text-muted-foreground">{t('members.noTokens')}</p>
+              ) : (
+                <div className="space-y-2">
+                  {tokens.map((cred) => (
+                    <div key={cred.id} className="flex items-center justify-between p-2 border rounded-md">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{cred.label || '—'}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {cred.created_at ? new Date(cred.created_at).toLocaleDateString() : '—'}
+                          {cred.expires_at && ` → ${new Date(cred.expires_at).toLocaleDateString()}`}
+                        </p>
+                      </div>
+                      <Button variant="ghost" size="icon-sm" onClick={() => handleDeleteToken(cred.id)} className="text-destructive hover:text-destructive">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        </Stack>
-      </Modal>
-    </AppShell>
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }

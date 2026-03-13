@@ -1,4 +1,4 @@
-import { notifications } from '@mantine/notifications'
+import { toast } from 'sonner'
 
 type ApiError = {
   response?: {
@@ -14,23 +14,21 @@ type ApiError = {
 function extractMessage(err: unknown, fallback: string): string {
   const data = (err as ApiError)?.response?.data
   if (!data) return fallback
-  // Structured field errors: show the first (usually most specific) one.
   if (data.errors?.length) {
     const e = data.errors[0]
     return e.location ? `${e.location}: ${e.message}` : e.message
   }
-  // detail is the human message; title is the generic HTTP status text — prefer detail.
   return data.detail ?? data.title ?? fallback
 }
 
-/** Show a red error notification, extracting the server's validation detail when available. */
+/** Show an error toast, extracting the server's validation detail when available. */
 export function notifyError(err: unknown, fallback = 'An error occurred') {
-  notifications.show({ color: 'red', message: extractMessage(err, fallback), autoClose: 5000 })
+  toast.error(extractMessage(err, fallback))
 }
 
-/** Show a green success notification. */
+/** Show a success toast. */
 export function notifySuccess(message: string) {
-  notifications.show({ color: 'green', message, autoClose: 3000 })
+  toast.success(message)
 }
 
 /** Extract an API error message as a string (for pages that show errors inline). */

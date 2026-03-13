@@ -3,14 +3,15 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { gatesApi, publicApi } from '@/api'
 import type { Gate } from '@/types'
 import { useTranslation } from 'react-i18next'
-import {
-  Container, Title, Text, Stack, Paper, Group, Button, NumberInput, Loader, Center,
-  Switch, Alert, Badge,
-} from '@mantine/core'
 import { GatePermissionsGrid, useGatePermissions } from '@/components/GatePermissionsGrid'
-import { KeyRound, Save, CheckCircle2, Info } from 'lucide-react'
+import { KeyRound, Save, CheckCircle2, Info, Loader2 } from 'lucide-react'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
+import { Badge } from '@/components/ui/badge'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 export default function SettingsPage() {
   const qc = useQueryClient()
@@ -18,13 +19,11 @@ export default function SettingsPage() {
   const gatePermissions = useGatePermissions()
   const [macSaved, setMacSaved] = useState(false)
 
-  // SSO providers — read-only (configured via environment)
   const { data: ssoProviders = [], isLoading: ssoLoading } = useQuery({
     queryKey: ['sso-providers'],
     queryFn: () => publicApi.ssoProviders().catch(() => []),
   })
 
-  // Member auth config
   const { data: macData, isLoading: macLoading, isError: macError, error: macFetchError } = useQuery({
     queryKey: ['member-auth-config'],
     queryFn: () => api.get<Record<string, unknown>>('/auth/sso/settings').then((r) => r.data),
@@ -43,7 +42,6 @@ export default function SettingsPage() {
   const [sessionDuration, setSessionDuration] = useState<number | string>('')
   const [defaultGatePerms, setDefaultGatePerms] = useState<Record<string, Set<string>>>({})
 
-  // Sync MAC state once data is loaded
   const [macInitialized, setMacInitialized] = useState(false)
   if (macData && !macInitialized) {
     setPasswordAuth((macData.password as boolean) ?? true)
@@ -88,107 +86,112 @@ export default function SettingsPage() {
 
   if (macLoading || ssoLoading) {
     return (
-      <Center py="xl">
-        <Loader />
-      </Center>
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
     )
   }
 
   if (macError) {
     return (
-      <Container size="sm" py="xl">
+      <div className="max-w-xl mx-auto p-6">
         <QueryError error={macFetchError} />
-      </Container>
+      </div>
     )
   }
 
   return (
-    <Container size="sm" py="xl">
-      <Stack mb="xl" gap={4}>
-        <Title order={2}>{t('settings.title')}</Title>
-        <Text c="dimmed" size="sm">{t('settings.subtitle')}</Text>
-      </Stack>
+    <div className="max-w-xl mx-auto p-6 space-y-6">
+      <div>
+        <h2 className="text-xl font-bold">{t('settings.title')}</h2>
+        <p className="text-sm text-muted-foreground">{t('settings.subtitle')}</p>
+      </div>
 
       {/* SSO Providers — read-only */}
-      <Paper withBorder p="lg" radius="md" mb="md">
-        <Group justify="space-between" mb="md">
-          <Group gap="xs">
-            <KeyRound size={18} opacity={0.6} />
-            <Text fw={600}>{t('settings.sso')}</Text>
-          </Group>
-        </Group>
+      <div className="border rounded-lg p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <KeyRound className="h-4 w-4 opacity-60" />
+          <span className="font-semibold">{t('settings.sso')}</span>
+        </div>
 
-        <Alert icon={<Info size={16} />} color="blue" variant="light" mb="md">
-          <Text size="sm">{t('settings.ssoEnvConfigured')}</Text>
+        <Alert>
+          <Info className="h-4 w-4" />
+          <AlertDescription>{t('settings.ssoEnvConfigured')}</AlertDescription>
         </Alert>
 
         {ssoProviders.length === 0 ? (
-          <Text size="sm" c="dimmed">{t('settings.noProviders')}</Text>
+          <p className="text-sm text-muted-foreground">{t('settings.noProviders')}</p>
         ) : (
-          <Stack gap="xs">
+          <div className="space-y-2">
             {ssoProviders.map((p) => (
-              <Paper key={p.id} withBorder p="sm" radius="sm">
-                <Group gap="sm">
-                  <Text size="sm" fw={500}>{p.name}</Text>
-                  <Badge size="xs" variant="light">{p.type.toUpperCase()}</Badge>
-                </Group>
-              </Paper>
+              <div key={p.id} className="border rounded-md p-3 flex items-center gap-2">
+                <span className="text-sm font-medium">{p.name}</span>
+                <Badge variant="secondary">{p.type.toUpperCase()}</Badge>
+              </div>
             ))}
-          </Stack>
+          </div>
         )}
-      </Paper>
+      </div>
 
       {/* Member auth defaults */}
-      <Paper withBorder p="lg" radius="md" mb="md">
-        <Text fw={600} mb="xs">{t('settings.memberAuthDefaults')}</Text>
-        <Text size="xs" c="dimmed" mb="lg">{t('settings.memberAuthDefaultsHint')}</Text>
+      <div className="border rounded-lg p-5 space-y-4">
+        <div>
+          <p className="font-semibold">{t('settings.memberAuthDefaults')}</p>
+          <p className="text-xs text-muted-foreground">{t('settings.memberAuthDefaultsHint')}</p>
+        </div>
 
-        <Stack gap="lg">
+        <div className="space-y-4">
           <Switch
             label={t('settings.passwordAuth')}
             checked={passwordAuth}
-            onChange={(e) => setPasswordAuth(e.currentTarget.checked)}
+            onCheckedChange={setPasswordAuth}
           />
           <Switch
             label={t('settings.ssoAuth')}
             checked={ssoAuth}
-            onChange={(e) => setSsoAuth(e.currentTarget.checked)}
+            onCheckedChange={setSsoAuth}
           />
           <Switch
             label={t('settings.apiTokenAuth')}
             checked={apiTokenAuth}
-            onChange={(e) => setApiTokenAuth(e.currentTarget.checked)}
+            onCheckedChange={setApiTokenAuth}
           />
           {apiTokenAuth && (
-            <NumberInput
+            <Input
               label={t('settings.apiTokenMax')}
-              value={apiTokenMax}
-              onChange={(v) => setApiTokenMax(Number(v) || 5)}
+              type="number"
+              value={String(apiTokenMax)}
+              onChange={(e) => setApiTokenMax(Number(e.target.value) || 5)}
               min={1}
               max={100}
-              w={120}
+              className="w-28"
             />
           )}
-          <NumberInput
-            label={t('settings.memberSessionDuration')}
-            description={t('settings.memberSessionDurationHint')}
-            value={sessionDuration}
-            onChange={setSessionDuration}
-            min={0}
-            step={3600}
-            placeholder={t('settings.memberSessionDurationPlaceholder')}
-            w={200}
-          />
-        </Stack>
-      </Paper>
+          <div>
+            <Input
+              label={t('settings.memberSessionDuration')}
+              description={t('settings.memberSessionDurationHint')}
+              type="number"
+              value={String(sessionDuration)}
+              onChange={(e) => setSessionDuration(e.target.value === '' ? '' : Number(e.target.value))}
+              min={0}
+              step={3600}
+              placeholder={t('settings.memberSessionDurationPlaceholder')}
+              className="w-48"
+            />
+          </div>
+        </div>
+      </div>
 
       {/* Default member permissions */}
-      <Paper withBorder p="lg" radius="md">
-        <Text fw={600} mb="xs">{t('settings.defaultMemberPermissions')}</Text>
-        <Text size="xs" c="dimmed" mb="md">{t('settings.defaultMemberPermissionsHint')}</Text>
+      <div className="border rounded-lg p-5 space-y-4">
+        <div>
+          <p className="font-semibold">{t('settings.defaultMemberPermissions')}</p>
+          <p className="text-xs text-muted-foreground">{t('settings.defaultMemberPermissionsHint')}</p>
+        </div>
 
         {gates.length === 0 ? (
-          <Text size="xs" c="dimmed" fs="italic">{t('settings.noGatesForDefaults')}</Text>
+          <p className="text-xs text-muted-foreground italic">{t('settings.noGatesForDefaults')}</p>
         ) : (
           <GatePermissionsGrid
             gates={gates}
@@ -204,26 +207,21 @@ export default function SettingsPage() {
                 return next
               })
             }}
-            withColumnSelect
           />
         )}
 
         {macSaved && (
-          <Alert icon={<CheckCircle2 size={16} />} color="green" variant="light" mt="md">
-            {t('settings.saved')}
+          <Alert variant="success">
+            <CheckCircle2 className="h-4 w-4" />
+            <AlertDescription>{t('settings.saved')}</AlertDescription>
           </Alert>
         )}
 
-        <Group mt="md">
-          <Button
-            onClick={handleSaveMemberAuth}
-            loading={updateMAC.isPending}
-            leftSection={<Save size={16} />}
-          >
-            {t('settings.saveSso')}
-          </Button>
-        </Group>
-      </Paper>
-    </Container>
+        <Button onClick={handleSaveMemberAuth} loading={updateMAC.isPending}>
+          <Save className="h-4 w-4" />
+          {t('settings.saveSso')}
+        </Button>
+      </div>
+    </div>
   )
 }
