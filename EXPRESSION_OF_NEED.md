@@ -424,3 +424,17 @@ Si une session est active (PIN avec session ou membre connecté) :
 - Les sessions membres ont une durée configurable avec rafraîchissement automatique
 - Les sessions PIN ont une durée définie par le code utilisé
 - La déconnexion révoque immédiatement la session côté serveur
+
+### 5.5 Jetons API et contrôle fin
+
+- Un jeton API n'accorde **jamais** les privilèges implicites d'administrateur, même si le membre est admin. Chaque jeton est strictement limité aux permissions explicitement attribuées lors de sa création.
+- Un jeton API peut avoir un planning global (restriction temporelle unique appliquée à tous les portails accessibles via ce jeton)
+
+### 5.6 Polling de statut (webhook)
+
+- Pour les portails configurés en mode webhook HTTP, le serveur interroge périodiquement l'appareil (polling) pour récupérer son statut
+- Le polling supporte les tentatives multiples avec délai configurable en cas d'échec
+
+### 5.7 Audit
+
+- Le système prévoit un journal d'audit enregistrant les actions sensibles (ouvertures, tentatives de connexion, modifications de configuration) avec l'identifiant du membre, l'adresse IP, le portail concerné et les métadonnées associées
