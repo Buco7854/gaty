@@ -21,12 +21,12 @@ func NewAccessScheduleRepository(pool *pgxpool.Pool) repository.AccessScheduleRe
 	return &accessScheduleRepository{pool: pool}
 }
 
-const scheduleColumns = `id, workspace_id, membership_id, name, description, expr, created_at`
+const scheduleColumns = `id, member_id, name, description, expr, created_at`
 
 func scanSchedule(row pgx.Row) (*model.AccessSchedule, error) {
 	s := &model.AccessSchedule{}
 	var exprRaw []byte
-	err := row.Scan(&s.ID, &s.WorkspaceID, &s.MembershipID, &s.Name, &s.Description, &exprRaw, &s.CreatedAt)
+	err := row.Scan(&s.ID, &s.MemberID, &s.Name, &s.Description, &exprRaw, &s.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, repository.ErrNotFound
 	}
@@ -54,47 +54,43 @@ func marshalExpr(expr *model.ExprNode) ([]byte, error) {
 	return b, nil
 }
 
-func (r *accessScheduleRepository) Create(ctx context.Context, workspaceID uuid.UUID, membershipID *uuid.UUID, name string, description *string, expr *model.ExprNode) (*model.AccessSchedule, error) {
+func (r *accessScheduleRepository) Create(ctx context.Context, memberID *uuid.UUID, name string, description *string, expr *model.ExprNode) (*model.AccessSchedule, error) {
 	exprJSON, err := marshalExpr(expr)
 	if err != nil {
 		return nil, err
 	}
 	return scanSchedule(r.pool.QueryRow(ctx,
-		`INSERT INTO access_schedules (workspace_id, membership_id, name, description, expr)
-		 VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO access_schedules (member_id, name, description, expr)
+		 VALUES ($1, $2, $3, $4)
 		 RETURNING `+scheduleColumns,
-		workspaceID, membershipID, name, description, exprJSON,
+		memberID, name, description, exprJSON,
 	))
 }
 
-func (r *accessScheduleRepository) GetByID(ctx context.Context, scheduleID, workspaceID uuid.UUID) (*model.AccessSchedule, error) {
-	return scanSchedule(r.pool.QueryRow(ctx,
-		`SELECT `+scheduleColumns+` FROM access_schedules WHERE id = $1 AND workspace_id = $2`,
-		scheduleID, workspaceID,
-	))
-}
-
-func (r *accessScheduleRepository) GetByIDPublic(ctx context.Context, scheduleID uuid.UUID) (*model.AccessSchedule, error) {
+func (r *accessScheduleRepository) GetByID(ctx context.Context, scheduleID uuid.UUID) (*model.AccessSchedule, error) {
 	return scanSchedule(r.pool.QueryRow(ctx,
 		`SELECT `+scheduleColumns+` FROM access_schedules WHERE id = $1`,
 		scheduleID,
 	))
 }
 
-func (r *accessScheduleRepository) List(ctx context.Context, workspaceID uuid.UUID, p model.PaginationParams) ([]*model.AccessSchedule, int, error) {
+func (r *accessScheduleRepository) GetByIDPublic(ctx context.Context, scheduleID uuid.UUID) (*model.AccessSchedule, error) {
+	return r.GetByID(ctx, scheduleID)
+}
+
+func (r *accessScheduleRepository) List(ctx context.Context, p model.PaginationParams) ([]*model.AccessSchedule, int, error) {
 	p = p.Normalize()
 
 	var total int
 	if err := r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM access_schedules WHERE workspace_id = $1 AND membership_id IS NULL`,
-		workspaceID,
+		`SELECT COUNT(*) FROM access_schedules WHERE member_id IS NULL`,
 	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count schedules: %w", err)
 	}
 
 	rows, err := r.pool.Query(ctx,
-		`SELECT `+scheduleColumns+` FROM access_schedules WHERE workspace_id = $1 AND membership_id IS NULL ORDER BY name LIMIT $2 OFFSET $3`,
-		workspaceID, p.Limit, p.Offset,
+		`SELECT `+scheduleColumns+` FROM access_schedules WHERE member_id IS NULL ORDER BY name LIMIT $1 OFFSET $2`,
+		p.Limit, p.Offset,
 	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list schedules: %w", err)
@@ -105,7 +101,7 @@ func (r *accessScheduleRepository) List(ctx context.Context, workspaceID uuid.UU
 	for rows.Next() {
 		s := &model.AccessSchedule{}
 		var exprRaw []byte
-		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.MembershipID, &s.Name, &s.Description, &exprRaw, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.MemberID, &s.Name, &s.Description, &exprRaw, &s.CreatedAt); err != nil {
 			return nil, 0, fmt.Errorf("scan schedule row: %w", err)
 		}
 		if exprRaw != nil {
@@ -120,20 +116,20 @@ func (r *accessScheduleRepository) List(ctx context.Context, workspaceID uuid.UU
 	return result, total, rows.Err()
 }
 
-func (r *accessScheduleRepository) ListByMembership(ctx context.Context, membershipID, workspaceID uuid.UUID, p model.PaginationParams) ([]*model.AccessSchedule, int, error) {
+func (r *accessScheduleRepository) ListByMember(ctx context.Context, memberID uuid.UUID, p model.PaginationParams) ([]*model.AccessSchedule, int, error) {
 	p = p.Normalize()
 
 	var total int
 	if err := r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM access_schedules WHERE membership_id = $1 AND workspace_id = $2`,
-		membershipID, workspaceID,
+		`SELECT COUNT(*) FROM access_schedules WHERE member_id = $1`,
+		memberID,
 	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count member schedules: %w", err)
 	}
 
 	rows, err := r.pool.Query(ctx,
-		`SELECT `+scheduleColumns+` FROM access_schedules WHERE membership_id = $1 AND workspace_id = $2 ORDER BY name LIMIT $3 OFFSET $4`,
-		membershipID, workspaceID, p.Limit, p.Offset,
+		`SELECT `+scheduleColumns+` FROM access_schedules WHERE member_id = $1 ORDER BY name LIMIT $2 OFFSET $3`,
+		memberID, p.Limit, p.Offset,
 	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list member schedules: %w", err)
@@ -144,7 +140,7 @@ func (r *accessScheduleRepository) ListByMembership(ctx context.Context, members
 	for rows.Next() {
 		s := &model.AccessSchedule{}
 		var exprRaw []byte
-		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.MembershipID, &s.Name, &s.Description, &exprRaw, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.MemberID, &s.Name, &s.Description, &exprRaw, &s.CreatedAt); err != nil {
 			return nil, 0, fmt.Errorf("scan schedule row: %w", err)
 		}
 		if exprRaw != nil {
@@ -159,17 +155,17 @@ func (r *accessScheduleRepository) ListByMembership(ctx context.Context, members
 	return result, total, rows.Err()
 }
 
-func (r *accessScheduleRepository) Update(ctx context.Context, scheduleID, workspaceID uuid.UUID, name string, description *string, expr *model.ExprNode) (*model.AccessSchedule, error) {
+func (r *accessScheduleRepository) Update(ctx context.Context, scheduleID uuid.UUID, name string, description *string, expr *model.ExprNode) (*model.AccessSchedule, error) {
 	exprJSON, err := marshalExpr(expr)
 	if err != nil {
 		return nil, err
 	}
 	s, err := scanSchedule(r.pool.QueryRow(ctx,
 		`UPDATE access_schedules
-		 SET name = $3, description = $4, expr = $5
-		 WHERE id = $1 AND workspace_id = $2
+		 SET name = $2, description = $3, expr = $4
+		 WHERE id = $1
 		 RETURNING `+scheduleColumns,
-		scheduleID, workspaceID, name, description, exprJSON,
+		scheduleID, name, description, exprJSON,
 	))
 	if err != nil {
 		return nil, fmt.Errorf("update access schedule: %w", err)
@@ -177,10 +173,10 @@ func (r *accessScheduleRepository) Update(ctx context.Context, scheduleID, works
 	return s, nil
 }
 
-func (r *accessScheduleRepository) Delete(ctx context.Context, scheduleID, workspaceID uuid.UUID) error {
+func (r *accessScheduleRepository) Delete(ctx context.Context, scheduleID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx,
-		`DELETE FROM access_schedules WHERE id = $1 AND workspace_id = $2`,
-		scheduleID, workspaceID,
+		`DELETE FROM access_schedules WHERE id = $1`,
+		scheduleID,
 	)
 	if err != nil {
 		return fmt.Errorf("delete access schedule: %w", err)

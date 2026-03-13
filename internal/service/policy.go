@@ -17,64 +17,62 @@ func NewPolicyService(policies repository.PolicyRepository, schedules repository
 	return &PolicyService{policies: policies, schedules: schedules}
 }
 
-func (s *PolicyService) List(ctx context.Context, gateID uuid.UUID, p model.PaginationParams) ([]model.MembershipPolicy, int, error) {
-	policies, total, err := s.policies.List(ctx, gateID, p)
+func (s *PolicyService) ListForGate(ctx context.Context, gateID uuid.UUID, p model.PaginationParams) ([]model.MemberPolicy, int, error) {
+	policies, total, err := s.policies.ListForGate(ctx, gateID, p)
 	if err != nil {
 		return nil, 0, err
 	}
 	if policies == nil {
-		policies = []model.MembershipPolicy{}
+		policies = []model.MemberPolicy{}
 	}
 	return policies, total, nil
 }
 
-func (s *PolicyService) ListForMembership(ctx context.Context, membershipID uuid.UUID, p model.PaginationParams) ([]model.MembershipPolicy, int, error) {
-	policies, total, err := s.policies.ListForMembership(ctx, membershipID, p)
+func (s *PolicyService) ListForMember(ctx context.Context, memberID uuid.UUID, p model.PaginationParams) ([]model.MemberPolicy, int, error) {
+	policies, total, err := s.policies.ListForMember(ctx, memberID, p)
 	if err != nil {
 		return nil, 0, err
 	}
 	if policies == nil {
-		policies = []model.MembershipPolicy{}
+		policies = []model.MemberPolicy{}
 	}
 	return policies, total, nil
 }
 
-func (s *PolicyService) Grant(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) error {
-	return s.policies.Grant(ctx, membershipID, gateID, permCode)
+func (s *PolicyService) Grant(ctx context.Context, memberID, gateID uuid.UUID, permCode string) error {
+	return s.policies.Grant(ctx, memberID, gateID, permCode)
 }
 
-func (s *PolicyService) Revoke(ctx context.Context, membershipID, gateID uuid.UUID) error {
-	return s.policies.Revoke(ctx, membershipID, gateID)
+func (s *PolicyService) Revoke(ctx context.Context, memberID, gateID uuid.UUID) error {
+	return s.policies.Revoke(ctx, memberID, gateID)
 }
 
-func (s *PolicyService) RevokePermission(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) error {
-	return s.policies.RevokePermission(ctx, membershipID, gateID, permCode)
+func (s *PolicyService) RevokePermission(ctx context.Context, memberID, gateID uuid.UUID, permCode string) error {
+	return s.policies.RevokePermission(ctx, memberID, gateID, permCode)
 }
 
-func (s *PolicyService) HasPermission(ctx context.Context, membershipID, gateID uuid.UUID, permCode string) (bool, error) {
-	return s.policies.HasPermission(ctx, membershipID, gateID, permCode)
+func (s *PolicyService) HasPermission(ctx context.Context, memberID, gateID uuid.UUID, permCode string) (bool, error) {
+	return s.policies.HasPermission(ctx, memberID, gateID, permCode)
 }
 
-func (s *PolicyService) HasAnyPermission(ctx context.Context, membershipID, gateID uuid.UUID) (bool, error) {
-	return s.policies.HasAnyPermission(ctx, membershipID, gateID)
+func (s *PolicyService) HasAnyPermission(ctx context.Context, memberID, gateID uuid.UUID) (bool, error) {
+	return s.policies.HasAnyPermission(ctx, memberID, gateID)
 }
 
-func (s *PolicyService) SetMemberGateSchedule(ctx context.Context, membershipID, gateID, scheduleID uuid.UUID) error {
-	return s.policies.SetMemberGateSchedule(ctx, membershipID, gateID, scheduleID)
+func (s *PolicyService) SetMemberGateSchedule(ctx context.Context, memberID, gateID, scheduleID uuid.UUID) error {
+	return s.policies.SetSchedule(ctx, memberID, gateID, scheduleID)
 }
 
-func (s *PolicyService) RemoveMemberGateSchedule(ctx context.Context, membershipID, gateID uuid.UUID) error {
-	return s.policies.RemoveMemberGateSchedule(ctx, membershipID, gateID)
+func (s *PolicyService) RemoveMemberGateSchedule(ctx context.Context, memberID, gateID uuid.UUID) error {
+	return s.policies.RemoveSchedule(ctx, memberID, gateID)
 }
 
-// GetMemberGateScheduleID returns the schedule ID attached to a member-gate pair.
-func (s *PolicyService) GetMemberGateScheduleID(ctx context.Context, membershipID, gateID uuid.UUID) (uuid.UUID, error) {
-	return s.policies.GetMemberGateScheduleID(ctx, membershipID, gateID)
+func (s *PolicyService) GetMemberGateScheduleID(ctx context.Context, memberID, gateID uuid.UUID) (uuid.UUID, error) {
+	return s.policies.GetScheduleID(ctx, memberID, gateID)
 }
 
-// GetMemberGateSchedule returns the full schedule attached to a member-gate pair, or nil if none.
-func (s *PolicyService) GetMemberGateSchedule(ctx context.Context, membershipID, gateID uuid.UUID) (*model.AccessSchedule, error) {
-	scheduleID, err := s.policies.GetMemberGateScheduleID(ctx, membershipID, gateID)
+func (s *PolicyService) GetMemberGateSchedule(ctx context.Context, memberID, gateID uuid.UUID) (*model.AccessSchedule, error) {
+	scheduleID, err := s.policies.GetScheduleID(ctx, memberID, gateID)
 	if err != nil {
 		return nil, err
 	}

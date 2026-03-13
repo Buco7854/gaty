@@ -270,7 +270,6 @@ var DefaultGateStatuses = []string{"open", "closed", "unavailable"}
 
 type Gate struct {
 	ID                uuid.UUID           `json:"id"`
-	WorkspaceID       uuid.UUID           `json:"workspace_id"`
 	Name              string              `json:"name"`
 	IntegrationType   GateIntegrationType `json:"integration_type"` // kept for backward compat
 	IntegrationConfig map[string]any      `json:"integration_config,omitempty"`

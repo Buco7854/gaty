@@ -13,23 +13,16 @@ import (
 )
 
 // gateEventChannel is the Redis Pub/Sub channel for gate status events.
-// The SSE handler subscribes to this channel to fan-out updates to browsers.
-const gateEventChannel = "gate:events:%s" // formatted with workspace UUID
+const gateEventChannel = "gate:events"
 
 // GateStatusEvent is the Redis Pub/Sub payload published on every gate status change.
-// Consumed by the SSE fan-out handler (handler/sse.go).
 type GateStatusEvent struct {
 	GateID         string         `json:"gate_id"`
-	WorkspaceID    string         `json:"workspace_id"`
 	Status         string         `json:"status"`
 	StatusMetadata map[string]any `json:"status_metadata,omitempty"`
 }
 
-// ProcessGateStatus is the single entry point for all gate status updates,
-// regardless of transport (MQTT or HTTP inbound).
-//
-// It evaluates status rules against the incoming metadata, persists the
-// resolved status, and publishes a GateStatusEvent for SSE fan-out.
+// ProcessGateStatus is the single entry point for all gate status updates.
 func ProcessGateStatus(
 	ctx context.Context,
 	gateRepo repository.GateRepository,
@@ -50,7 +43,6 @@ func ProcessGateStatus(
 	if redisClient != nil {
 		publishGateStatusEvent(ctx, redisClient, GateStatusEvent{
 			GateID:         gate.ID.String(),
-			WorkspaceID:    gate.WorkspaceID.String(),
 			Status:         finalStatus,
 			StatusMetadata: meta,
 		})
@@ -58,14 +50,12 @@ func ProcessGateStatus(
 	return nil
 }
 
-// publishGateStatusEvent marshals ev and publishes it to the workspace Redis channel.
-// Errors are logged as warnings; the caller is not blocked.
+// publishGateStatusEvent marshals ev and publishes it to the Redis channel.
 func publishGateStatusEvent(ctx context.Context, redisClient *redis.Client, ev GateStatusEvent) {
 	payload, _ := json.Marshal(ev)
-	channel := fmt.Sprintf(gateEventChannel, ev.WorkspaceID)
 	tCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if err := redisClient.Publish(tCtx, channel, string(payload)).Err(); err != nil {
-		slog.Warn("gate: failed to publish status event", "channel", channel, "error", err)
+	if err := redisClient.Publish(tCtx, gateEventChannel, string(payload)).Err(); err != nil {
+		slog.Warn("gate: failed to publish status event", "channel", gateEventChannel, "error", err)
 	}
 }

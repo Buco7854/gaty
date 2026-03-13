@@ -13,57 +13,48 @@ import (
 )
 
 var (
-	ErrSSONotConfigured = errors.New("SSO not configured for this workspace")
+	ErrSSONotConfigured = errors.New("SSO not configured")
 	ErrSSOInvalidState  = errors.New("invalid or expired SSO state")
 	ErrSSOAccessDenied  = errors.New("SSO access denied: auto-provision disabled")
 )
 
 // SSOIdentity holds the normalised identity returned by any SSO provider.
 type SSOIdentity struct {
-	Subject     string         // unique identifier (sub for OIDC, NameID for SAML, …)
+	Subject     string
 	Email       string
 	DisplayName string
-	Claims      map[string]any // raw provider claims, used for role mapping
+	Claims      map[string]any
 }
 
-// SSOProvider is the interface implemented by each concrete SSO backend (OIDC, SAML, …).
+// SSOProvider is the interface implemented by each concrete SSO backend.
 type SSOProvider interface {
-	// AuthURL returns the provider's authorization URL and the opaque state token that was stored.
-	// gateID and workspaceID are embedded in the Redis state so they survive the cross-origin redirect.
-	AuthURL(ctx context.Context, gateID, workspaceID string) (url, state string, err error)
-	// Exchange processes the callback parameters, validates the state, and returns the authenticated identity, gateID, and workspaceID.
+	AuthURL(ctx context.Context, gateID, extra string) (url, state string, err error)
 	Exchange(ctx context.Context, code, state string) (*SSOIdentity, string, string, error)
 }
 
 // SSOProviderConfig holds the configuration for a single SSO provider.
-// This is stored as an element in the `providers` array in workspaces.sso_settings JSONB.
+// In the simplified architecture, this comes from environment variables.
 type SSOProviderConfig struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-	Type string `json:"type"` // "oidc" | future: "saml"
+	Type string `json:"type"` // "oidc"
 
 	// OIDC fields
 	ClientID     string   `json:"client_id"`
 	ClientSecret string   `json:"client_secret"`
 	Issuer       string   `json:"issuer"`
-	Scopes       []string `json:"scopes"` // additional scopes beyond "openid email profile"
+	Scopes       []string `json:"scopes"`
 
-	// Manual OAuth2 endpoints — when set, OIDC auto-discovery is skipped.
-	// All three must be provided together for manual mode to work.
+	// Manual OAuth2 endpoints
 	AuthEndpoint  string `json:"auth_endpoint"`
 	TokenEndpoint string `json:"token_endpoint"`
 	JwksURL       string `json:"jwks_uri"`
 
 	// Membership provisioning
-	AutoProvision bool                `json:"auto_provision"`
-	DefaultRole   model.WorkspaceRole `json:"default_role"`
-	RoleClaim     string              `json:"role_claim"`
-	RoleMapping   map[string]string   `json:"role_mapping"`
-}
-
-// workspaceSSOSettings is the top-level structure stored in workspaces.sso_settings JSONB.
-type workspaceSSOSettings struct {
-	Providers []SSOProviderConfig `json:"providers"`
+	AutoProvision bool              `json:"auto_provision"`
+	DefaultRole   model.Role        `json:"default_role"`
+	RoleClaim     string            `json:"role_claim"`
+	RoleMapping   map[string]string `json:"role_mapping"`
 }
 
 // PublicSSOProvider is the public representation of an SSO provider (no secrets).
@@ -73,60 +64,40 @@ type PublicSSOProvider struct {
 	Type string `json:"type"`
 }
 
-func parseWorkspaceSSOSettings(raw map[string]any) ([]SSOProviderConfig, error) {
-	if len(raw) == 0 {
-		return nil, ErrSSONotConfigured
-	}
-	b, err := json.Marshal(raw)
-	if err != nil {
-		return nil, fmt.Errorf("marshal sso settings: %w", err)
-	}
-	var ws workspaceSSOSettings
-	if err := json.Unmarshal(b, &ws); err != nil {
-		return nil, fmt.Errorf("parse sso settings: %w", err)
-	}
-	if len(ws.Providers) == 0 {
-		return nil, ErrSSONotConfigured
-	}
-	for i := range ws.Providers {
-		if ws.Providers[i].DefaultRole == "" {
-			ws.Providers[i].DefaultRole = model.RoleMember
-		}
-	}
-	return ws.Providers, nil
-}
-
-// SSOService orchestrates workspace SSO flows.
-// It is provider-agnostic: concrete backends are instantiated by newProvider.
+// SSOService orchestrates SSO flows.
+// Providers are configured via environment and passed at construction.
 type SSOService struct {
-	workspaces  repository.WorkspaceRepository
-	memberships repository.WorkspaceMembershipRepository
-	memberCreds repository.MembershipCredentialRepository
+	members     repository.MemberRepository
+	credentials repository.CredentialRepository
 	redis       *redis.Client
 	baseURL     string
+	providers   []SSOProviderConfig
 
-	// OIDC discovery cache — defined in sso_oidc.go, shared across all OIDC provider instances.
 	oidcCache *oidcDiscoveryCache
 }
 
 func NewSSOService(
-	workspaces repository.WorkspaceRepository,
-	memberships repository.WorkspaceMembershipRepository,
-	memberCreds repository.MembershipCredentialRepository,
+	members repository.MemberRepository,
+	credentials repository.CredentialRepository,
 	redisClient *redis.Client,
 	baseURL string,
+	providers []SSOProviderConfig,
 ) *SSOService {
+	for i := range providers {
+		if providers[i].DefaultRole == "" {
+			providers[i].DefaultRole = model.RoleMember
+		}
+	}
 	return &SSOService{
-		workspaces:  workspaces,
-		memberships: memberships,
-		memberCreds: memberCreds,
+		members:     members,
+		credentials: credentials,
 		redis:       redisClient,
 		baseURL:     baseURL,
+		providers:   providers,
 		oidcCache:   newOIDCDiscoveryCache(),
 	}
 }
 
-// findProvider returns the provider with the given ID from the settings slice.
 func findProvider(providers []SSOProviderConfig, providerID string) (*SSOProviderConfig, error) {
 	for i := range providers {
 		if providers[i].ID == providerID {
@@ -136,7 +107,6 @@ func findProvider(providers []SSOProviderConfig, providerID string) (*SSOProvide
 	return nil, fmt.Errorf("provider %q not found", providerID)
 }
 
-// newProvider instantiates the concrete SSOProvider for the given config.
 func (s *SSOService) newProvider(ctx context.Context, cfg *SSOProviderConfig, callbackURL string) (SSOProvider, error) {
 	switch cfg.Type {
 	case "oidc", "":
@@ -146,150 +116,153 @@ func (s *SSOService) newProvider(ctx context.Context, cfg *SSOProviderConfig, ca
 	}
 }
 
-// ListPublicProviders returns the public list of SSO providers for a workspace (no secrets).
-func (s *SSOService) ListPublicProviders(ctx context.Context, workspaceID uuid.UUID) ([]PublicSSOProvider, error) {
-	ws, err := s.workspaces.GetByID(ctx, workspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
+// ListPublicProviders returns the public list of SSO providers (no secrets).
+func (s *SSOService) ListPublicProviders() ([]PublicSSOProvider, error) {
+	if len(s.providers) == 0 {
 		return nil, ErrSSONotConfigured
 	}
-	if err != nil {
-		return nil, fmt.Errorf("get workspace: %w", err)
-	}
-	providers, err := parseWorkspaceSSOSettings(ws.SSOSettings)
-	if err != nil {
-		return nil, err
-	}
-	public := make([]PublicSSOProvider, len(providers))
-	for i, p := range providers {
+	public := make([]PublicSSOProvider, len(s.providers))
+	for i, p := range s.providers {
 		public[i] = PublicSSOProvider{ID: p.ID, Name: p.Name, Type: p.Type}
 	}
 	return public, nil
 }
 
-// GenerateAuthURL builds the SSO authorization URL for the given workspace and provider ID.
-// gateID and workspaceID are stored in the Redis state so they can be recovered during the callback.
-// Returns the auth URL and the workspace ID (for use in error redirects).
-func (s *SSOService) GenerateAuthURL(ctx context.Context, workspaceID uuid.UUID, providerID, gateID string) (authURL string, wsID string, err error) {
-	ws, werr := s.workspaces.GetByID(ctx, workspaceID)
-	if errors.Is(werr, repository.ErrNotFound) {
-		return "", "", ErrSSONotConfigured
+// GenerateAuthURL builds the SSO authorization URL for the given provider ID.
+func (s *SSOService) GenerateAuthURL(ctx context.Context, providerID, gateID string) (authURL string, err error) {
+	if len(s.providers) == 0 {
+		return "", ErrSSONotConfigured
 	}
-	if werr != nil {
-		return "", "", fmt.Errorf("get workspace: %w", werr)
-	}
-	providers, werr := parseWorkspaceSSOSettings(ws.SSOSettings)
-	if werr != nil {
-		return "", ws.ID.String(), werr
-	}
-	cfg, werr := findProvider(providers, providerID)
-	if werr != nil {
-		return "", ws.ID.String(), ErrSSONotConfigured
-	}
-	callbackURL := fmt.Sprintf("%s/api/auth/sso/%s/%s/callback", s.baseURL, ws.ID.String(), providerID)
-	provider, werr := s.newProvider(ctx, cfg, callbackURL)
-	if werr != nil {
-		return "", ws.ID.String(), fmt.Errorf("init SSO provider: %w", werr)
-	}
-	url, _, werr := provider.AuthURL(ctx, gateID, ws.ID.String())
-	return url, ws.ID.String(), werr
-}
-
-// Callback processes the SSO callback for the given workspace and provider ID.
-// Returns the resolved membership, the gateID, and the workspaceID embedded in the state.
-func (s *SSOService) Callback(ctx context.Context, workspaceID uuid.UUID, providerID, code, state string) (*model.WorkspaceMembership, string, string, error) {
-	ws, err := s.workspaces.GetByID(ctx, workspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
-		return nil, "", "", ErrSSONotConfigured
-	}
+	cfg, err := findProvider(s.providers, providerID)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("get workspace: %w", err)
+		return "", ErrSSONotConfigured
 	}
-	providers, err := parseWorkspaceSSOSettings(ws.SSOSettings)
-	if err != nil {
-		return nil, "", "", err
-	}
-	cfg, err := findProvider(providers, providerID)
-	if err != nil {
-		return nil, "", "", ErrSSONotConfigured
-	}
-	callbackURL := fmt.Sprintf("%s/api/auth/sso/%s/%s/callback", s.baseURL, ws.ID.String(), providerID)
+	callbackURL := fmt.Sprintf("%s/api/auth/sso/%s/callback", s.baseURL, providerID)
 	provider, err := s.newProvider(ctx, cfg, callbackURL)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("init SSO provider: %w", err)
+		return "", fmt.Errorf("init SSO provider: %w", err)
+	}
+	url, _, err := provider.AuthURL(ctx, gateID, "")
+	return url, err
+}
+
+// Callback processes the SSO callback for the given provider ID.
+func (s *SSOService) Callback(ctx context.Context, providerID, code, state string) (*model.Member, string, error) {
+	if len(s.providers) == 0 {
+		return nil, "", ErrSSONotConfigured
+	}
+	cfg, err := findProvider(s.providers, providerID)
+	if err != nil {
+		return nil, "", ErrSSONotConfigured
+	}
+	callbackURL := fmt.Sprintf("%s/api/auth/sso/%s/callback", s.baseURL, providerID)
+	provider, err := s.newProvider(ctx, cfg, callbackURL)
+	if err != nil {
+		return nil, "", fmt.Errorf("init SSO provider: %w", err)
 	}
 	identity, gateID, _, err := provider.Exchange(ctx, code, state)
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", err
 	}
-	membership, err := s.resolveOrProvision(ctx, ws.ID, cfg, identity)
-	return membership, gateID, ws.ID.String(), err
+	member, err := s.resolveOrProvision(ctx, cfg, identity)
+	return member, gateID, err
 }
 
-// ConsumeState retrieves and deletes the SSO state from Redis (for OAuth error paths).
-// Returns empty strings if the state is missing or invalid.
-func (s *SSOService) ConsumeState(ctx context.Context, state string) (gateID, workspaceID string) {
+// ConsumeState retrieves and deletes the SSO state from Redis.
+func (s *SSOService) ConsumeState(ctx context.Context, state string) (gateID string) {
 	if state == "" {
-		return "", ""
+		return ""
 	}
 	stateJSON, err := s.redis.GetDel(ctx, ssoStatePrefix+state).Result()
 	if err != nil {
-		return "", ""
+		return ""
 	}
 	var stateData ssoState
 	_ = json.Unmarshal([]byte(stateJSON), &stateData)
-	return stateData.GateID, stateData.WorkspaceID
+	return stateData.GateID
 }
 
-// resolveOrProvision finds or creates the workspace membership for a verified SSO identity.
-func (s *SSOService) resolveOrProvision(ctx context.Context, workspaceID uuid.UUID, cfg *SSOProviderConfig, identity *SSOIdentity) (*model.WorkspaceMembership, error) {
+// resolveOrProvision finds or creates the member for a verified SSO identity.
+func (s *SSOService) resolveOrProvision(ctx context.Context, cfg *SSOProviderConfig, identity *SSOIdentity) (*model.Member, error) {
 	role := cfg.DefaultRole
 	if cfg.RoleClaim != "" {
 		if claimVal, ok := identity.Claims[cfg.RoleClaim].(string); ok {
 			if mapped, found := cfg.RoleMapping[claimVal]; found {
-				role = model.WorkspaceRole(mapped)
+				role = model.Role(mapped)
 			}
 		}
 	}
 
-	existingCred, err := s.memberCreds.FindBySSOIdentity(ctx, workspaceID, identity.Subject)
+	existingCred, err := s.credentials.FindBySSOIdentity(ctx, identity.Subject)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return nil, fmt.Errorf("lookup sso identity: %w", err)
 	}
 	if existingCred != nil {
-		return s.memberships.GetByID(ctx, existingCred.MembershipID, workspaceID)
+		return s.members.GetByID(ctx, existingCred.MemberID)
 	}
 
 	if !cfg.AutoProvision {
 		return nil, ErrSSOAccessDenied
 	}
 
-	localUsername := identity.Email
-	if localUsername == "" {
-		localUsername = identity.Subject
+	username := identity.Email
+	if username == "" {
+		username = identity.Subject
 	}
 	var displayName *string
 	if identity.DisplayName != "" {
 		displayName = &identity.DisplayName
 	}
 
-	membership, err := s.memberships.CreateLocal(ctx, workspaceID, localUsername, displayName, role, nil)
+	member, err := s.members.Create(ctx, username, displayName, role)
 	if errors.Is(err, repository.ErrAlreadyExists) {
 		suffix := identity.Subject
 		if len(suffix) > 8 {
 			suffix = suffix[:8]
 		}
-		localUsername = localUsername + "_" + suffix
-		membership, err = s.memberships.CreateLocal(ctx, workspaceID, localUsername, displayName, role, nil)
+		username = username + "_" + suffix
+		member, err = s.members.Create(ctx, username, displayName, role)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("create membership: %w", err)
+		return nil, fmt.Errorf("create member: %w", err)
 	}
 
 	meta := map[string]any{"email": identity.Email, "issuer": cfg.Issuer}
-	_, err = s.memberCreds.Create(ctx, membership.ID, model.CredSSOIdentity, identity.Subject, nil, nil, meta)
+	_, err = s.credentials.Create(ctx, member.ID, model.CredSSOIdentity, identity.Subject, nil, nil, meta)
 	if err != nil {
 		return nil, fmt.Errorf("create sso identity credential: %w", err)
 	}
 
-	return membership, nil
+	return member, nil
+}
+
+// HasProviders returns true if at least one SSO provider is configured.
+func (s *SSOService) HasProviders() bool {
+	return len(s.providers) > 0
+}
+
+// GetProviderByID returns the provider config by ID (for handler-level checks).
+func (s *SSOService) GetProviderByID(providerID string) (*SSOProviderConfig, error) {
+	return findProvider(s.providers, providerID)
+}
+
+// Providers returns the list of configured SSO providers.
+func (s *SSOService) Providers() []SSOProviderConfig {
+	return s.providers
+}
+
+// SetProviders sets SSO providers dynamically (needed for compatibility).
+func (s *SSOService) SetProviders(providers []SSOProviderConfig) {
+	for i := range providers {
+		if providers[i].DefaultRole == "" {
+			providers[i].DefaultRole = model.RoleMember
+		}
+	}
+	s.providers = providers
+}
+
+// ProviderGateID is a placeholder used when SSO callback associates a gate.
+func ProviderGateID(gateID string) uuid.UUID {
+	id, _ := uuid.Parse(gateID)
+	return id
 }

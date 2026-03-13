@@ -7,15 +7,13 @@ import (
 	"github.com/google/uuid"
 )
 
-// WorkspaceMembershipRepository is the data-access contract for workspace memberships.
-type WorkspaceMembershipRepository interface {
-	CreateLocal(ctx context.Context, workspaceID uuid.UUID, localUsername string, displayName *string, role model.WorkspaceRole, invitedBy *uuid.UUID) (*model.WorkspaceMembership, error)
-	CreateForUser(ctx context.Context, workspaceID, userID uuid.UUID, displayName *string, role model.WorkspaceRole, invitedBy *uuid.UUID) (*model.WorkspaceMembership, error)
-	GetByID(ctx context.Context, membershipID, workspaceID uuid.UUID) (*model.WorkspaceMembership, error)
-	GetByUserID(ctx context.Context, workspaceID, userID uuid.UUID) (*model.WorkspaceMembership, error)
-	GetByLocalUsername(ctx context.Context, workspaceID uuid.UUID, localUsername string) (*model.WorkspaceMembership, error)
-	List(ctx context.Context, workspaceID uuid.UUID, p model.PaginationParams) ([]*model.WorkspaceMembership, int, error)
-	Update(ctx context.Context, membershipID, workspaceID uuid.UUID, displayName *string, localUsername *string, role *model.WorkspaceRole, authConfig OmittableNullable[map[string]any]) (*model.WorkspaceMembership, error)
-	Delete(ctx context.Context, membershipID, workspaceID uuid.UUID) error
-	MergeUser(ctx context.Context, membershipID, userID uuid.UUID) error
+// MemberRepository is the data-access contract for members.
+type MemberRepository interface {
+	Create(ctx context.Context, username string, displayName *string, role model.Role) (*model.Member, error)
+	GetByID(ctx context.Context, memberID uuid.UUID) (*model.Member, error)
+	GetByUsername(ctx context.Context, username string) (*model.Member, error)
+	HasAny(ctx context.Context) (bool, error)
+	List(ctx context.Context, p model.PaginationParams) ([]*model.Member, int, error)
+	Update(ctx context.Context, memberID uuid.UUID, displayName *string, username *string, role *model.Role) (*model.Member, error)
+	Delete(ctx context.Context, memberID uuid.UUID) error
 }

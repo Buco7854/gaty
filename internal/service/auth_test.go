@@ -107,46 +107,6 @@ func TestRefreshKey_NeverStoresRawToken(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// resolveSessionDuration
-// ────────────────────────────────────────────────────────────────────
-
-func TestResolveSessionDuration_Nil(t *testing.T) {
-	d := resolveSessionDuration(nil)
-	if d != defaultSessionTTL {
-		t.Errorf("nil config should return defaultSessionTTL, got %v", d)
-	}
-}
-
-func TestResolveSessionDuration_MissingKey(t *testing.T) {
-	d := resolveSessionDuration(map[string]any{"other_key": "value"})
-	if d != defaultSessionTTL {
-		t.Errorf("missing session_duration key should return defaultSessionTTL, got %v", d)
-	}
-}
-
-func TestResolveSessionDuration_Zero(t *testing.T) {
-	d := resolveSessionDuration(map[string]any{"session_duration": float64(0)})
-	if d != 0 {
-		t.Errorf("session_duration=0 should return 0 (infinite), got %v", d)
-	}
-}
-
-func TestResolveSessionDuration_Custom(t *testing.T) {
-	d := resolveSessionDuration(map[string]any{"session_duration": float64(3600)})
-	if d.Seconds() != 3600 {
-		t.Errorf("expected 3600s, got %v", d)
-	}
-}
-
-func TestResolveSessionDuration_Negative(t *testing.T) {
-	// Negative values fall back to default
-	d := resolveSessionDuration(map[string]any{"session_duration": float64(-100)})
-	if d != defaultSessionTTL {
-		t.Errorf("negative session_duration should return defaultSessionTTL, got %v", d)
-	}
-}
-
-// ────────────────────────────────────────────────────────────────────
 // payloadSessionDuration
 // ────────────────────────────────────────────────────────────────────
 

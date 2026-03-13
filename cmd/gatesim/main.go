@@ -8,7 +8,7 @@
 //
 //   - MQTT mode: connects to the MQTT broker, subscribes to the command topic,
 //     responds to open/close commands by publishing a status update.
-//     Requires only --token (workspace_id and gate_id are decoded from the JWT).
+//     Requires only --token (gate_id is decoded from the JWT).
 //
 // Both modes send periodic heartbeat status updates to keep the gate alive.
 //
@@ -67,12 +67,12 @@ func main() {
 		runHTTP(ctx, sim, *listenAddr, *heartbeat)
 
 	case "mqtt":
-		wsID, gateID, err := parseJWTClaims(*token)
+		gateID, err := parseJWTClaims(*token)
 		if err != nil {
-			slog.Error("mqtt: cannot decode workspace_id/gate_id from token", "error", err)
+			slog.Error("mqtt: cannot decode gate_id from token", "error", err)
 			os.Exit(1)
 		}
-		sim := &simulator{wsID: wsID.String(), gateID: gateID, token: *token, apiURL: *apiURL, status: "closed"}
+		sim := &simulator{gateID: gateID, token: *token, apiURL: *apiURL, status: "closed"}
 		runMQTT(ctx, sim, *broker, *heartbeat)
 
 	default:
@@ -81,38 +81,32 @@ func main() {
 	}
 }
 
-// parseJWTClaims extracts workspace_id and gate_id (sub) from the JWT payload
+// parseJWTClaims extracts gate_id (sub) from the JWT payload
 // without verifying the signature — gatesim is a dev tool, not a security boundary.
-func parseJWTClaims(token string) (wsID, gateID uuid.UUID, err error) {
+func parseJWTClaims(token string) (uuid.UUID, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return uuid.Nil, uuid.Nil, fmt.Errorf("not a JWT (expected 3 parts, got %d)", len(parts))
+		return uuid.Nil, fmt.Errorf("not a JWT (expected 3 parts, got %d)", len(parts))
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return uuid.Nil, uuid.Nil, fmt.Errorf("decode payload: %w", err)
+		return uuid.Nil, fmt.Errorf("decode payload: %w", err)
 	}
 	var claims struct {
-		Sub         string `json:"sub"`
-		WorkspaceID string `json:"workspace_id"`
+		Sub string `json:"sub"`
 	}
 	if err := json.Unmarshal(payload, &claims); err != nil {
-		return uuid.Nil, uuid.Nil, fmt.Errorf("unmarshal claims: %w", err)
+		return uuid.Nil, fmt.Errorf("unmarshal claims: %w", err)
 	}
-	gateID, err = uuid.Parse(claims.Sub)
+	gateID, err := uuid.Parse(claims.Sub)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, fmt.Errorf("parse gate_id from sub: %w", err)
+		return uuid.Nil, fmt.Errorf("parse gate_id from sub: %w", err)
 	}
-	wsID, err = uuid.Parse(claims.WorkspaceID)
-	if err != nil {
-		return uuid.Nil, uuid.Nil, fmt.Errorf("parse workspace_id: %w", err)
-	}
-	return wsID, gateID, nil
+	return gateID, nil
 }
 
 // simulator holds shared state.
 type simulator struct {
-	wsID   string
 	gateID uuid.UUID
 	token  string
 	apiURL string
@@ -145,8 +139,8 @@ func sampleMeta(mode string) map[string]any {
 // ---- MQTT mode ----
 
 func runMQTT(ctx context.Context, sim *simulator, brokerURL string, heartbeatInterval time.Duration) {
-	commandTopic := fmt.Sprintf("workspace_%s/gates/%s/command", sim.wsID, sim.gateID)
-	statusTopic := fmt.Sprintf("workspace_%s/gates/%s/status", sim.wsID, sim.gateID)
+	commandTopic := fmt.Sprintf("gates/%s/command", sim.gateID)
+	statusTopic := fmt.Sprintf("gates/%s/status", sim.gateID)
 
 	var mqttClient pahomqtt.Client
 
@@ -185,7 +179,7 @@ func runMQTT(ctx context.Context, sim *simulator, brokerURL string, heartbeatInt
 		go mqttHeartbeat(ctx, sim, mqttClient, statusTopic, heartbeatInterval)
 	}
 
-	slog.Info("gatesim running in MQTT mode", "workspace_id", sim.wsID, "gate_id", sim.gateID, "heartbeat", heartbeatInterval)
+	slog.Info("gatesim running in MQTT mode", "gate_id", sim.gateID, "heartbeat", heartbeatInterval)
 	slog.Info("Waiting for commands (Ctrl+C to stop)")
 	<-ctx.Done()
 	slog.Info("gatesim stopping")

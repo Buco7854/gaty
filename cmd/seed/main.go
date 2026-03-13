@@ -1,10 +1,11 @@
 // seed crée des données de démo dans une instance Gatie fraîche.
 //
 // Il provisionne :
-//   - Un utilisateur admin (demo@gatie.local / Demo1234!)
-//   - Un workspace "Demo"
+//   - Un membre admin (demo / Demo1234!)
 //   - Gate 1 "Portail Principal" — HTTP_INBOUND, métadonnée batterie, règle low_battery
 //   - Gate 2 "Garage" — NONE (statut manuel)
+//   - Gate 3 "Interphone" — MQTT_GATIE
+//   - Gate 4 "Barrière" — MQTT_CUSTOM
 //
 // Idempotent : se connecte avec les identifiants démo si le compte existe déjà.
 //
@@ -29,7 +30,7 @@ import (
 )
 
 const (
-	demoEmail    = "demo@gatie.local"
+	demoUsername = "demo"
 	demoPassword = "Demo1234!"
 )
 
@@ -53,42 +54,23 @@ func main() {
 	// ── 2. Authentification ───────────────────────────────────────────────────
 	setupStatus := c.must(http.MethodGet, "/api/setup/status", nil, http.StatusOK)
 	if setupStatus["setup_required"] == true {
-		slog.Info("premier démarrage — création du compte admin", "email", demoEmail)
+		slog.Info("premier démarrage — création du compte admin", "username", demoUsername)
 		c.must(http.MethodPost, "/api/setup/init", map[string]any{
-			"email":    demoEmail,
+			"username": demoUsername,
 			"password": demoPassword,
 		}, http.StatusOK)
-		slog.Info("compte admin créé ✓")
+		slog.Info("compte admin créé")
 	} else {
-		// Essaie de s'inscrire ; si le compte existe déjà on se connecte.
-		resp := c.call(http.MethodPost, "/api/auth/register", map[string]any{
-			"email":    demoEmail,
+		// Compte existant → login pour obtenir les cookies.
+		c.must(http.MethodPost, "/api/auth/login", map[string]any{
+			"username": demoUsername,
 			"password": demoPassword,
-		})
-		if resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusOK {
-			// Compte existant ou tout juste créé → login pour obtenir les cookies.
-			c.must(http.MethodPost, "/api/auth/login", map[string]any{
-				"email":    demoEmail,
-				"password": demoPassword,
-			}, http.StatusOK)
-			slog.Info("connecté avec le compte demo", "email", demoEmail)
-		} else {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			slog.Error("impossible de créer/connecter le compte demo", "status", resp.StatusCode, "body", string(body))
-			os.Exit(1)
-		}
+		}, http.StatusOK)
+		slog.Info("connecté avec le compte demo", "username", demoUsername)
 	}
 
-	// ── 3. Workspace ──────────────────────────────────────────────────────────
-	wsResp := c.must(http.MethodPost, "/api/workspaces", map[string]any{
-		"name": "Demo",
-	}, http.StatusCreated)
-	wsID, _ := wsResp["id"].(string)
-	slog.Info("workspace créé", "id", wsID, "name", "Demo")
-
-	// ── 4. Gate 1 : Portail Principal ─────────────────────────────────────────
-	g1 := c.must(http.MethodPost, fmt.Sprintf("/api/workspaces/%s/gates", wsID), map[string]any{
+	// ── 3. Gate 1 : Portail Principal ─────────────────────────────────────────
+	g1 := c.must(http.MethodPost, "/api/gates", map[string]any{
 		"name": "Portail Principal",
 		"status_config": map[string]any{
 			"type": "HTTP_INBOUND",
@@ -114,18 +96,16 @@ func main() {
 	gateID1, _ := g1["id"].(string)
 	slog.Info("gate créée", "name", "Portail Principal", "id", gateID1)
 
-	// ── 5. Gate 2 : Garage ────────────────────────────────────────────────────
-	g2 := c.must(http.MethodPost, fmt.Sprintf("/api/workspaces/%s/gates", wsID), map[string]any{
+	// ── 4. Gate 2 : Garage ────────────────────────────────────────────────────
+	g2 := c.must(http.MethodPost, "/api/gates", map[string]any{
 		"name": "Garage",
 	}, http.StatusCreated)
 	token2, _ := g2["gate_token"].(string)
 	gateID2, _ := g2["id"].(string)
 	slog.Info("gate créée", "name", "Garage", "id", gateID2)
 
-	// ── 6. Gate 3 : Interphone — MQTT_GATIE ──────────────────────────────────
-	// Protocole natif Gaty : commandes {"action":"open|close"}, status {"token":"...","status":"..."}.
-	// Compatible avec gatesim --mode=mqtt.
-	g3 := c.must(http.MethodPost, fmt.Sprintf("/api/workspaces/%s/gates", wsID), map[string]any{
+	// ── 5. Gate 3 : Interphone — MQTT_GATIE ──────────────────────────────────
+	g3 := c.must(http.MethodPost, "/api/gates", map[string]any{
 		"name":             "Interphone",
 		"integration_type": "MQTT",
 		"open_config":      map[string]any{"type": "MQTT_GATIE"},
@@ -136,10 +116,8 @@ func main() {
 	gateID3, _ := g3["id"].(string)
 	slog.Info("gate créée", "name", "Interphone", "id", gateID3)
 
-	// ── 7. Gate 4 : Barrière — MQTT_CUSTOM ───────────────────────────────────
-	// Device tiers qui envoie {"state":"open","voltage":12.3,"temp":22.5}.
-	// Commandes open/close publient un payload JSON personnalisé.
-	g4 := c.must(http.MethodPost, fmt.Sprintf("/api/workspaces/%s/gates", wsID), map[string]any{
+	// ── 6. Gate 4 : Barrière — MQTT_CUSTOM ───────────────────────────────────
+	g4 := c.must(http.MethodPost, "/api/gates", map[string]any{
 		"name":             "Barrière",
 		"integration_type": "MQTT",
 		"open_config": map[string]any{
@@ -175,9 +153,8 @@ func main() {
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println("  DONNÉES DÉMO CRÉÉES")
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	fmt.Printf("  Email       : %s\n", demoEmail)
+	fmt.Printf("  Username    : %s\n", demoUsername)
 	fmt.Printf("  Mot de passe: %s\n", demoPassword)
-	fmt.Printf("  Workspace   : Demo (%s)\n", wsID)
 	fmt.Println()
 	fmt.Printf("  [1] Portail Principal  (HTTP_INBOUND)  id=%s\n", gateID1)
 	fmt.Printf("      token : %s\n", token1)
@@ -200,7 +177,7 @@ func main() {
 	fmt.Printf("    go run ./cmd/gatesim --mode=mqtt --token=%s\n", token3)
 	fmt.Println()
 	fmt.Println("  [4] MQTT_CUSTOM — publie manuellement sur le broker :")
-	fmt.Printf("    # topic status : workspace_%s/gates/%s/status\n", wsID, gateID4)
+	fmt.Printf("    # topic status : gates/%s/status\n", gateID4)
 	fmt.Println(`    # payload      : {"token":"<token4>","state":"open","voltage":12.3,"temp":22.5}`)
 	fmt.Println()
 	fmt.Println("  Ouvre l'UI : http://localhost:5173")
@@ -230,7 +207,6 @@ func (c *seedClient) call(method, path string, body any) *http.Response {
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		// Vérifie si l'API est accessible
 		u, _ := url.Parse(c.base)
 		slog.Error("impossible de joindre l'API — lance `task dev-api`",
 			"host", u.Host, "err", err)

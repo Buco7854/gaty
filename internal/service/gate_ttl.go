@@ -12,37 +12,21 @@ import (
 )
 
 const (
-	// DefaultGateTTL is the inactivity threshold after which the TTL worker marks a gate
-	// "unresponsive" in the database. Must be less than model.OfflineThreshold (5 min),
-	// which is when the API layer begins returning "offline" based on last_seen_at.
-	DefaultGateTTL = 30 * time.Second
-
-	// ttlCheckInterval is how often the worker scans for expired gates.
-	// Short enough to catch expiries within a few seconds without hammering the DB.
-	// The partial index on (last_seen_at) makes each scan very cheap.
+	DefaultGateTTL   = 30 * time.Second
 	ttlCheckInterval = 5 * time.Second
 )
 
-// GateTTLWorker periodically marks gates as "unresponsive" when they haven't
-// sent a status update within the configured TTL. It also applies automatic
-// status transitions when configured.
-//
-// Architecture note: the worker relies on the partial index
-// idx_gates_ttl_candidates so the bulk UPDATE touches only candidate rows,
-// keeping the query O(k) where k is the number of newly-expired gates
-// (typically zero between ticks).
+// GateTTLWorker periodically marks gates as "unresponsive" and applies status transitions.
 type GateTTLWorker struct {
 	gates repository.GateRepository
 	redis *redis.Client
 	ttl   time.Duration
 }
 
-// NewGateTTLWorker creates a worker with the given inactivity threshold.
 func NewGateTTLWorker(gates repository.GateRepository, redis *redis.Client, ttl time.Duration) *GateTTLWorker {
 	return &GateTTLWorker{gates: gates, redis: redis, ttl: ttl}
 }
 
-// Run starts the TTL check loop. It blocks until ctx is cancelled.
 func (w *GateTTLWorker) Run(ctx context.Context) {
 	ticker := time.NewTicker(ttlCheckInterval)
 	defer ticker.Stop()
@@ -78,29 +62,16 @@ func (w *GateTTLWorker) markExpired(ctx context.Context) {
 
 	for _, g := range affected {
 		publishGateStatusEvent(tCtx, w.redis, GateStatusEvent{
-			GateID:      g.GateID.String(),
-			WorkspaceID: g.WorkspaceID.String(),
-			Status:      string(model.GateStatusUnresponsive),
+			GateID: g.GateID.String(),
+			Status: string(model.GateStatusUnresponsive),
 		})
 	}
 }
 
-// transitionRedisKey returns the Redis key used to track when a transition was armed.
 func transitionRedisKey(gateID, from, to string) string {
 	return fmt.Sprintf("gate:tr:%s:%s:%s", gateID, from, to)
 }
 
-// checkTransitions applies automatic status transitions for gates whose current
-// status matches a transition's "from" and whose deadline has elapsed.
-//
-// The timer always uses "reset" semantics: deadline = last_seen_at + after_seconds.
-// Each new status message matching "from" naturally resets the timer.
-//
-// PersistOnChange controls what happens when the gate's status moves away from
-// "from" before the deadline:
-//   - false (default): the transition is cancelled and the armed key is cleaned up.
-//   - true: the transition stays armed and fires at the original deadline
-//     regardless of intermediate status changes. Requires Redis.
 func (w *GateTTLWorker) checkTransitions(ctx context.Context) {
 	tCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -124,33 +95,26 @@ func (w *GateTTLWorker) checkTransitions(ctx context.Context) {
 
 			if !statusMatches {
 				if !t.PersistOnChange {
-					// Default: cancel the transition when status leaves "from".
 					if w.redis != nil {
 						w.redis.Del(tCtx, rKey)
 					}
 					continue
 				}
 
-				// PersistOnChange: keep the transition armed, fire at deadline.
 				if w.redis == nil {
-					continue // cannot track without Redis
+					continue
 				}
 				armedMs, err := w.redis.Get(tCtx, rKey).Int64()
 				if err != nil {
-					continue // not armed — nothing to persist
+					continue
 				}
 				armedAt := time.UnixMicro(armedMs)
 				if now.Before(armedAt.Add(afterDur)) {
-					continue // deadline not reached yet
+					continue
 				}
 				w.redis.Del(tCtx, rKey)
-				// Fall through to fire the transition.
 			} else {
-				// Status matches "from" — reset semantics.
 				if t.PersistOnChange && w.redis != nil {
-					// Track armed time so the transition can persist
-					// through status changes. Updated on every tick
-					// to reflect the latest "from" timestamp.
 					w.redis.Set(tCtx, rKey, g.LastSeenAt.UnixMicro(), 0)
 				}
 				if now.Before(g.LastSeenAt.Add(afterDur)) {
@@ -161,7 +125,6 @@ func (w *GateTTLWorker) checkTransitions(ctx context.Context) {
 				}
 			}
 
-			// Transition is due — apply it directly (no status rules evaluation).
 			if err := w.gates.UpdateStatus(tCtx, g.ID, t.To, g.StatusMetadata); err != nil {
 				slog.Error("gate transitions: failed to update status",
 					"gate_id", g.ID, "from", t.From, "to", t.To, "error", err)
@@ -174,12 +137,11 @@ func (w *GateTTLWorker) checkTransitions(ctx context.Context) {
 
 			if w.redis != nil {
 				publishGateStatusEvent(tCtx, w.redis, GateStatusEvent{
-					GateID:      g.ID.String(),
-					WorkspaceID: g.WorkspaceID.String(),
-					Status:      t.To,
+					GateID: g.ID.String(),
+					Status: t.To,
 				})
 			}
-			break // first matching transition wins
+			break
 		}
 	}
 }

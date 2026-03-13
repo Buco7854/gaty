@@ -15,9 +15,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const userIDKey contextKey = "user_id"
 const memberIDKey contextKey = "member_id"
-const memberWorkspaceIDKey contextKey = "member_workspace_id"
 const memberRoleKey contextKey = "member_role"
 const clientIPKey contextKey = "client_ip"
 const credentialIDKey contextKey = "credential_id"
@@ -45,21 +43,19 @@ func ClientIPFromContext(ctx context.Context) string {
 // It silently extracts authentication and injects the identity into context.
 // Priority: 1) gatie_access cookie (JWT), 2) Authorization: Bearer with gatie_* API token.
 // Always calls next — never rejects on its own.
-func AuthExtractor(authSvc *service.AuthService, memberCredRepo repository.MembershipCredentialRepository, wsRepo repository.WorkspaceRepository) func(huma.Context, func(huma.Context)) {
+func AuthExtractor(authSvc *service.AuthService, credRepo repository.CredentialRepository) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
-		// 1. Try the HttpOnly access cookie (contains JWT for all session types).
+		// 1. Try the HttpOnly access cookie (contains JWT).
 		if token := cookieValue(ctx, "gatie_access"); token != "" {
 			ctx = extractJWT(ctx, authSvc, token)
 		} else if token := bearerToken(ctx); token != "" && strings.HasPrefix(token, "gatie_") {
 			// 2. Fallback: API tokens only (gatie_* prefix, looked up via SHA-256 hash).
 			h := sha256.Sum256([]byte(token))
 			hash := hex.EncodeToString(h[:])
-			if cred, membership, err := memberCredRepo.FindByHashedAPIToken(ctx.Context(), hash); err == nil {
-				ws, wsErr := wsRepo.GetByID(ctx.Context(), membership.WorkspaceID)
-				if wsErr == nil && model.APITokenEnabled(membership.AuthConfig, ws.MemberAuthConfig) {
-					ctx = huma.WithValue(ctx, memberIDKey, membership.ID)
-					ctx = huma.WithValue(ctx, memberWorkspaceIDKey, membership.WorkspaceID)
-					ctx = huma.WithValue(ctx, memberRoleKey, membership.Role)
+			if cred, member, err := credRepo.FindByHashedAPIToken(ctx.Context(), hash); err == nil {
+				if model.APITokenEnabled(member.AuthConfig) {
+					ctx = huma.WithValue(ctx, memberIDKey, member.ID)
+					ctx = huma.WithValue(ctx, memberRoleKey, member.Role)
 					ctx = huma.WithValue(ctx, credentialIDKey, cred.ID)
 				}
 			}
@@ -68,14 +64,11 @@ func AuthExtractor(authSvc *service.AuthService, memberCredRepo repository.Membe
 	}
 }
 
-// extractJWT validates a JWT (local member or global user) and injects identity into context.
+// extractJWT validates a JWT and injects member identity into context.
 func extractJWT(ctx huma.Context, authSvc *service.AuthService, token string) huma.Context {
-	if memberID, wsID, role, err := authSvc.ValidateMemberToken(token); err == nil {
+	if memberID, role, err := authSvc.ValidateAccessToken(token); err == nil {
 		ctx = huma.WithValue(ctx, memberIDKey, memberID)
-		ctx = huma.WithValue(ctx, memberWorkspaceIDKey, wsID)
 		ctx = huma.WithValue(ctx, memberRoleKey, role)
-	} else if userID, err := authSvc.ValidateAccessToken(token); err == nil {
-		ctx = huma.WithValue(ctx, userIDKey, userID)
 	}
 	return ctx
 }
@@ -97,27 +90,10 @@ func cookieValue(ctx huma.Context, name string) string {
 	return ""
 }
 
-// RequireAuth is a per-operation middleware that requires a valid global (platform user) JWT.
-// Returns 401 if the request is not authenticated as a platform user.
+// RequireAuth is a per-operation middleware that requires a valid member JWT or API token.
+// Returns 401 if the request is not authenticated.
 func RequireAuth(api huma.API) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
-		id, ok := ctx.Context().Value(userIDKey).(uuid.UUID)
-		if !ok || id == uuid.Nil {
-			huma.WriteErr(api, ctx, http.StatusUnauthorized, "Unauthorized")
-			return
-		}
-		next(ctx)
-	}
-}
-
-// RequireMembership is a per-operation middleware that accepts either a global or local JWT.
-// Returns 401 if the request carries no valid authentication at all.
-func RequireMembership(api huma.API) func(huma.Context, func(huma.Context)) {
-	return func(ctx huma.Context, next func(huma.Context)) {
-		if id, ok := ctx.Context().Value(userIDKey).(uuid.UUID); ok && id != uuid.Nil {
-			next(ctx)
-			return
-		}
 		if id, ok := ctx.Context().Value(memberIDKey).(uuid.UUID); ok && id != uuid.Nil {
 			next(ctx)
 			return
@@ -126,22 +102,15 @@ func RequireMembership(api huma.API) func(huma.Context, func(huma.Context)) {
 	}
 }
 
-// UserIDFromContext returns the authenticated platform user ID from context.
-func UserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
-	id, ok := ctx.Value(userIDKey).(uuid.UUID)
+// MemberIDFromContext returns the authenticated member ID from context.
+func MemberIDFromContext(ctx context.Context) (uuid.UUID, bool) {
+	id, ok := ctx.Value(memberIDKey).(uuid.UUID)
 	return id, ok && id != uuid.Nil
 }
 
-// MemberFromContext returns the authenticated local membership ID and workspace ID from context.
-func MemberFromContext(ctx context.Context) (membershipID, workspaceID uuid.UUID, ok bool) {
-	mID, mok := ctx.Value(memberIDKey).(uuid.UUID)
-	wsID, wok := ctx.Value(memberWorkspaceIDKey).(uuid.UUID)
-	return mID, wsID, mok && wok && mID != uuid.Nil && wsID != uuid.Nil
-}
-
-// MemberRoleFromContext returns the role stored in the local JWT claims.
-func MemberRoleFromContext(ctx context.Context) (model.WorkspaceRole, bool) {
-	role, ok := ctx.Value(memberRoleKey).(model.WorkspaceRole)
+// MemberRoleFromContext returns the role stored in the JWT claims.
+func MemberRoleFromContext(ctx context.Context) (model.Role, bool) {
+	role, ok := ctx.Value(memberRoleKey).(model.Role)
 	return role, ok && role != ""
 }
 

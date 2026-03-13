@@ -20,10 +20,7 @@ const (
 	TenantIDKey   contextKey = "tenant_id"
 )
 
-const (
-	TenantTypeWorkspace = "WORKSPACE"
-	TenantTypeGate      = "GATE"
-)
+const TenantTypeGate = "GATE"
 
 // tenant cache keys and TTLs.
 // A negative-result TTL of 30s prevents repeated DB hits for regular API clients

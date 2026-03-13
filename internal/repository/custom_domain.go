@@ -8,12 +8,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// DomainResolveResult holds gate + workspace context for a verified custom domain.
+// DomainResolveResult holds gate context for a verified custom domain.
 type DomainResolveResult struct {
 	GateID         uuid.UUID
 	GateName       string
-	WorkspaceID    uuid.UUID
-	WorkspaceName  string
 	HasOpenAction  bool
 	HasCloseAction bool
 	Status         model.GateStatus
@@ -23,7 +21,7 @@ type DomainResolveResult struct {
 
 // CustomDomainRepository is the data-access contract for custom domains.
 type CustomDomainRepository interface {
-	Create(ctx context.Context, gateID, workspaceID uuid.UUID, domain string) (*model.CustomDomain, error)
+	Create(ctx context.Context, gateID uuid.UUID, domain string) (*model.CustomDomain, error)
 	GetByID(ctx context.Context, domainID, gateID uuid.UUID) (*model.CustomDomain, error)
 	GetByDomain(ctx context.Context, domain string) (*model.CustomDomain, error)
 	ListByGate(ctx context.Context, gateID uuid.UUID, p model.PaginationParams) ([]*model.CustomDomain, int, error)

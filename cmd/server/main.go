@@ -79,11 +79,8 @@ func main() {
 	}
 
 	// Repositories
-	userRepo := repopg.NewUserRepository(pool)
+	memberRepo := repopg.NewMemberRepository(pool)
 	credRepo := repopg.NewCredentialRepository(pool)
-	wsRepo := repopg.NewWorkspaceRepository(pool)
-	membershipRepo := repopg.NewWorkspaceMembershipRepository(pool)
-	memberCredRepo := repopg.NewMembershipCredentialRepository(pool)
 	gateRepo := repopg.NewGateRepository(pool)
 	gatePinRepo := repopg.NewGatePinRepository(pool)
 	policyRepo := repopg.NewPolicyRepository(pool)
@@ -93,8 +90,6 @@ func main() {
 	domainRepo := repopg.NewCustomDomainRepository(pool)
 
 	// MQTT auth strategy: DynSec (broker-level) or payload (app-level fallback).
-	// ── Migration note: to switch auth strategy, change MQTT_AUTH_MODE env var.
-	// See service.BrokerAuthManager for the full fallback procedure.
 	var brokerAuth service.BrokerAuthManager = service.NoopBrokerAuth{}
 	brokerAuthEnabled := cfg.MQTTAuthMode == "dynsec"
 	if brokerAuthEnabled && mqttClient != nil {
@@ -115,22 +110,43 @@ func main() {
 	}
 
 	// Services
-	authSvc := service.NewAuthService(userRepo, credRepo, membershipRepo, memberCredRepo, wsRepo, redisClient, cfg.JWTSecret, cfg.GlobalSessionDuration, service.PasswordPolicy{
+	authSvc := service.NewAuthService(memberRepo, credRepo, redisClient, cfg.JWTSecret, cfg.GlobalSessionDuration, service.PasswordPolicy{
 		MinLength:    cfg.PasswordMinLength,
 		RequireUpper: cfg.PasswordRequireUpper,
 		RequireLower: cfg.PasswordRequireLower,
 		RequireDigit: cfg.PasswordRequireDigit,
 	})
-	membershipSvc := service.NewMembershipService(membershipRepo, memberCredRepo, wsRepo, gateRepo, policyRepo)
-	ssoSvc := service.NewSSOService(wsRepo, membershipRepo, memberCredRepo, redisClient, cfg.BaseURL)
-	workspaceSvc := service.NewWorkspaceService(wsRepo)
+	memberSvc := service.NewMemberService(memberRepo, credRepo)
+
+	// SSO providers from env
+	var ssoProviders []service.SSOProviderConfig
+	if cfg.OIDCClientID != "" {
+		ssoProviders = append(ssoProviders, service.SSOProviderConfig{
+			ID:            cfg.OIDCProviderID,
+			Name:          cfg.OIDCProviderName,
+			Type:          "oidc",
+			ClientID:      cfg.OIDCClientID,
+			ClientSecret:  cfg.OIDCClientSecret,
+			Issuer:        cfg.OIDCIssuer,
+			Scopes:        cfg.OIDCScopes,
+			AuthEndpoint:  cfg.OIDCAuthEndpoint,
+			TokenEndpoint: cfg.OIDCTokenEndpoint,
+			JwksURL:       cfg.OIDCJwksURL,
+			AutoProvision: cfg.OIDCAutoProvision,
+			DefaultRole:   model.Role(cfg.OIDCDefaultRole),
+			RoleClaim:     cfg.OIDCRoleClaim,
+			RoleMapping:   cfg.OIDCRoleMapping,
+		})
+	}
+	ssoSvc := service.NewSSOService(memberRepo, credRepo, redisClient, cfg.BaseURL, ssoProviders)
+
 	scheduleSvc := service.NewScheduleService(scheduleRepo)
 	policySvc := service.NewPolicyService(policyRepo, scheduleRepo)
+
 	// Shared SSRF-safe HTTP client for all outbound gate HTTP requests.
 	gateHTTPClient := integration.NewHTTPClient(cfg.HTTPDriverAllowedCIDRs)
 
-	// gateTrigger fires open/close drivers; defined here to avoid an import cycle
-	// (service -> integration -> mqtt -> service).
+	// gateTrigger fires open/close drivers; defined here to avoid an import cycle.
 	gateTrigger := service.GateTriggerFn(func(ctx context.Context, gate *model.Gate, action string) {
 		var driver integration.Driver
 		var err error
@@ -161,28 +177,27 @@ func main() {
 	go service.NewGateWebhookWorker(gateRepo, redisClient, cfg.WebhookMaxRetries, cfg.WebhookRetryDelay, gateHTTPClient).Run(webhookCtx)
 
 	// Global error hook: log 5xx with the original cause, but never expose raw
-	// errors to the client. Structured *huma.ErrorDetail items (validation) are
-	// still included in 4xx responses.
+	// errors to the client.
 	huma.NewError = func(status int, message string, errs ...error) huma.StatusError {
-		model := &huma.ErrorModel{Status: status, Title: http.StatusText(status), Detail: message}
+		m := &huma.ErrorModel{Status: status, Title: http.StatusText(status), Detail: message}
 		for _, err := range errs {
 			if err == nil {
 				continue
 			}
 			var detail *huma.ErrorDetail
 			if errors.As(err, &detail) {
-				model.Errors = append(model.Errors, detail)
+				m.Errors = append(m.Errors, detail)
 			} else if status >= 500 {
 				slog.Error(message, "error", err)
 			}
 		}
-		return model
+		return m
 	}
 
 	api := humachi.New(router, huma.DefaultConfig("GATIE API", "0.1.0"))
 
 	// Global soft auth middleware: silently extracts Bearer token and injects identity into context.
-	api.UseMiddleware(middleware.AuthExtractor(authSvc, memberCredRepo, wsRepo))
+	api.UseMiddleware(middleware.AuthExtractor(authSvc, credRepo))
 
 	// Rate limiters (fail-closed via Redis)
 	authRateLimit := middleware.RateLimiter(api, redisClient, "auth", 10, 10*time.Minute)
@@ -190,11 +205,9 @@ func main() {
 
 	// Per-operation middlewares
 	requireAuth := middleware.RequireAuth(api)
-	requireMembership := middleware.RequireMembership(api)
-	wsMember := middleware.WorkspaceMember(api, membershipRepo)
-	wsAdmin := middleware.WorkspaceAdmin(api, membershipRepo)
-	wsGateManager := middleware.GateManager(api, policyRepo)
-	adminOrGateManager := middleware.AdminOrGateManager(api, membershipRepo, policyRepo)
+	requireAdmin := middleware.RequireAdmin(api)
+	gateManager := middleware.GateManager(api, policyRepo)
+	adminOrGateManager := middleware.AdminOrGateManager(api, policyRepo)
 
 	huma.Get(api, "/api/health", func(ctx context.Context, _ *struct{}) (*struct {
 		Body struct {
@@ -227,25 +240,24 @@ func main() {
 	})
 
 	// Setup (public, no auth)
-	handler.NewSetupHandler(userRepo, authSvc, cfg.CookieSecure).RegisterRoutes(api)
+	handler.NewSetupHandler(memberSvc, authSvc, cfg.CookieSecure).RegisterRoutes(api)
 
 	// Register route groups
-	handler.NewAuthHandler(authSvc, userRepo, cfg.CookieSecure).RegisterRoutes(api, requireAuth, authRateLimit)
-	handler.NewWorkspaceHandler(workspaceSvc).RegisterRoutes(api, requireAuth, wsAdmin)
-	handler.NewGateHandler(gateSvc).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
-	handler.NewPolicyHandler(policySvc).RegisterRoutes(api, wsMember, wsAdmin, wsGateManager)
-	handler.NewMemberHandler(membershipSvc).RegisterRoutes(api, wsAdmin)
-	handler.NewGatePinHandler(gatePinSvc, cfg.CookieSecure).RegisterRoutes(api, wsMember, wsGateManager)
-	handler.NewAccessScheduleHandler(scheduleSvc).RegisterRoutes(api, wsMember, wsAdmin, adminOrGateManager)
-	handler.NewSSOHandler(ssoSvc, authSvc, wsRepo, redisClient, cfg.FrontendURL, cfg.CookieSecure).RegisterRoutes(api, wsAdmin, ssoExchangeRateLimit)
-	handler.NewCredentialHandler(credRepo, memberCredRepo, membershipRepo, credPolicyRepo, wsRepo).RegisterRoutes(api, requireAuth, requireMembership, wsMember, wsAdmin)
-	handler.NewCustomDomainHandler(domainRepo, gateRepo).RegisterRoutes(api, wsMember, wsGateManager)
+	handler.NewAuthHandler(authSvc, memberSvc, cfg.CookieSecure).RegisterRoutes(api, requireAuth, authRateLimit)
+	handler.NewGateHandler(gateSvc).RegisterRoutes(api, requireAuth, requireAdmin, gateManager)
+	handler.NewPolicyHandler(policySvc).RegisterRoutes(api, requireAuth, requireAdmin, gateManager)
+	handler.NewMemberHandler(memberSvc).RegisterRoutes(api, requireAdmin)
+	handler.NewGatePinHandler(gatePinSvc, cfg.CookieSecure).RegisterRoutes(api, requireAuth, gateManager)
+	handler.NewAccessScheduleHandler(scheduleSvc).RegisterRoutes(api, requireAuth, requireAdmin, adminOrGateManager)
+	handler.NewSSOHandler(ssoSvc, authSvc, redisClient, cfg.FrontendURL, cfg.CookieSecure).RegisterRoutes(api, requireAdmin, ssoExchangeRateLimit)
+	handler.NewCredentialHandler(credRepo, memberRepo, credPolicyRepo).RegisterRoutes(api, requireAuth, requireAdmin)
+	handler.NewCustomDomainHandler(domainRepo, gateRepo).RegisterRoutes(api, requireAuth, gateManager)
 
-	// Inbound: gate-to-server status push (gate token auth, no workspace middleware).
+	// Inbound: gate-to-server status push (gate token auth).
 	handler.NewGateInboundHandler(gateSvc).RegisterRoutes(api)
 
 	// SSE: raw chi route (long-lived, not Huma)
-	handler.NewSSEHandler(authSvc, membershipRepo, redisClient).RegisterRoutes(router)
+	handler.NewSSEHandler(authSvc, redisClient).RegisterRoutes(router)
 
 	srv := &http.Server{
 		Addr:           fmt.Sprintf(":%d", cfg.Port),

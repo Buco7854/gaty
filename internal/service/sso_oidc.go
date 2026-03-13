@@ -24,8 +24,7 @@ var oidcHTTPClient = &http.Client{
 }
 
 type ssoState struct {
-	GateID      string `json:"gate_id,omitempty"`
-	WorkspaceID string `json:"workspace_id,omitempty"`
+	GateID string `json:"gate_id,omitempty"`
 }
 
 const (
@@ -130,12 +129,12 @@ func (s *SSOService) newOIDCProvider(ctx context.Context, cfg *SSOProviderConfig
 	}, nil
 }
 
-func (p *oidcProvider) AuthURL(ctx context.Context, gateID, workspaceID string) (string, string, error) {
+func (p *oidcProvider) AuthURL(ctx context.Context, gateID, _ string) (string, string, error) {
 	state, err := newRandomState()
 	if err != nil {
 		return "", "", fmt.Errorf("generate state: %w", err)
 	}
-	stateJSON, err := json.Marshal(ssoState{GateID: gateID, WorkspaceID: workspaceID})
+	stateJSON, err := json.Marshal(ssoState{GateID: gateID})
 	if err != nil {
 		return "", "", fmt.Errorf("marshal state: %w", err)
 	}
@@ -182,7 +181,7 @@ func (p *oidcProvider) Exchange(ctx context.Context, code, state string) (*SSOId
 		Email:       email,
 		DisplayName: displayName,
 		Claims:      claims,
-	}, stateData.GateID, stateData.WorkspaceID, nil
+	}, stateData.GateID, "", nil
 }
 
 func newRandomState() (string, error) {

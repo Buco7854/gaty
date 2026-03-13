@@ -28,7 +28,6 @@ func NewCustomDomainHandler(
 	return &CustomDomainHandler{domains: domains, gates: gates}
 }
 
-
 // --- Views ---
 
 type customDomainView struct {
@@ -51,26 +50,11 @@ func toDomainView(d *model.CustomDomain) customDomainView {
 	}
 }
 
-// --- Helpers ---
-
-// ensureGateInWorkspace checks the gate belongs to the workspace (prevents cross-workspace access).
-func (h *CustomDomainHandler) ensureGateInWorkspace(ctx context.Context, gateID, wsID uuid.UUID) error {
-	if _, err := h.gates.GetByID(ctx, gateID, wsID); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return huma.Error404NotFound("gate not found")
-		}
-		slog.Error("ensureGateInWorkspace", "gate_id", gateID, "ws_id", wsID, "error", err)
-		return huma.Error500InternalServerError("internal error", err)
-	}
-	return nil
-}
-
-// --- POST /api/workspaces/{ws_id}/gates/{gate_id}/domains ---
+// --- POST /api/gates/{gate_id}/domains ---
 
 type addDomainInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
-	Body        struct {
+	GateID uuid.UUID `path:"gate_id"`
+	Body   struct {
 		Domain string `json:"domain" minLength:"3" maxLength:"253"`
 	}
 }
@@ -80,16 +64,12 @@ type addDomainOutput struct {
 }
 
 func (h *CustomDomainHandler) addDomain(ctx context.Context, in *addDomainInput) (*addDomainOutput, error) {
-	if err := h.ensureGateInWorkspace(ctx, in.GateID, in.WorkspaceID); err != nil {
-		return nil, err
-	}
-
 	domain := strings.ToLower(strings.TrimSpace(in.Body.Domain))
 	if domain == "" {
 		return nil, huma.Error400BadRequest("domain is required")
 	}
 
-	d, err := h.domains.Create(ctx, in.GateID, in.WorkspaceID, domain)
+	d, err := h.domains.Create(ctx, in.GateID, domain)
 	if err != nil {
 		if errors.Is(err, repository.ErrAlreadyExists) {
 			return nil, huma.Error409Conflict("domain already registered")
@@ -100,11 +80,10 @@ func (h *CustomDomainHandler) addDomain(ctx context.Context, in *addDomainInput)
 	return &addDomainOutput{Body: toDomainView(d)}, nil
 }
 
-// --- GET /api/workspaces/{ws_id}/gates/{gate_id}/domains ---
+// --- GET /api/gates/{gate_id}/domains ---
 
 type listDomainsInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
+	GateID uuid.UUID `path:"gate_id"`
 	PaginationQuery
 }
 
@@ -113,10 +92,6 @@ type listDomainsOutput struct {
 }
 
 func (h *CustomDomainHandler) listDomains(ctx context.Context, in *listDomainsInput) (*listDomainsOutput, error) {
-	if err := h.ensureGateInWorkspace(ctx, in.GateID, in.WorkspaceID); err != nil {
-		return nil, err
-	}
-
 	p := in.Params()
 	list, total, err := h.domains.ListByGate(ctx, in.GateID, p)
 	if err != nil {
@@ -131,19 +106,14 @@ func (h *CustomDomainHandler) listDomains(ctx context.Context, in *listDomainsIn
 	return &listDomainsOutput{Body: NewPaginatedBody(views, total, p)}, nil
 }
 
-// --- DELETE /api/workspaces/{ws_id}/gates/{gate_id}/domains/{domain_id} ---
+// --- DELETE /api/gates/{gate_id}/domains/{domain_id} ---
 
 type deleteDomainInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
-	DomainID    uuid.UUID `path:"domain_id"`
+	GateID   uuid.UUID `path:"gate_id"`
+	DomainID uuid.UUID `path:"domain_id"`
 }
 
 func (h *CustomDomainHandler) deleteDomain(ctx context.Context, in *deleteDomainInput) (*struct{}, error) {
-	if err := h.ensureGateInWorkspace(ctx, in.GateID, in.WorkspaceID); err != nil {
-		return nil, err
-	}
-
 	if err := h.domains.Delete(ctx, in.DomainID, in.GateID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, huma.Error404NotFound("domain not found")
@@ -154,12 +124,11 @@ func (h *CustomDomainHandler) deleteDomain(ctx context.Context, in *deleteDomain
 	return nil, nil
 }
 
-// --- POST /api/workspaces/{ws_id}/gates/{gate_id}/domains/{domain_id}/verify ---
+// --- POST /api/gates/{gate_id}/domains/{domain_id}/verify ---
 
 type verifyDomainInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
-	DomainID    uuid.UUID `path:"domain_id"`
+	GateID   uuid.UUID `path:"gate_id"`
+	DomainID uuid.UUID `path:"domain_id"`
 }
 
 type verifyDomainOutput struct {
@@ -170,10 +139,6 @@ type verifyDomainOutput struct {
 }
 
 func (h *CustomDomainHandler) verifyDomain(ctx context.Context, in *verifyDomainInput) (*verifyDomainOutput, error) {
-	if err := h.ensureGateInWorkspace(ctx, in.GateID, in.WorkspaceID); err != nil {
-		return nil, err
-	}
-
 	d, err := h.domains.GetByID(ctx, in.DomainID, in.GateID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -237,7 +202,7 @@ func (h *CustomDomainHandler) verifyDomainPublic(ctx context.Context, in *verify
 }
 
 // --- GET /api/public/resolve?domain=xxx ---
-// Returns gate + workspace context for a verified custom domain.
+// Returns gate context for a verified custom domain.
 // Used by the frontend to know which gate page to render on a custom domain.
 
 type resolveDomainInput struct {
@@ -248,8 +213,6 @@ type resolveDomainOutput struct {
 	Body struct {
 		GateID         uuid.UUID         `json:"gate_id"`
 		GateName       string            `json:"gate_name"`
-		WorkspaceID    uuid.UUID         `json:"workspace_id"`
-		WorkspaceName  string            `json:"workspace_name"`
 		HasOpenAction  bool              `json:"has_open_action"`
 		HasCloseAction bool              `json:"has_close_action"`
 		Status         model.GateStatus  `json:"status"`
@@ -270,8 +233,6 @@ func (h *CustomDomainHandler) resolveDomain(ctx context.Context, in *resolveDoma
 	out := &resolveDomainOutput{}
 	out.Body.GateID = res.GateID
 	out.Body.GateName = res.GateName
-	out.Body.WorkspaceID = res.WorkspaceID
-	out.Body.WorkspaceName = res.WorkspaceName
 	out.Body.HasOpenAction = res.HasOpenAction
 	out.Body.HasCloseAction = res.HasCloseAction
 	out.Body.Status = res.Status
@@ -306,7 +267,7 @@ func (h *CustomDomainHandler) publicDomainsList(ctx context.Context, _ *struct{}
 }
 
 // --- GET /api/public/gates/:gate_id ---
-// Returns gate + workspace context by gate ID (for the PIN pad on direct /unlock/:gateId URLs).
+// Returns gate context by gate ID (for the PIN pad on direct /unlock/:gateId URLs).
 
 type resolveGateInput struct {
 	GateID uuid.UUID `path:"gate_id"`
@@ -323,8 +284,6 @@ func (h *CustomDomainHandler) resolveGate(ctx context.Context, in *resolveGateIn
 	out := &resolveDomainOutput{}
 	out.Body.GateID = res.GateID
 	out.Body.GateName = res.GateName
-	out.Body.WorkspaceID = res.WorkspaceID
-	out.Body.WorkspaceName = res.WorkspaceName
 	out.Body.HasOpenAction = res.HasOpenAction
 	out.Body.HasCloseAction = res.HasCloseAction
 	out.Body.Status = res.Status
@@ -337,45 +296,45 @@ func (h *CustomDomainHandler) resolveGate(ctx context.Context, in *resolveGateIn
 
 func (h *CustomDomainHandler) RegisterRoutes(
 	api huma.API,
-	wsMember func(huma.Context, func(huma.Context)),
-	wsGateManager func(huma.Context, func(huma.Context)),
+	requireAuth func(huma.Context, func(huma.Context)),
+	gateManager func(huma.Context, func(huma.Context)),
 ) {
 	huma.Register(api, huma.Operation{
 		OperationID:   "add-custom-domain",
 		Method:        http.MethodPost,
-		Path:          "/api/workspaces/{ws_id}/gates/{gate_id}/domains",
+		Path:          "/api/gates/{gate_id}/domains",
 		Summary:       "Add a custom domain to a gate",
 		Tags:          []string{"Custom Domains"},
 		DefaultStatus: http.StatusCreated,
-		Middlewares:   huma.Middlewares{wsMember, wsGateManager},
+		Middlewares:   huma.Middlewares{requireAuth, gateManager},
 	}, h.addDomain)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "list-custom-domains",
 		Method:      http.MethodGet,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/domains",
+		Path:        "/api/gates/{gate_id}/domains",
 		Summary:     "List custom domains for a gate",
 		Tags:        []string{"Custom Domains"},
-		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+		Middlewares: huma.Middlewares{requireAuth, gateManager},
 	}, h.listDomains)
 
 	huma.Register(api, huma.Operation{
 		OperationID:   "delete-custom-domain",
 		Method:        http.MethodDelete,
-		Path:          "/api/workspaces/{ws_id}/gates/{gate_id}/domains/{domain_id}",
+		Path:          "/api/gates/{gate_id}/domains/{domain_id}",
 		Summary:       "Remove a custom domain",
 		Tags:          []string{"Custom Domains"},
 		DefaultStatus: http.StatusNoContent,
-		Middlewares:   huma.Middlewares{wsMember, wsGateManager},
+		Middlewares:   huma.Middlewares{requireAuth, gateManager},
 	}, h.deleteDomain)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "verify-custom-domain",
 		Method:      http.MethodPost,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/domains/{domain_id}/verify",
+		Path:        "/api/gates/{gate_id}/domains/{domain_id}/verify",
 		Summary:     "Trigger DNS verification for a custom domain",
 		Tags:        []string{"Custom Domains"},
-		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+		Middlewares: huma.Middlewares{requireAuth, gateManager},
 	}, h.verifyDomain)
 
 	// Public endpoints (no auth)
@@ -386,7 +345,7 @@ func (h *CustomDomainHandler) RegisterRoutes(
 		OperationID: "public-resolve-gate",
 		Method:      http.MethodGet,
 		Path:        "/api/public/gates/{gate_id}",
-		Summary:     "Get gate + workspace info by gate ID (for direct /unlock/:gateId URLs)",
+		Summary:     "Get gate info by gate ID (for direct /unlock/:gateId URLs)",
 		Tags:        []string{"Public"},
 	}, h.resolveGate)
 }

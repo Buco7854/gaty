@@ -16,7 +16,7 @@ const (
 
 type Credential struct {
 	ID          uuid.UUID      `json:"id"`
-	UserID      uuid.UUID      `json:"user_id"`
+	MemberID    uuid.UUID      `json:"member_id"`
 	Type        CredentialType `json:"type"`
 	HashedValue string         `json:"-"`
 	Label       *string        `json:"label,omitempty"`
