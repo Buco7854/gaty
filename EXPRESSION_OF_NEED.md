@@ -2,20 +2,56 @@
 
 ## 1. Vision du produit
 
-GATIE est une plateforme SaaS de contrôle de portails/barrières IoT. Elle permet à des organisations de gérer à distance l'ouverture, la fermeture et la supervision de leurs accès physiques (portails, barrières, portes), avec un contrôle granulaire des permissions, des plages horaires, et un accès invité par code PIN.
+GATIE est une application de contrôle de portails/barrières IoT, conçue pour le self-hosting (homelab). Elle permet de gérer à distance l'ouverture, la fermeture et la supervision d'accès physiques (portails, barrières, portes), avec un contrôle granulaire des permissions, des plages horaires, et un accès invité par code PIN.
+
+**Une installation = une instance.** Pas de multi-tenant, pas de workspaces. L'application est simple à déployer et à administrer.
 
 ---
 
-## 2. Concepts clés
+## 2. Modèle économique
 
-### 2.1 Membres et rôles
+### 2.1 Self-host gratuit
 
-L'application fonctionne avec un unique niveau d'identité : les **membres**. Chaque membre appartient à une instance GATIE et possède un rôle :
+- L'application est **gratuite et open-source** en self-hosting
+- Toutes les fonctionnalités sont disponibles sans restriction
+- L'utilisateur déploie et gère son instance sur son propre serveur
+- La communauté open-source assure crédibilité et adoption
+
+### 2.2 Cloud managé (payant)
+
+- Une offre **GATIE Cloud** hébergée est proposée en abonnement
+- Chaque client cloud obtient une **instance dédiée et isolée** (instance-per-tenant)
+- Le code applicatif est **strictement identique** entre self-host et cloud
+- Le cloud vend le **confort**, pas des fonctionnalités supplémentaires :
+  - Déploiement instantané, zéro configuration
+  - Sauvegardes automatiques
+  - Mises à jour gérées
+  - Certificats TLS automatiques
+  - Support technique
+- Le multi-tenant n'existe que dans la couche d'orchestration cloud, **jamais dans l'application**
+
+### 2.3 Portail de gestion cloud (service séparé)
+
+Ce service distinct (hors périmètre de l'application GATIE elle-même) gère :
+
+- Inscription et authentification des clients cloud
+- Facturation et abonnements
+- Provisioning automatique d'instances
+- Gestion des domaines personnalisés côté cloud
+- Monitoring et santé des instances
+
+---
+
+## 3. Concepts clés
+
+### 3.1 Membres et rôles
+
+L'application fonctionne avec un unique niveau d'identité : les **membres**. Chaque membre possède un rôle :
 
 - **ADMIN** : accès total à la gestion (portails, membres, plannings, paramètres)
 - **MEMBER** : accès restreint aux portails sur lesquels des permissions lui ont été attribuées
 
-### 2.2 Portails (Gates)
+### 3.2 Portails (Gates)
 
 Un portail représente un équipement physique (portail, barrière, porte connectée) contrôlable à distance. Chaque portail possède :
 
@@ -25,7 +61,7 @@ Un portail représente un équipement physique (portail, barrière, porte connec
 - Des **métadonnées en direct** (température, niveau batterie, signal, etc.)
 - Un **jeton d'authentification** pour l'appareil physique
 
-### 2.3 Permissions
+### 3.3 Permissions
 
 Les droits d'accès sont attribués **par membre et par portail** avec les permissions suivantes :
 
@@ -34,7 +70,7 @@ Les droits d'accès sont attribués **par membre et par portail** avec les permi
 - **Consulter le statut** et les données en direct d'un portail
 - **Gérer** un portail (configuration, codes PIN, domaines, permissions des autres membres)
 
-### 2.4 Plannings horaires (Schedules)
+### 3.4 Plannings horaires (Schedules)
 
 Les plannings permettent de restreindre temporellement un accès. Ils sont composés d'expressions combinables :
 
@@ -56,9 +92,9 @@ Il existe deux types de plannings :
 
 ---
 
-## 3. Fonctionnalités détaillées
+## 4. Fonctionnalités détaillées
 
-### 3.1 Setup initial
+### 4.1 Setup initial
 
 Au premier lancement, l'application détecte qu'aucun membre n'existe et propose un écran de configuration initiale :
 
@@ -66,24 +102,24 @@ Au premier lancement, l'application détecte qu'aucun membre n'existe et propose
 - Connexion automatique après création
 - Cette étape n'est disponible qu'une seule fois
 
-### 3.2 Authentification
+### 4.2 Authentification
 
-#### 3.2.1 Connexion par mot de passe
+#### 4.2.1 Connexion par mot de passe
 
 - Un membre se connecte avec son **nom d'utilisateur** et son **mot de passe**
 - Le système délivre un jeton d'accès (courte durée) et un jeton de rafraîchissement (longue durée)
 - Le rafraîchissement est automatique et transparent pour l'utilisateur
 - Déconnexion : révocation du jeton de rafraîchissement
 
-#### 3.2.2 Connexion SSO (Single Sign-On)
+#### 4.2.2 Connexion SSO (Single Sign-On)
 
 - Les fournisseurs SSO (OIDC) sont configurés au niveau de l'instance
-- L'écran de connexion membre affiche les boutons SSO disponibles
+- L'écran de connexion affiche les boutons SSO disponibles
 - Flux : redirection vers le fournisseur → callback → échange de code → connexion
 - **Auto-provisioning** : si activé, un membre est automatiquement créé lors de sa première connexion SSO
 - Mapping de rôle : le rôle du membre peut être déduit d'un claim du token SSO
 
-#### 3.2.3 Jetons API (API Tokens)
+#### 4.2.3 Jetons API (API Tokens)
 
 Chaque membre peut créer des **jetons API** pour un accès programmatique :
 
@@ -95,12 +131,12 @@ Chaque membre peut créer des **jetons API** pour un accès programmatique :
 
 Les administrateurs peuvent aussi créer et révoquer des jetons pour les autres membres.
 
-#### 3.2.4 Changement de mot de passe
+#### 4.2.4 Changement de mot de passe
 
 - Un membre peut changer son propre mot de passe (ancien + nouveau requis)
 - Un administrateur peut réinitialiser le mot de passe d'un membre (sans connaître l'ancien)
 
-### 3.3 Gestion des membres
+### 4.3 Gestion des membres
 
 *Réservé aux administrateurs.*
 
@@ -110,7 +146,7 @@ Les administrateurs peuvent aussi créer et révoquer des jetons pour les autres
 - **Modifier** un membre : nom d'affichage, nom d'utilisateur, rôle
 - **Supprimer** un membre (suppression définitive)
 
-#### 3.3.1 Configuration d'authentification par membre
+#### 4.3.1 Configuration d'authentification par membre
 
 Chaque membre peut hériter de la configuration par défaut ou avoir une surcharge individuelle pour :
 
@@ -118,11 +154,11 @@ Chaque membre peut hériter de la configuration par défaut ou avoir une surchar
 - Activation/désactivation du SSO
 - Activation/désactivation des jetons API
 
-Trois états possibles : **hériter** (utilise la valeur par défaut), **activé**, **désactivé**.
+Trois états possibles : **hériter** (utilise la valeur par défaut de l'instance), **activé**, **désactivé**.
 
-### 3.4 Gestion des portails
+### 4.4 Gestion des portails
 
-#### 3.4.1 CRUD des portails
+#### 4.4.1 CRUD des portails
 
 *Création et suppression réservées aux administrateurs. Modification réservée aux administrateurs et gestionnaires du portail.*
 
@@ -134,13 +170,13 @@ Trois états possibles : **hériter** (utilise la valeur par défaut), **activé
 - **Modifier** la configuration d'un portail
 - **Supprimer** un portail (suppression définitive)
 
-#### 3.4.2 Actions sur un portail
+#### 4.4.2 Actions sur un portail
 
 - **Ouvrir** un portail : envoie la commande d'ouverture à l'appareil
 - **Fermer** un portail : envoie la commande de fermeture (si configuré)
 - Les actions respectent les permissions et les plannings horaires du membre
 
-#### 3.4.3 Configuration des actions
+#### 4.4.3 Configuration des actions
 
 Chaque portail possède trois actions configurables indépendamment : **ouverture**, **fermeture**, **remontée de statut**. Chaque action peut être de type :
 
@@ -148,7 +184,7 @@ Chaque portail possède trois actions configurables indépendamment : **ouvertur
 - **HTTP** : appel à un webhook externe (URL, méthode, headers, body)
 - **Aucune** : action désactivée
 
-#### 3.4.4 Statut et données en direct
+#### 4.4.4 Statut et données en direct
 
 - L'appareil pousse son statut vers le serveur (via MQTT ou HTTP entrant)
 - Le statut est interprété via un **mapping configurable** (correspondance entre les champs reçus et les statuts affichés)
@@ -157,7 +193,7 @@ Chaque portail possède trois actions configurables indépendamment : **ouvertur
 - Le système détecte automatiquement les appareils **non réactifs** si aucune donnée n'est reçue dans un délai configurable (TTL)
 - Les **statuts personnalisés** peuvent être définis en plus des statuts par défaut (open, closed, unavailable)
 
-#### 3.4.5 Configuration des métadonnées
+#### 4.4.5 Configuration des métadonnées
 
 L'administrateur peut configurer quelles métadonnées sont affichées en direct, avec :
 
@@ -165,7 +201,7 @@ L'administrateur peut configurer quelles métadonnées sont affichées en direct
 - Libellé affiché (ex. : "Signal LoRa")
 - Unité (ex. : "dBm")
 
-#### 3.4.6 Jeton d'appareil (Gate Token)
+#### 4.4.6 Jeton d'appareil (Gate Token)
 
 Chaque portail possède un jeton secret utilisé par l'appareil physique pour s'authentifier auprès du serveur :
 
@@ -173,18 +209,18 @@ Chaque portail possède un jeton secret utilisé par l'appareil physique pour s'
 - **Rotation** possible : génère un nouveau jeton et invalide l'ancien
 - Consultable par les administrateurs
 
-### 3.5 Codes d'accès (PIN / Mot de passe)
+### 4.5 Codes d'accès (PIN / Mot de passe)
 
 *Gestion réservée aux gestionnaires du portail.*
 
 Les codes d'accès permettent un accès public à un portail sans compte membre.
 
-#### 3.5.1 Types de codes
+#### 4.5.1 Types de codes
 
 - **Code PIN** : suite de chiffres (minimum 4), saisie via pavé numérique
 - **Mot de passe** : chaîne de texte libre
 
-#### 3.5.2 Création et gestion
+#### 4.5.2 Création et gestion
 
 - **Créer** un code : type (PIN/mot de passe), libellé, métadonnées de contrôle
 - **Lister** les codes d'un portail
@@ -193,14 +229,14 @@ Les codes d'accès permettent un accès public à un portail sans compte membre.
 - **Attacher un planning** : le code n'est valide que pendant les plages horaires définies
 - **Détacher un planning**
 
-#### 3.5.3 Métadonnées de contrôle d'un code
+#### 4.5.3 Métadonnées de contrôle d'un code
 
 - **Date d'expiration** : le code devient invalide après cette date
 - **Nombre d'utilisations maximum** : le code se désactive après N utilisations
 - **Durée de session** : si défini, le code ouvre une session temporaire au lieu d'un déclenchement unique
 - **Permissions de session** : quelles actions sont autorisées pendant la session (ouvrir, fermer, consulter le statut)
 
-#### 3.5.4 Accès public par code
+#### 4.5.4 Accès public par code
 
 Deux modes de fonctionnement :
 
@@ -215,49 +251,49 @@ Deux modes de fonctionnement :
 - L'utilisateur peut ensuite ouvrir/fermer le portail et consulter son statut pendant la durée de la session
 - La session expire automatiquement
 
-#### 3.5.5 Sécurité des codes
+#### 4.5.5 Sécurité des codes
 
 - **Limitation de tentatives** : maximum de tentatives par IP et par portail sur une fenêtre de temps (anti brute-force)
 - **Limitation globale** : maximum de tentatives par IP tous portails confondus
 - **Temps de réponse constant** : protection contre les attaques par timing
 
-### 3.6 Permissions et politiques d'accès
+### 4.6 Permissions et politiques d'accès
 
-#### 3.6.1 Attribution des permissions
+#### 4.6.1 Attribution des permissions
 
 - Un administrateur ou gestionnaire de portail peut **accorder** ou **révoquer** des permissions à un membre sur un portail
 - Permissions disponibles : ouverture, fermeture, consultation du statut, gestion
 - Les permissions sont indépendantes les unes des autres
 
-#### 3.6.2 Restrictions temporelles par membre
+#### 4.6.2 Restrictions temporelles par membre
 
 - Un planning peut être attaché à un couple **membre + portail**
 - Le membre ne pourra agir sur ce portail que pendant les plages autorisées
 - La restriction s'applique en plus des permissions (il faut la permission ET être dans la plage horaire)
 
-#### 3.6.3 Permissions par défaut
+#### 4.6.3 Permissions par défaut
 
 - L'administrateur peut configurer des **permissions par défaut** qui s'appliquent à tous les nouveaux membres
 - Configuration via la page des paramètres
 
-### 3.7 Domaines personnalisés
+### 4.7 Domaines personnalisés
 
 Chaque portail peut avoir un ou plusieurs **domaines personnalisés** pointant vers sa page d'accès public.
 
-#### 3.7.1 Gestion des domaines
+#### 4.7.1 Gestion des domaines
 
 - **Ajouter** un domaine personnalisé à un portail
 - **Vérifier** le domaine par challenge DNS : l'administrateur doit créer un enregistrement TXT `_gatie.{domain}` avec le jeton fourni
 - **Supprimer** un domaine
 - **Lister** les domaines d'un portail avec leur état de vérification
 
-#### 3.7.2 Fonctionnement
+#### 4.7.2 Fonctionnement
 
 - Un domaine vérifié redirige automatiquement vers la page d'accès du portail associé
 - Le certificat TLS est provisionné automatiquement (via le proxy)
 - La résolution du domaine vers le portail est publique (pas d'authentification requise)
 
-### 3.8 Temps réel (Server-Sent Events)
+### 4.8 Temps réel (Server-Sent Events)
 
 L'application diffuse les événements en temps réel :
 
@@ -266,7 +302,7 @@ L'application diffuse les événements en temps réel :
 - Les événements transitent de l'appareil vers le serveur, puis sont redistribués à tous les clients connectés
 - Reconnexion automatique en cas de perte de connexion
 
-### 3.9 Paramètres de l'instance
+### 4.9 Paramètres de l'instance
 
 *Réservé aux administrateurs.*
 
@@ -276,29 +312,29 @@ L'application diffuse les événements en temps réel :
   - Activer/désactiver les jetons API
   - Nombre maximum de jetons API par membre
   - Durée de session par défaut
-- **Fournisseurs SSO** : consultation des fournisseurs configurés (la configuration se fait au niveau de l'infrastructure)
+- **Fournisseurs SSO** : consultation des fournisseurs configurés (la configuration se fait via variables d'environnement)
 - **Permissions par défaut** : grille de permissions par portail applicables aux nouveaux membres
 
-### 3.10 Health check
+### 4.10 Health check
 
 - Le système expose un point de contrôle de santé vérifiant la connectivité à la base de données et au cache
 
 ---
 
-## 4. Interfaces utilisateur
+## 5. Interfaces utilisateur
 
-### 4.1 Écrans d'administration (membres authentifiés)
+### 5.1 Écrans d'administration (membres authentifiés)
 
-#### 4.1.1 Connexion
+#### 5.1.1 Connexion
 
 - Formulaire nom d'utilisateur + mot de passe
 - Boutons SSO si des fournisseurs sont configurés
 
-#### 4.1.2 Setup initial
+#### 5.1.2 Setup initial
 
 - Formulaire de création du premier administrateur (nom d'utilisateur, mot de passe, confirmation)
 
-#### 4.1.3 Tableau de bord des portails
+#### 5.1.3 Tableau de bord des portails
 
 - Grille responsive de cartes représentant les portails
 - Chaque carte affiche : nom, statut (badge coloré), type d'intégration
@@ -307,7 +343,7 @@ L'application diffuse les événements en temps réel :
 - Bouton de création de portail (admin uniquement)
 - Mise à jour en temps réel des statuts via SSE
 
-#### 4.1.4 Détail d'un portail
+#### 5.1.4 Détail d'un portail
 
 - Statut en direct avec badge coloré
 - Boutons d'ouverture et fermeture
@@ -317,7 +353,7 @@ L'application diffuse les événements en temps réel :
 - **Section domaines personnalisés** : liste avec statut de vérification, instructions DNS, boutons vérifier/supprimer
 - **Dialogue de configuration** : actions (ouvrir/fermer/statut), métadonnées affichées, statuts personnalisés, règles de statut, TTL, transitions de statut
 
-#### 4.1.5 Gestion des membres
+#### 5.1.5 Gestion des membres
 
 - Liste des membres avec avatar, nom, rôle
 - Création de membre via formulaire modal
@@ -327,28 +363,28 @@ L'application diffuse les événements en temps réel :
   - **Plannings** : sélection d'un planning par portail
   - **Surcharges d'authentification** : trois boutons (hériter/activé/désactivé) par méthode
 
-#### 4.1.6 Gestion des plannings
+#### 5.1.6 Gestion des plannings
 
 - Deux onglets : plannings personnels et plannings d'administration
 - Carte de planning affichant : nom, type d'expression, description, résumé lisible de la règle
 - **Éditeur d'expression visuel** : construction arborescente avec opérateurs ET/OU/NON, types de règles sélectionnables, imbrication avec code couleur
 
-#### 4.1.7 Paramètres
+#### 5.1.7 Paramètres
 
 - Configuration des méthodes d'authentification par défaut
 - Liste des fournisseurs SSO (lecture seule)
 - Grille des permissions par défaut
 
-#### 4.1.8 Gestion des jetons API personnels
+#### 5.1.8 Gestion des jetons API personnels
 
 - Accessible depuis le menu utilisateur
 - Formulaire de création : libellé, expiration, planning, restriction de permissions
 - Liste des jetons existants avec suppression
 - Affichage unique du jeton brut à la création avec bouton copier
 
-### 4.2 Écrans publics (accès invité)
+### 5.2 Écrans publics (accès invité)
 
-#### 4.2.1 Portail d'accès (Gate Portal)
+#### 5.2.1 Portail d'accès (Gate Portal)
 
 Page d'accueil d'un portail accessible via domaine personnalisé ou lien direct. Trois options :
 
@@ -361,7 +397,7 @@ Si une session est active (PIN avec session ou membre connecté) :
 - Données en direct si permission de consultation
 - Lien vers le tableau de bord (si membre admin)
 
-#### 4.2.2 Pavé numérique (PIN Pad)
+#### 5.2.2 Pavé numérique (PIN Pad)
 
 - Affichage du nom du portail
 - Indicateurs visuels (points) du PIN saisi
@@ -370,20 +406,20 @@ Si une session est active (PIN avec session ou membre connecté) :
 - Possibilité de basculer en mode mot de passe
 - Retour visuel : succès (coche verte), erreur (croix rouge), trop de tentatives
 
-#### 4.2.3 Saisie mot de passe
+#### 5.2.3 Saisie mot de passe
 
 - Champ de saisie masqué
 - Bouton de confirmation
 - Navigation vers les autres méthodes
 
-#### 4.2.4 Connexion membre (contexte portail)
+#### 5.2.4 Connexion membre (contexte portail)
 
 - Formulaire nom d'utilisateur + mot de passe
 - Boutons SSO si disponibles
 - Après connexion réussie : redirection automatique vers le portail avec session active
 - Lien vers les autres méthodes d'accès
 
-### 4.3 Éléments transversaux
+### 5.3 Éléments transversaux
 
 - **Sélecteur de thème** : mode clair / mode sombre
 - **Sélecteur de langue** : internationalisation
@@ -396,9 +432,9 @@ Si une session est active (PIN avec session ou membre connecté) :
 
 ---
 
-## 5. Règles métier transversales
+## 6. Règles métier transversales
 
-### 5.1 Sécurité
+### 6.1 Sécurité
 
 - Les mots de passe respectent des exigences de complexité configurable (longueur minimale, majuscule, minuscule, chiffre)
 - Les jetons API sont hashés en base et ne sont affichés qu'une seule fois
@@ -407,34 +443,34 @@ Si une session est active (PIN avec session ou membre connecté) :
 - Les réponses aux tentatives de code sont à durée constante (anti-timing)
 - Les états anti-CSRF sont à usage unique avec expiration courte
 
-### 5.2 Contrôle d'accès
+### 6.2 Contrôle d'accès
 
 - Toute action sur un portail vérifie : (1) la permission du membre, (2) le planning horaire si applicable
 - Les administrateurs ont un accès implicite à tous les portails
 - Les membres ne voient que les portails sur lesquels ils ont des permissions
 
-### 5.3 Temps réel
+### 6.3 Temps réel
 
 - Les statuts de portail sont propagés en temps réel depuis l'appareil jusqu'à l'interface
 - Un appareil qui ne communique plus est automatiquement marqué comme "non réactif" après un délai configurable
 - Les transitions de statut automatiques se déclenchent après un délai défini
 
-### 5.4 Gestion des sessions
+### 6.4 Gestion des sessions
 
 - Les sessions membres ont une durée configurable avec rafraîchissement automatique
 - Les sessions PIN ont une durée définie par le code utilisé
 - La déconnexion révoque immédiatement la session côté serveur
 
-### 5.5 Jetons API et contrôle fin
+### 6.5 Jetons API et contrôle fin
 
 - Un jeton API n'accorde **jamais** les privilèges implicites d'administrateur, même si le membre est admin. Chaque jeton est strictement limité aux permissions explicitement attribuées lors de sa création.
 - Un jeton API peut avoir un planning global (restriction temporelle unique appliquée à tous les portails accessibles via ce jeton)
 
-### 5.6 Polling de statut (webhook)
+### 6.6 Polling de statut (webhook)
 
 - Pour les portails configurés en mode webhook HTTP, le serveur interroge périodiquement l'appareil (polling) pour récupérer son statut
 - Le polling supporte les tentatives multiples avec délai configurable en cas d'échec
 
-### 5.7 Audit
+### 6.7 Audit
 
 - Le système prévoit un journal d'audit enregistrant les actions sensibles (ouvertures, tentatives de connexion, modifications de configuration) avec l'identifiant du membre, l'adresse IP, le portail concerné et les métadonnées associées
