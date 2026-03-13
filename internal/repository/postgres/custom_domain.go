@@ -23,11 +23,11 @@ func NewCustomDomainRepository(pool *pgxpool.Pool) repository.CustomDomainReposi
 	return &customDomainRepository{pool: pool}
 }
 
-const domainCols = `id, gate_id, workspace_id, domain, dns_challenge_token, verified_at, created_at`
+const domainCols = `id, gate_id, domain, dns_challenge_token, verified_at, created_at`
 
 func scanDomain(row pgx.Row) (*model.CustomDomain, error) {
 	d := &model.CustomDomain{}
-	err := row.Scan(&d.ID, &d.GateID, &d.WorkspaceID, &d.Domain, &d.DNSChallengeToken, &d.VerifiedAt, &d.CreatedAt)
+	err := row.Scan(&d.ID, &d.GateID, &d.Domain, &d.DNSChallengeToken, &d.VerifiedAt, &d.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, repository.ErrNotFound
 	}
@@ -37,12 +37,12 @@ func scanDomain(row pgx.Row) (*model.CustomDomain, error) {
 	return d, nil
 }
 
-func (r *customDomainRepository) Create(ctx context.Context, gateID, workspaceID uuid.UUID, domain string) (*model.CustomDomain, error) {
+func (r *customDomainRepository) Create(ctx context.Context, gateID uuid.UUID, domain string) (*model.CustomDomain, error) {
 	d, err := scanDomain(r.pool.QueryRow(ctx,
-		`INSERT INTO custom_domains (gate_id, workspace_id, domain)
-		 VALUES ($1, $2, $3)
+		`INSERT INTO custom_domains (gate_id, domain)
+		 VALUES ($1, $2)
 		 RETURNING `+domainCols,
-		gateID, workspaceID, domain,
+		gateID, domain,
 	))
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -91,7 +91,7 @@ func (r *customDomainRepository) ListByGate(ctx context.Context, gateID uuid.UUI
 	var result []*model.CustomDomain
 	for rows.Next() {
 		d := &model.CustomDomain{}
-		if err := rows.Scan(&d.ID, &d.GateID, &d.WorkspaceID, &d.Domain, &d.DNSChallengeToken, &d.VerifiedAt, &d.CreatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.GateID, &d.Domain, &d.DNSChallengeToken, &d.VerifiedAt, &d.CreatedAt); err != nil {
 			return nil, 0, fmt.Errorf("scan custom domain row: %w", err)
 		}
 		result = append(result, d)
@@ -111,7 +111,7 @@ func (r *customDomainRepository) ListAllVerified(ctx context.Context) ([]*model.
 	var result []*model.CustomDomain
 	for rows.Next() {
 		d := &model.CustomDomain{}
-		if err := rows.Scan(&d.ID, &d.GateID, &d.WorkspaceID, &d.Domain, &d.DNSChallengeToken, &d.VerifiedAt, &d.CreatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.GateID, &d.Domain, &d.DNSChallengeToken, &d.VerifiedAt, &d.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan verified domain row: %w", err)
 		}
 		result = append(result, d)
@@ -137,16 +137,15 @@ func (r *customDomainRepository) ResolveByDomain(ctx context.Context, domain str
 	var res repository.DomainResolveResult
 	var rawMetaCfg, rawStatusMeta []byte
 	err := r.pool.QueryRow(ctx,
-		`SELECT g.id, g.name, w.id, w.name,
+		`SELECT g.id, g.name,
 		        COALESCE(g.open_config->>'type', 'NONE') <> 'NONE',
 		        COALESCE(g.close_config->>'type', 'NONE') <> 'NONE',
 		        g.status, g.meta_config, g.status_metadata
 		 FROM custom_domains cd
-		 JOIN gates g       ON g.id = cd.gate_id
-		 JOIN workspaces w  ON w.id = cd.workspace_id
+		 JOIN gates g ON g.id = cd.gate_id
 		 WHERE cd.domain = $1 AND cd.verified_at IS NOT NULL`,
 		domain,
-	).Scan(&res.GateID, &res.GateName, &res.WorkspaceID, &res.WorkspaceName,
+	).Scan(&res.GateID, &res.GateName,
 		&res.HasOpenAction, &res.HasCloseAction, &res.Status, &rawMetaCfg, &rawStatusMeta)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, repository.ErrNotFound

@@ -53,6 +53,22 @@ type Config struct {
 	// Webhook poller settings (HTTP_WEBHOOK status mode).
 	WebhookMaxRetries int           // max retry attempts per poll (default 3)
 	WebhookRetryDelay time.Duration // delay between retries (default 1s)
+
+	// OIDC/SSO configuration (env-based, not editable at runtime).
+	// When set, SSO is enabled and locks auth options in frontend/backend.
+	OIDCProviderID     string // provider ID (default "oidc")
+	OIDCProviderName   string // display name (default "SSO")
+	OIDCClientID       string // OIDC client ID (empty = SSO disabled)
+	OIDCClientSecret   string
+	OIDCIssuer         string   // OIDC issuer URL (for auto-discovery)
+	OIDCScopes         []string // additional scopes beyond openid+email+profile
+	OIDCAuthEndpoint   string   // manual OAuth2 auth endpoint (skip auto-discovery)
+	OIDCTokenEndpoint  string   // manual OAuth2 token endpoint
+	OIDCJwksURL        string   // manual JWKS URL
+	OIDCAutoProvision  bool     // auto-create members on first SSO login (default true)
+	OIDCDefaultRole    string   // role for auto-provisioned members (default "MEMBER")
+	OIDCRoleClaim      string   // JWT claim to map to role
+	OIDCRoleMapping    map[string]string // claim value → role mapping
 }
 
 func Load() (*Config, error) {
@@ -225,6 +241,43 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("invalid WEBHOOK_RETRY_DELAY_MS: %w", err)
 		}
 		cfg.WebhookRetryDelay = time.Duration(ms) * time.Millisecond
+	}
+
+	// OIDC/SSO (env-based): only active when OIDC_CLIENT_ID is set.
+	cfg.OIDCClientID = os.Getenv("OIDC_CLIENT_ID")
+	cfg.OIDCClientSecret = os.Getenv("OIDC_CLIENT_SECRET")
+	cfg.OIDCIssuer = os.Getenv("OIDC_ISSUER")
+	cfg.OIDCProviderID = os.Getenv("OIDC_PROVIDER_ID")
+	if cfg.OIDCProviderID == "" {
+		cfg.OIDCProviderID = "oidc"
+	}
+	cfg.OIDCProviderName = os.Getenv("OIDC_PROVIDER_NAME")
+	if cfg.OIDCProviderName == "" {
+		cfg.OIDCProviderName = "SSO"
+	}
+	if v := os.Getenv("OIDC_SCOPES"); v != "" {
+		cfg.OIDCScopes = strings.Split(v, ",")
+	}
+	cfg.OIDCAuthEndpoint = os.Getenv("OIDC_AUTH_ENDPOINT")
+	cfg.OIDCTokenEndpoint = os.Getenv("OIDC_TOKEN_ENDPOINT")
+	cfg.OIDCJwksURL = os.Getenv("OIDC_JWKS_URL")
+	cfg.OIDCAutoProvision = true
+	if v := os.Getenv("OIDC_AUTO_PROVISION"); v != "" {
+		cfg.OIDCAutoProvision = v == "true" || v == "1"
+	}
+	cfg.OIDCDefaultRole = os.Getenv("OIDC_DEFAULT_ROLE")
+	if cfg.OIDCDefaultRole == "" {
+		cfg.OIDCDefaultRole = "MEMBER"
+	}
+	cfg.OIDCRoleClaim = os.Getenv("OIDC_ROLE_CLAIM")
+	if v := os.Getenv("OIDC_ROLE_MAPPING"); v != "" {
+		cfg.OIDCRoleMapping = make(map[string]string)
+		for _, pair := range strings.Split(v, ",") {
+			parts := strings.SplitN(pair, "=", 2)
+			if len(parts) == 2 {
+				cfg.OIDCRoleMapping[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+			}
+		}
 	}
 
 	return cfg, nil

@@ -17,46 +17,26 @@ import (
 )
 
 // StatusTopic returns the MQTT topic for a gate's status updates.
-// Format: workspace_{wsID}/gates/{gateID}/status
-func StatusTopic(wsID, gateID uuid.UUID) string {
-	return fmt.Sprintf("workspace_%s/gates/%s/status", wsID, gateID)
+// Format: gates/{gateID}/status
+func StatusTopic(gateID uuid.UUID) string {
+	return fmt.Sprintf("gates/%s/status", gateID)
 }
 
 // CommandTopic returns the MQTT topic to send commands to a gate.
-// Format: workspace_{wsID}/gates/{gateID}/command
-func CommandTopic(wsID, gateID uuid.UUID) string {
-	return fmt.Sprintf("workspace_%s/gates/%s/command", wsID, gateID)
+// Format: gates/{gateID}/command
+func CommandTopic(gateID uuid.UUID) string {
+	return fmt.Sprintf("gates/%s/command", gateID)
 }
 
 // SubscribeGateStatuses subscribes to all gate status topics and delegates
 // status processing to service.ProcessGateStatus (rule evaluation, DB
 // persistence, SSE pub/sub).
-// Topic wildcard: +/gates/+/status
-//
-// The payload "token" field (gate JWT) is always required and verified
-// for signature + topic consistency (gate_id in token must match topic).
-// The auth mode only controls whether the token is also checked against
-// the DB for rotation:
-//
-//   - brokerAuth=true  (MQTT_AUTH_MODE=dynsec): JWT signature + topic
-//     match only. The broker already validated credentials at CONNECT
-//     time via the Dynamic Security Plugin, so DB lookup is skipped.
-//
-//   - brokerAuth=false (MQTT_AUTH_MODE=payload): full validation — JWT
-//     signature, topic match, AND DB lookup (GetByToken) to reject
-//     rotated tokens. This is the only line of defense when the broker
-//     accepts anonymous connections.
-//
-// ── Migration note ──────────────────────────────────────────────────
-// These two branches are the critical switch point for broker auth.
-// If the Dynamic Security Plugin (or any future broker auth backend)
-// becomes unavailable, set MQTT_AUTH_MODE=payload to fall back to
-// full app-level token validation here. No other code changes needed.
+// Topic wildcard: gates/+/status
 func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redisClient *redis.Client, brokerAuth bool, jwtSecret []byte) error {
-	return c.Subscribe("+/gates/+/status", func(_ pahomqtt.Client, msg pahomqtt.Message) {
-		_, topicGateID, err := parseTopicIDs(msg.Topic())
+	return c.Subscribe("gates/+/status", func(_ pahomqtt.Client, msg pahomqtt.Message) {
+		topicGateID, err := parseTopicGateID(msg.Topic())
 		if err != nil {
-			slog.Warn("mqtt: cannot parse ids from topic", "topic", msg.Topic())
+			slog.Warn("mqtt: cannot parse gate id from topic", "topic", msg.Topic())
 			return
 		}
 
@@ -75,7 +55,7 @@ func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redis
 			slog.Warn("mqtt: status payload missing token", "gate_id", topicGateID)
 			return
 		}
-		claimedGateID, _, err := service.ParseGateToken(token, jwtSecret)
+		claimedGateID, err := service.ParseGateToken(token, jwtSecret)
 		if err != nil {
 			slog.Warn("mqtt: invalid gate token signature", "gate_id", topicGateID)
 			return
@@ -87,18 +67,12 @@ func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redis
 
 		var gate *model.Gate
 		if brokerAuth {
-			// ── BROKER AUTH PATH (dynsec) ────────────────────────────────
-			// Broker validated credentials at CONNECT. Token signature and
-			// topic match are verified above; skip DB rotation check.
 			gate, err = gateRepo.GetByIDPublic(ctx, topicGateID)
 			if err != nil {
 				slog.Warn("mqtt: gate not found", "gate_id", topicGateID, "error", err)
 				return
 			}
 		} else {
-			// ── APP-LEVEL AUTH PATH (payload) ────────────────────────────
-			// No broker auth — also verify the token against DB to reject
-			// rotated tokens (full validation).
 			gate, err = gateRepo.GetByToken(ctx, topicGateID, token)
 			if err != nil {
 				slog.Warn("mqtt: gate token invalid or rotated", "gate_id", topicGateID)
@@ -119,22 +93,18 @@ func (c *Client) SubscribeGateStatuses(gateRepo repository.GateRepository, redis
 }
 
 // resolveMQTTPayload extracts status and metadata from a raw MQTT JSON payload.
-// Handles both MQTT_GATIE (fixed format, meta extracted by MetaConfig keys) and MQTT_CUSTOM (user mapping).
 func resolveMQTTPayload(gate *model.Gate, raw map[string]any) (status string, meta map[string]any, err error) {
 	if gate.StatusConfig == nil {
 		return "", nil, fmt.Errorf("no MQTT status_config configured")
 	}
 	switch gate.StatusConfig.Type {
 	case model.DriverTypeMQTTGatie:
-		// Native Gaty protocol: {"token":"...","status":"...",...}
-		// Meta extracted via gate.MetaConfig keys from root.
 		s, _ := raw["status"].(string)
 		if s == "" {
 			return "", nil, fmt.Errorf("mqtt_gatie: missing or empty 'status' field in payload")
 		}
 		return s, model.ExtractMeta(gate.MetaConfig, raw), nil
 	case model.DriverTypeMQTTCustom:
-		// MQTT_CUSTOM: status extracted via PayloadMapping; meta via gate.MetaConfig.
 		if len(gate.StatusConfig.Config) == 0 {
 			return "", nil, fmt.Errorf("no MQTT_CUSTOM status_config mapping configured")
 		}
@@ -152,24 +122,15 @@ func resolveMQTTPayload(gate *model.Gate, raw map[string]any) (status string, me
 	}
 }
 
-// parseTopicIDs extracts workspace UUID and gate UUID from topics like
-// "workspace_{wsID}/gates/{gateID}/status".
-func parseTopicIDs(topic string) (wsID, gateID uuid.UUID, err error) {
+// parseTopicGateID extracts gate UUID from topics like "gates/{gateID}/status".
+func parseTopicGateID(topic string) (uuid.UUID, error) {
 	parts := strings.Split(topic, "/")
-	if len(parts) != 4 {
-		return uuid.Nil, uuid.Nil, fmt.Errorf("unexpected topic format: %s", topic)
+	if len(parts) != 3 || parts[0] != "gates" {
+		return uuid.Nil, fmt.Errorf("unexpected topic format: %s", topic)
 	}
-	wsPrefix := parts[0]
-	if !strings.HasPrefix(wsPrefix, "workspace_") {
-		return uuid.Nil, uuid.Nil, fmt.Errorf("unexpected workspace prefix: %s", wsPrefix)
-	}
-	wsID, err = uuid.Parse(strings.TrimPrefix(wsPrefix, "workspace_"))
+	gateID, err := uuid.Parse(parts[1])
 	if err != nil {
-		return uuid.Nil, uuid.Nil, fmt.Errorf("parse workspace id: %w", err)
+		return uuid.Nil, fmt.Errorf("parse gate id: %w", err)
 	}
-	gateID, err = uuid.Parse(parts[2])
-	if err != nil {
-		return uuid.Nil, uuid.Nil, fmt.Errorf("parse gate id: %w", err)
-	}
-	return wsID, gateID, nil
+	return gateID, nil
 }

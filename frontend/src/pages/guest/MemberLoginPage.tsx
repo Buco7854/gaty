@@ -1,22 +1,20 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate, useSearchParams } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 import { publicApi, authApi } from '@/api'
 import type { DomainResolveResult } from '@/types'
 import { useAuthStore } from '@/store/auth'
 import { useTranslation } from 'react-i18next'
-import {
-  Center, Stack, Group, Text, Title, Loader, Button,
-  TextInput, PasswordInput, Divider, Anchor,
-} from '@mantine/core'
-import { CheckCircle2, XCircle } from 'lucide-react'
+import { CheckCircle2, XCircle, Loader2 } from 'lucide-react'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Separator } from '@/components/ui/separator'
 import { isSafeRedirect } from '@/lib/utils'
 
 type PageState = 'idle' | 'loading' | 'success' | 'error'
 
 export default function MemberLoginPage() {
-  const { wsId } = useParams<{ wsId: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { t } = useTranslation()
@@ -25,7 +23,7 @@ export default function MemberLoginPage() {
   const redirectParam = searchParams.get('redirect')
   const errorParam = searchParams.get('error')
 
-  const [resolving, setResolving] = useState(true)
+  const [resolving, setResolving] = useState(!!gateId)
   const [resolved, setResolved] = useState<DomainResolveResult | null>(null)
   const [ssoProviders, setSsoProviders] = useState<{ id: string; name: string; type: string }[]>([])
 
@@ -35,11 +33,9 @@ export default function MemberLoginPage() {
   const [errorMsg, setErrorMsg] = useState(errorParam ? t('pinpad.ssoError') : '')
 
   useEffect(() => {
-    if (wsId) {
-      publicApi.ssoProviders(wsId)
-        .then((providers) => setSsoProviders(providers))
-        .catch(() => {})
-    }
+    publicApi.ssoProviders()
+      .then((providers) => setSsoProviders(providers))
+      .catch(() => {})
 
     if (!gateId) {
       setResolving(false)
@@ -49,7 +45,7 @@ export default function MemberLoginPage() {
       .then((data) => setResolved(data))
       .catch(() => {})
       .finally(() => setResolving(false))
-  }, [gateId, wsId, navigate])
+  }, [gateId])
 
   function redirectAfterLogin(role: string) {
     const authState = { state: { justAuthenticated: true } }
@@ -57,10 +53,10 @@ export default function MemberLoginPage() {
       navigate(redirectParam, authState)
       return
     }
-    if (role === 'ADMIN' || role === 'OWNER') {
-      navigate(`/workspaces/${wsId}`, authState)
+    if (role === 'ADMIN') {
+      navigate('/gates', authState)
     } else {
-      navigate(gateId ? `/workspaces/${wsId}/gates/${gateId}/public` : `/workspaces/${wsId}`, authState)
+      navigate(gateId ? `/gates/${gateId}/public` : '/gates', authState)
     }
   }
 
@@ -79,12 +75,12 @@ export default function MemberLoginPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!resolved || state !== 'idle') return
+    if (state !== 'idle') return
     setState('loading')
     try {
-      const data = await authApi.loginLocal(resolved.workspace_id, username, password)
-      useAuthStore.getState().setLocalSession(data.membership_id, data.workspace_id, data.role, data.display_name)
-      showFeedback('success', '', data.role)
+      const data = await authApi.login(username, password)
+      useAuthStore.getState().setMemberSession(data.member)
+      showFeedback('success', '', data.member.role)
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status
       if (status === 401 || status === 403) showFeedback('error', t('pinpad.invalidCredentials'))
@@ -93,81 +89,81 @@ export default function MemberLoginPage() {
   }
 
   function handleSSOLogin(providerId: string) {
-    const workspaceId = resolved?.workspace_id ?? wsId
-    if (!workspaceId) return
-    const url = `/api/auth/sso/${encodeURIComponent(workspaceId)}/${encodeURIComponent(providerId)}/authorize`
+    const url = `/api/auth/sso/${encodeURIComponent(providerId)}/authorize`
     window.location.href = gateId ? `${url}?gate_id=${encodeURIComponent(gateId)}` : url
   }
 
   if (resolving) {
     return (
-      <Center mih="100vh">
-        <Loader />
-      </Center>
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
     )
   }
 
   return (
-    <div style={{ position: 'relative', minHeight: '100vh' }}>
-      <Group gap="xs" style={{ position: 'absolute', top: 12, right: 16, zIndex: 10 }}>
+    <div className="relative min-h-screen">
+      <div className="absolute top-3 right-4 z-10 flex items-center gap-1">
         <LangToggle />
         <ThemeToggle />
-      </Group>
+      </div>
 
-      <Center mih="100vh" p="md">
-        <Stack align="center" gap="xl" w="100%" maw={320}>
-          <Stack align="center" gap={4}>
-            <Title order={2}>{resolved?.workspace_name}</Title>
-            <Text size="sm" c="dimmed">{t('pinpad.memberAccess')}</Text>
-          </Stack>
+      <div className="flex items-center justify-center min-h-screen p-4">
+        <div className="flex flex-col items-center gap-6 w-full max-w-xs">
+          <div className="text-center space-y-1">
+            <h2 className="text-xl font-bold">{resolved?.gate_name ?? 'GATIE'}</h2>
+            <p className="text-sm text-muted-foreground">{t('pinpad.memberAccess')}</p>
+          </div>
 
           {state === 'success' ? (
-            <Stack align="center" gap="sm">
-              <CheckCircle2 size={40} color="var(--mantine-color-green-6)" />
-              <Text size="sm" fw={500} c="green" ta="center">{t('pinpad.gateOpened')}</Text>
-            </Stack>
+            <div className="flex flex-col items-center gap-2">
+              <CheckCircle2 className="h-10 w-10 text-emerald-500" />
+              <p className="text-sm font-medium text-emerald-600 text-center">{t('pinpad.gateOpened')}</p>
+            </div>
           ) : (
             <>
               {(state === 'error' || errorMsg) && (
-                <Stack align="center" gap={4}>
-                  <XCircle size={32} color="var(--mantine-color-red-6)" />
-                  <Text size="sm" fw={500} c="red" ta="center">{errorMsg}</Text>
-                </Stack>
+                <div className="flex flex-col items-center gap-1">
+                  <XCircle className="h-8 w-8 text-destructive" />
+                  <p className="text-sm font-medium text-destructive text-center">{errorMsg}</p>
+                </div>
               )}
 
-              <form onSubmit={handleSubmit} style={{ width: '100%' }}>
-                <Stack>
-                  <TextInput
-                    label={t('pinpad.username')}
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    required
-                    autoComplete="username"
-                    autoFocus
-                  />
-                  <PasswordInput
-                    label={t('auth.password')}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    autoComplete="current-password"
-                  />
-                  <Button type="submit" size="md" radius="xl" loading={state === 'loading'}>
-                    {t('pinpad.memberLogin')}
-                  </Button>
-                </Stack>
+              <form onSubmit={handleSubmit} className="w-full space-y-3">
+                <Input
+                  label={t('pinpad.username')}
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  required
+                  autoComplete="username"
+                  autoFocus
+                />
+                <Input
+                  label={t('auth.password')}
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  autoComplete="current-password"
+                />
+                <Button type="submit" size="lg" className="w-full rounded-full" loading={state === 'loading'}>
+                  {t('pinpad.memberLogin')}
+                </Button>
               </form>
 
               {ssoProviders.length > 0 && (
                 <>
-                  <Divider label="ou" labelPosition="center" w="100%" />
+                  <div className="flex items-center gap-3 w-full">
+                    <Separator className="flex-1" />
+                    <span className="text-xs text-muted-foreground">ou</span>
+                    <Separator className="flex-1" />
+                  </div>
                   {ssoProviders.map((p) => (
                     <Button
                       key={p.id}
-                      variant="default"
-                      size="md"
-                      radius="xl"
-                      fullWidth
+                      variant="outline"
+                      size="lg"
+                      className="w-full rounded-full"
                       onClick={() => handleSSOLogin(p.id)}
                     >
                       {t('pinpad.loginWithSso', { provider: p.name })}
@@ -177,20 +173,18 @@ export default function MemberLoginPage() {
               )}
 
               {gateId && (
-                <Anchor
-                  component="button"
+                <button
                   type="button"
-                  size="xs"
-                  c="dimmed"
-                  onClick={() => navigate(isSafeRedirect(redirectParam) ? redirectParam : `/workspaces/${wsId}/gates/${gateId}/public`)}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  onClick={() => navigate(isSafeRedirect(redirectParam) ? redirectParam : `/gates/${gateId}/public`)}
                 >
                   {t('pinpad.useAnotherMethod')}
-                </Anchor>
+                </button>
               )}
             </>
           )}
-        </Stack>
-      </Center>
+        </div>
+      </div>
     </div>
   )
 }

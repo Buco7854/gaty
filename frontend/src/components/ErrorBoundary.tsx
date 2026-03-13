@@ -1,6 +1,6 @@
 import { Component, type ReactNode } from 'react'
-import { Container, Title, Text, Button, Stack, Paper } from '@mantine/core'
 import { AlertTriangle } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 interface Props {
   children: ReactNode
@@ -28,31 +28,29 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <Container size="sm" py="xl">
-          <Paper p="xl" withBorder>
-            <Stack align="center" gap="md">
-              <AlertTriangle size={48} color="var(--mantine-color-red-6)" />
-              <Title order={3}>Something went wrong</Title>
-              <Text c="dimmed" ta="center">
-                An unexpected error occurred. Please try reloading the page.
-              </Text>
-              {this.state.error && (
-                <Text size="xs" c="dimmed" ff="monospace" ta="center">
-                  {this.state.error.message}
-                </Text>
-              )}
-              <Button
-                variant="light"
-                onClick={() => {
-                  this.setState({ hasError: false, error: null })
-                  window.location.reload()
-                }}
-              >
-                Reload page
-              </Button>
-            </Stack>
-          </Paper>
-        </Container>
+        <div className="flex items-center justify-center min-h-screen p-4">
+          <div className="border rounded-lg p-8 max-w-md w-full text-center space-y-4">
+            <AlertTriangle className="h-12 w-12 text-destructive mx-auto" />
+            <h3 className="text-lg font-semibold">Something went wrong</h3>
+            <p className="text-sm text-muted-foreground">
+              An unexpected error occurred. Please try reloading the page.
+            </p>
+            {this.state.error && (
+              <p className="text-xs text-muted-foreground font-mono">
+                {this.state.error.message}
+              </p>
+            )}
+            <Button
+              variant="outline"
+              onClick={() => {
+                this.setState({ hasError: false, error: null })
+                window.location.reload()
+              }}
+            >
+              Reload page
+            </Button>
+          </div>
+        </div>
       )
     }
 

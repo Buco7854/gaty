@@ -23,27 +23,27 @@ func NewScheduleService(schedules repository.AccessScheduleRepository) *Schedule
 	return &ScheduleService{schedules: schedules}
 }
 
-func (s *ScheduleService) Create(ctx context.Context, wsID uuid.UUID, name string, description *string, expr *model.ExprNode) (*model.AccessSchedule, error) {
+func (s *ScheduleService) Create(ctx context.Context, name string, description *string, expr *model.ExprNode) (*model.AccessSchedule, error) {
 	if expr != nil {
 		if err := validateExpr(expr, "expr"); err != nil {
 			return nil, err
 		}
 	}
-	return s.schedules.Create(ctx, wsID, nil, name, description, expr)
+	return s.schedules.Create(ctx, nil, name, description, expr)
 }
 
-// CreateMember creates a personal schedule owned by a specific membership.
-func (s *ScheduleService) CreateMember(ctx context.Context, wsID, membershipID uuid.UUID, name string, description *string, expr *model.ExprNode) (*model.AccessSchedule, error) {
+// CreateMember creates a personal schedule owned by a specific member.
+func (s *ScheduleService) CreateMember(ctx context.Context, memberID uuid.UUID, name string, description *string, expr *model.ExprNode) (*model.AccessSchedule, error) {
 	if expr != nil {
 		if err := validateExpr(expr, "expr"); err != nil {
 			return nil, err
 		}
 	}
-	return s.schedules.Create(ctx, wsID, &membershipID, name, description, expr)
+	return s.schedules.Create(ctx, &memberID, name, description, expr)
 }
 
-func (s *ScheduleService) List(ctx context.Context, wsID uuid.UUID, p model.PaginationParams) ([]*model.AccessSchedule, int, error) {
-	list, total, err := s.schedules.List(ctx, wsID, p)
+func (s *ScheduleService) List(ctx context.Context, p model.PaginationParams) ([]*model.AccessSchedule, int, error) {
+	list, total, err := s.schedules.List(ctx, p)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -53,9 +53,9 @@ func (s *ScheduleService) List(ctx context.Context, wsID uuid.UUID, p model.Pagi
 	return list, total, nil
 }
 
-// ListMine returns personal schedules belonging to a specific membership.
-func (s *ScheduleService) ListMine(ctx context.Context, wsID, membershipID uuid.UUID, p model.PaginationParams) ([]*model.AccessSchedule, int, error) {
-	list, total, err := s.schedules.ListByMembership(ctx, membershipID, wsID, p)
+// ListMine returns personal schedules belonging to a specific member.
+func (s *ScheduleService) ListMine(ctx context.Context, memberID uuid.UUID, p model.PaginationParams) ([]*model.AccessSchedule, int, error) {
+	list, total, err := s.schedules.ListByMember(ctx, memberID, p)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -65,30 +65,29 @@ func (s *ScheduleService) ListMine(ctx context.Context, wsID, membershipID uuid.
 	return list, total, nil
 }
 
-func (s *ScheduleService) Get(ctx context.Context, scheduleID, wsID uuid.UUID) (*model.AccessSchedule, error) {
-	return s.schedules.GetByID(ctx, scheduleID, wsID)
+func (s *ScheduleService) Get(ctx context.Context, scheduleID uuid.UUID) (*model.AccessSchedule, error) {
+	return s.schedules.GetByID(ctx, scheduleID)
 }
 
-// GetPublic fetches a schedule by ID without workspace scoping (for internal access checks).
+// GetPublic fetches a schedule by ID (for internal access checks).
 func (s *ScheduleService) GetPublic(ctx context.Context, scheduleID uuid.UUID) (*model.AccessSchedule, error) {
 	return s.schedules.GetByIDPublic(ctx, scheduleID)
 }
 
-func (s *ScheduleService) Update(ctx context.Context, scheduleID, wsID uuid.UUID, name string, description *string, expr *model.ExprNode) (*model.AccessSchedule, error) {
+func (s *ScheduleService) Update(ctx context.Context, scheduleID uuid.UUID, name string, description *string, expr *model.ExprNode) (*model.AccessSchedule, error) {
 	if expr != nil {
 		if err := validateExpr(expr, "expr"); err != nil {
 			return nil, err
 		}
 	}
-	return s.schedules.Update(ctx, scheduleID, wsID, name, description, expr)
+	return s.schedules.Update(ctx, scheduleID, name, description, expr)
 }
 
-func (s *ScheduleService) Delete(ctx context.Context, scheduleID, wsID uuid.UUID) error {
-	return s.schedules.Delete(ctx, scheduleID, wsID)
+func (s *ScheduleService) Delete(ctx context.Context, scheduleID uuid.UUID) error {
+	return s.schedules.Delete(ctx, scheduleID)
 }
 
 // Check returns nil if the schedule allows access at now, or ErrScheduleDenied.
-// A nil Expr means always allowed. Use a NOT node to invert the expression.
 func (s *ScheduleService) Check(schedule *model.AccessSchedule, now time.Time) error {
 	if schedule.Expr == nil {
 		return nil
@@ -99,7 +98,6 @@ func (s *ScheduleService) Check(schedule *model.AccessSchedule, now time.Time) e
 	return fmt.Errorf("%w (schedule: %s)", ErrScheduleDenied, schedule.Name)
 }
 
-// evalExpr evaluates a boolean expression tree against the given time.
 func evalExpr(node model.ExprNode, now time.Time) bool {
 	switch node.Op {
 	case "rule":
@@ -136,7 +134,6 @@ func evalExpr(node model.ExprNode, now time.Time) bool {
 	return false
 }
 
-// validateExpr recursively validates an expression tree.
 func validateExpr(node *model.ExprNode, path string) error {
 	switch node.Op {
 	case "rule":
@@ -260,7 +257,6 @@ func matchesTimeRange(r model.ScheduleRule, now time.Time) bool {
 	if startMins <= endMins {
 		return nowMins >= startMins && nowMins < endMins
 	}
-	// Wrap-around (e.g. 22:00 → 06:00 = night shift)
 	return nowMins >= startMins || nowMins < endMins
 }
 

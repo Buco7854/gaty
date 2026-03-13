@@ -7,8 +7,8 @@ type Permission struct {
 	Description string `json:"description"`
 }
 
-type MembershipPolicy struct {
-	MembershipID   uuid.UUID `json:"membership_id"`
+type MemberPolicy struct {
+	MemberID       uuid.UUID `json:"member_id"`
 	GateID         uuid.UUID `json:"gate_id"`
 	PermissionCode string    `json:"permission_code"`
 }

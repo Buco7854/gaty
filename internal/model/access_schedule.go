@@ -50,39 +50,20 @@ type ScheduleRule struct {
 }
 
 // ExprNode is a node in a boolean expression tree used to define schedule conditions.
-//
-// Op values:
-//
-//	"and"  — all children must match (logical AND)
-//	"or"   — at least one child must match (logical OR)
-//	"not"  — inverts its single child (logical NOT)
-//	"rule" — leaf node: evaluates the embedded ScheduleRule
-//
-// Examples:
-//
-//	weekdays only:  { "op":"rule", "rule":{"type":"weekdays_range","start_day":1,"end_day":5} }
-//	business hours: { "op":"and", "children":[weekdays, time_window] }
-//	except lunch:   { "op":"and", "children":[business_hours, {"op":"not","children":[lunch]}] }
 type ExprNode struct {
 	Op       string        `json:"op"`                 // "and" | "or" | "not" | "rule"
 	Children []ExprNode    `json:"children,omitempty"` // for op = "and" | "or" | "not"
 	Rule     *ScheduleRule `json:"rule,omitempty"`     // for op = "rule" only
 }
 
-// AccessSchedule is a named, reusable boolean expression attached to a workspace.
-// It can be referenced by gate access codes (PINs) or member-gate policies.
-//
-// Expr is the root of the expression tree. nil means always allowed.
-// Access is granted when Expr evaluates to true. Use a NOT node to invert.
-//
-// MembershipID IS NULL  → workspace schedule (admin-managed, assignable to PINs/members).
-// MembershipID IS NOT NULL → member personal schedule (only usable by that member on their own tokens).
+// AccessSchedule is a named, reusable boolean expression.
+// MemberID IS NULL  → shared schedule (admin-managed, assignable to PINs/members).
+// MemberID IS NOT NULL → member personal schedule.
 type AccessSchedule struct {
-	ID           uuid.UUID  `json:"id"`
-	WorkspaceID  uuid.UUID  `json:"workspace_id"`
-	MembershipID *uuid.UUID `json:"membership_id,omitempty"`
-	Name         string     `json:"name"`
-	Description  *string    `json:"description,omitempty"`
-	Expr         *ExprNode  `json:"expr"` // nil = no restriction (always allowed)
-	CreatedAt    time.Time  `json:"created_at"`
+	ID          uuid.UUID  `json:"id"`
+	MemberID    *uuid.UUID `json:"member_id,omitempty"`
+	Name        string     `json:"name"`
+	Description *string    `json:"description,omitempty"`
+	Expr        *ExprNode  `json:"expr"`
+	CreatedAt   time.Time  `json:"created_at"`
 }

@@ -1,33 +1,33 @@
 import { api } from '@/lib/api'
-import type { AccessSchedule, MembershipPolicy } from '@/types'
+import type { AccessSchedule, MemberPolicy } from '@/types'
 
-function normalizeList(data: unknown): MembershipPolicy[] {
-  if (Array.isArray(data)) return data as MembershipPolicy[]
-  return ((data as Record<string, unknown>).policies ?? []) as MembershipPolicy[]
+function normalizeList(data: unknown): MemberPolicy[] {
+  if (Array.isArray(data)) return data as MemberPolicy[]
+  return ((data as Record<string, unknown>).policies ?? []) as MemberPolicy[]
 }
 
 export const policiesApi = {
-  list: (wsId: string, gateId: string) =>
-    api.get(`/workspaces/${wsId}/gates/${gateId}/policies`).then((r) => normalizeList(r.data)),
+  list: (gateId: string) =>
+    api.get(`/gates/${gateId}/policies`).then((r) => normalizeList(r.data)),
 
-  grant: (wsId: string, gateId: string, membershipId: string, permissionCode: string) =>
-    api.post(`/workspaces/${wsId}/gates/${gateId}/policies`, { membership_id: membershipId, permission_code: permissionCode }),
+  grant: (gateId: string, memberId: string, permissionCode: string) =>
+    api.post(`/gates/${gateId}/policies`, { member_id: memberId, permission_code: permissionCode }),
 
-  revoke: (wsId: string, gateId: string, membershipId: string, permissionCode: string) =>
-    api.delete(`/workspaces/${wsId}/gates/${gateId}/policies/${membershipId}/${encodeURIComponent(permissionCode)}`),
+  revoke: (gateId: string, memberId: string, permissionCode: string) =>
+    api.delete(`/gates/${gateId}/policies/${memberId}/${encodeURIComponent(permissionCode)}`),
 
-  listByMembership: (wsId: string, membershipId: string) =>
-    api.get(`/workspaces/${wsId}/members/${membershipId}/policies`).then((r) => normalizeList(r.data)),
+  listByMember: (memberId: string) =>
+    api.get(`/members/${memberId}/policies`).then((r) => normalizeList(r.data)),
 
-  listMine: (wsId: string) =>
-    api.get(`/workspaces/${wsId}/policies/me`).then((r) => normalizeList(r.data)),
+  listMine: () =>
+    api.get('/policies/me').then((r) => normalizeList(r.data)),
 
-  getMemberGateSchedule: (wsId: string, gateId: string, membershipId: string) =>
-    api.get<AccessSchedule | null>(`/workspaces/${wsId}/gates/${gateId}/policies/${membershipId}/schedule`).then((r) => r.data),
+  getMemberGateSchedule: (gateId: string, memberId: string) =>
+    api.get<AccessSchedule | null>(`/gates/${gateId}/policies/${memberId}/schedule`).then((r) => r.data),
 
-  setMemberGateSchedule: (wsId: string, gateId: string, membershipId: string, scheduleId: string) =>
-    api.put(`/workspaces/${wsId}/gates/${gateId}/policies/${membershipId}/schedule`, { schedule_id: scheduleId }),
+  setMemberGateSchedule: (gateId: string, memberId: string, scheduleId: string) =>
+    api.put(`/gates/${gateId}/policies/${memberId}/schedule`, { schedule_id: scheduleId }),
 
-  removeMemberGateSchedule: (wsId: string, gateId: string, membershipId: string) =>
-    api.delete(`/workspaces/${wsId}/gates/${gateId}/policies/${membershipId}/schedule`),
+  removeMemberGateSchedule: (gateId: string, memberId: string) =>
+    api.delete(`/gates/${gateId}/policies/${memberId}/schedule`),
 }

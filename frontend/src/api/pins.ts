@@ -21,21 +21,21 @@ export interface PinMetadata {
 }
 
 export const pinsApi = {
-  list: (wsId: string, gateId: string) =>
-    api.get(`/workspaces/${wsId}/gates/${gateId}/pins`).then((r) => normalizeList(r.data)),
+  list: (gateId: string) =>
+    api.get(`/gates/${gateId}/pins`).then((r) => normalizeList(r.data)),
 
-  create: (wsId: string, gateId: string, params: { pin: string; code_type?: 'pin' | 'password'; label: string; schedule_id?: string; metadata?: PinMetadata }) =>
-    api.post<GatePin>(`/workspaces/${wsId}/gates/${gateId}/pins`, params).then((r) => r.data),
+  create: (gateId: string, params: { pin: string; code_type?: 'pin' | 'password'; label: string; schedule_id?: string; metadata?: PinMetadata }) =>
+    api.post<GatePin>(`/gates/${gateId}/pins`, params).then((r) => r.data),
 
-  update: (wsId: string, gateId: string, pinId: string, params: { label: string; metadata?: PinMetadata }) =>
-    api.patch<GatePin>(`/workspaces/${wsId}/gates/${gateId}/pins/${pinId}`, params).then((r) => r.data),
+  update: (gateId: string, pinId: string, params: { label: string; metadata?: PinMetadata }) =>
+    api.patch<GatePin>(`/gates/${gateId}/pins/${pinId}`, params).then((r) => r.data),
 
-  setSchedule: (wsId: string, gateId: string, pinId: string, scheduleId: string) =>
-    api.put(`/workspaces/${wsId}/gates/${gateId}/pins/${pinId}/schedule`, { schedule_id: scheduleId }),
+  setSchedule: (gateId: string, pinId: string, scheduleId: string) =>
+    api.put(`/gates/${gateId}/pins/${pinId}/schedule`, { schedule_id: scheduleId }),
 
-  clearSchedule: (wsId: string, gateId: string, pinId: string) =>
-    api.delete(`/workspaces/${wsId}/gates/${gateId}/pins/${pinId}/schedule`),
+  clearSchedule: (gateId: string, pinId: string) =>
+    api.delete(`/gates/${gateId}/pins/${pinId}/schedule`),
 
-  delete: (wsId: string, gateId: string, pinId: string) =>
-    api.delete(`/workspaces/${wsId}/gates/${gateId}/pins/${pinId}`),
+  delete: (gateId: string, pinId: string) =>
+    api.delete(`/gates/${gateId}/pins/${pinId}`),
 }

@@ -87,11 +87,10 @@ func applyGateJSON(g *model.Gate, rawOpen, rawClose, rawStatus, rawMeta, rawMeta
 }
 
 // scanGate fills g from a row that yields colsFull columns.
-// Callers handle ErrNoRows themselves (pgx.Row.Scan returns it directly).
 func scanGate(s rowScanner, g *model.Gate) error {
 	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses, rawStatusTransitions []byte
 	err := s.Scan(
-		&g.ID, &g.WorkspaceID, &g.Name,
+		&g.ID, &g.Name,
 		&g.IntegrationType, &g.IntegrationConfig,
 		&rawOpen, &rawClose, &rawStatus,
 		&g.Status, &g.LastSeenAt,
@@ -106,7 +105,7 @@ func scanGate(s rowScanner, g *model.Gate) error {
 	return nil
 }
 
-const colsFull = `id, workspace_id, name, integration_type, integration_config,
+const colsFull = `id, name, integration_type, integration_config,
                   open_config, close_config, status_config,
                   status, last_seen_at, status_metadata, meta_config, status_rules,
                   custom_statuses, ttl_seconds, status_transitions, created_at`
@@ -119,22 +118,20 @@ func marshalJSONSlice[T any](v []T, fallback string) json.RawMessage {
 	return json.RawMessage(b)
 }
 
-
-func (r *gateRepository) Create(ctx context.Context, wsID uuid.UUID, p repository.CreateGateParams) (*model.Gate, error) {
+func (r *gateRepository) Create(ctx context.Context, p repository.CreateGateParams) (*model.Gate, error) {
 	if p.IntegrationConfig == nil {
 		p.IntegrationConfig = map[string]any{}
 	}
 
-	// Single round-trip: INSERT + RETURNING gate_token + all gate columns.
 	var g model.Gate
 	var token string
 	var rawOpen, rawClose, rawStatus, rawMeta, rawMetaCfg, rawStatusRules, rawCustomStatuses, rawStatusTransitions []byte
 	err := r.pool.QueryRow(ctx,
-		`INSERT INTO gates (workspace_id, name, integration_type, integration_config,
+		`INSERT INTO gates (name, integration_type, integration_config,
 		                    open_config, close_config, status_config, meta_config, status_rules, custom_statuses, ttl_seconds, status_transitions)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING gate_token, `+colsFull,
-		wsID, p.Name, p.IntegrationType, p.IntegrationConfig,
+		p.Name, p.IntegrationType, p.IntegrationConfig,
 		marshalActionConfig(p.OpenConfig),
 		marshalActionConfig(p.CloseConfig),
 		marshalActionConfig(p.StatusConfig),
@@ -145,7 +142,7 @@ func (r *gateRepository) Create(ctx context.Context, wsID uuid.UUID, p repositor
 		marshalJSONSlice(p.StatusTransitions, "[]"),
 	).Scan(
 		&token,
-		&g.ID, &g.WorkspaceID, &g.Name,
+		&g.ID, &g.Name,
 		&g.IntegrationType, &g.IntegrationConfig,
 		&rawOpen, &rawClose, &rawStatus,
 		&g.Status, &g.LastSeenAt,
@@ -161,10 +158,10 @@ func (r *gateRepository) Create(ctx context.Context, wsID uuid.UUID, p repositor
 	return &g, nil
 }
 
-func (r *gateRepository) GetByID(ctx context.Context, gateID, wsID uuid.UUID) (*model.Gate, error) {
+func (r *gateRepository) GetByID(ctx context.Context, gateID uuid.UUID) (*model.Gate, error) {
 	var g model.Gate
 	err := scanGate(
-		r.pool.QueryRow(ctx, `SELECT `+colsFull+` FROM gates WHERE id = $1 AND workspace_id = $2`, gateID, wsID),
+		r.pool.QueryRow(ctx, `SELECT `+colsFull+` FROM gates WHERE id = $1`, gateID),
 		&g,
 	)
 	if err == pgx.ErrNoRows {
@@ -176,10 +173,40 @@ func (r *gateRepository) GetByID(ctx context.Context, gateID, wsID uuid.UUID) (*
 	return &g, nil
 }
 
-func (r *gateRepository) Update(ctx context.Context, gateID, wsID uuid.UUID, p repository.UpdateGateParams) (*model.Gate, error) {
+func (r *gateRepository) GetByIDPublic(ctx context.Context, gateID uuid.UUID) (*model.Gate, error) {
+	// Same as GetByID in single-instance mode.
+	return r.GetByID(ctx, gateID)
+}
+
+func (r *gateRepository) GetPublicInfo(ctx context.Context, gateID uuid.UUID) (*repository.GatePublicInfo, error) {
+	info := &repository.GatePublicInfo{}
+	var rawMetaCfg, rawStatusMeta []byte
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, name,
+		        COALESCE(open_config->>'type', 'NONE') <> 'NONE',
+		        COALESCE(close_config->>'type', 'NONE') <> 'NONE',
+		        status, meta_config, status_metadata
+		 FROM gates WHERE id = $1`,
+		gateID,
+	).Scan(&info.GateID, &info.GateName,
+		&info.HasOpenAction, &info.HasCloseAction, &info.Status, &rawMetaCfg, &rawStatusMeta)
+	if err == pgx.ErrNoRows {
+		return nil, repository.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get gate public info: %w", err)
+	}
+	info.MetaConfig = unmarshalMetaConfig(rawMetaCfg)
+	if len(rawStatusMeta) > 0 {
+		_ = json.Unmarshal(rawStatusMeta, &info.StatusMetadata)
+	}
+	return info, nil
+}
+
+func (r *gateRepository) Update(ctx context.Context, gateID uuid.UUID, p repository.UpdateGateParams) (*model.Gate, error) {
 	sets := []string{}
-	args := []any{gateID, wsID}
-	n := 3
+	args := []any{gateID}
+	n := 2
 
 	if p.Name != nil {
 		sets = append(sets, fmt.Sprintf("name = $%d", n))
@@ -245,13 +272,13 @@ func (r *gateRepository) Update(ctx context.Context, gateID, wsID uuid.UUID, p r
 	}
 
 	if len(sets) == 0 {
-		return r.GetByID(ctx, gateID, wsID)
+		return r.GetByID(ctx, gateID)
 	}
 
 	var g model.Gate
 	err := scanGate(
 		r.pool.QueryRow(ctx,
-			`UPDATE gates SET `+strings.Join(sets, ", ")+` WHERE id = $1 AND workspace_id = $2 RETURNING `+colsFull,
+			`UPDATE gates SET `+strings.Join(sets, ", ")+` WHERE id = $1 RETURNING `+colsFull,
 			args...,
 		),
 		&g,
@@ -265,8 +292,8 @@ func (r *gateRepository) Update(ctx context.Context, gateID, wsID uuid.UUID, p r
 	return &g, nil
 }
 
-func (r *gateRepository) Delete(ctx context.Context, gateID, wsID uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM gates WHERE id = $1 AND workspace_id = $2`, gateID, wsID)
+func (r *gateRepository) Delete(ctx context.Context, gateID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM gates WHERE id = $1`, gateID)
 	if err != nil {
 		return fmt.Errorf("delete gate: %w", err)
 	}
@@ -276,161 +303,9 @@ func (r *gateRepository) Delete(ctx context.Context, gateID, wsID uuid.UUID) err
 	return nil
 }
 
-func (r *gateRepository) GetByIDPublic(ctx context.Context, gateID uuid.UUID) (*model.Gate, error) {
-	var g model.Gate
-	err := scanGate(
-		r.pool.QueryRow(ctx, `SELECT `+colsFull+` FROM gates WHERE id = $1`, gateID),
-		&g,
-	)
-	if err == pgx.ErrNoRows {
-		return nil, repository.ErrNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get gate public: %w", err)
-	}
-	return &g, nil
-}
-
-func (r *gateRepository) GetPublicInfo(ctx context.Context, gateID uuid.UUID) (*repository.GatePublicInfo, error) {
-	info := &repository.GatePublicInfo{}
-	var rawMetaCfg, rawStatusMeta []byte
-	err := r.pool.QueryRow(ctx,
-		`SELECT g.id, g.name, w.id, w.name,
-		        COALESCE(g.open_config->>'type', 'NONE') <> 'NONE',
-		        COALESCE(g.close_config->>'type', 'NONE') <> 'NONE',
-		        g.status, g.meta_config, g.status_metadata
-		 FROM gates g
-		 JOIN workspaces w ON w.id = g.workspace_id
-		 WHERE g.id = $1`,
-		gateID,
-	).Scan(&info.GateID, &info.GateName, &info.WorkspaceID, &info.WorkspaceName,
-		&info.HasOpenAction, &info.HasCloseAction, &info.Status, &rawMetaCfg, &rawStatusMeta)
-	if err == pgx.ErrNoRows {
-		return nil, repository.ErrNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get gate public info: %w", err)
-	}
-	info.MetaConfig = unmarshalMetaConfig(rawMetaCfg)
-	if len(rawStatusMeta) > 0 {
-		_ = json.Unmarshal(rawStatusMeta, &info.StatusMetadata)
-	}
-	return info, nil
-}
-
-func (r *gateRepository) GetByToken(ctx context.Context, gateID uuid.UUID, token string) (*model.Gate, error) {
-	var g model.Gate
-	err := scanGate(
-		r.pool.QueryRow(ctx, `SELECT `+colsFull+` FROM gates WHERE id = $1 AND gate_token = $2`, gateID, token),
-		&g,
-	)
-	if err == pgx.ErrNoRows {
-		return nil, repository.ErrUnauthorized
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get gate by token: %w", err)
-	}
-	return &g, nil
-}
-
-func (r *gateRepository) UpdateStatus(ctx context.Context, gateID uuid.UUID, status string, meta map[string]any) error {
-	metaJSON := json.RawMessage("{}")
-	if len(meta) > 0 {
-		b, _ := json.Marshal(meta)
-		metaJSON = json.RawMessage(b)
-	}
-	_, err := r.pool.Exec(ctx,
-		`UPDATE gates SET status = $2, last_seen_at = NOW(), status_metadata = $3 WHERE id = $1`,
-		gateID, status, metaJSON,
-	)
-	if err != nil {
-		return fmt.Errorf("update gate status: %w", err)
-	}
-	return nil
-}
-
-func (r *gateRepository) MarkUnresponsiveWithIDs(ctx context.Context, ttl time.Duration) ([]repository.UnresponsiveGate, error) {
-	// Per-gate TTL: use COALESCE(ttl_seconds, default) to respect per-gate overrides.
-	defaultTTLSeconds := int(ttl.Seconds())
-
-	rows, err := r.pool.Query(ctx,
-		`UPDATE gates
-		 SET status = $1
-		 WHERE last_seen_at IS NOT NULL
-		   AND last_seen_at < NOW() - INTERVAL '1 second' * COALESCE(ttl_seconds, $2)
-		   AND status NOT IN ($1, $3, $4)
-		 RETURNING id, workspace_id`,
-		string(model.GateStatusUnresponsive),
-		defaultTTLSeconds,
-		string(model.GateStatusUnknown),
-		// Don't override "offline": a gate may self-report offline before going quiet,
-		// and marking it "unresponsive" would lose that intentional state.
-		string(model.GateStatusOffline),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("mark unresponsive: %w", err)
-	}
-	defer rows.Close()
-
-	var results []repository.UnresponsiveGate
-	for rows.Next() {
-		var g repository.UnresponsiveGate
-		if err := rows.Scan(&g.GateID, &g.WorkspaceID); err != nil {
-			return nil, err
-		}
-		results = append(results, g)
-	}
-	return results, rows.Err()
-}
-
-func (r *gateRepository) GetToken(ctx context.Context, gateID, wsID uuid.UUID) (string, error) {
-	var token string
-	err := r.pool.QueryRow(ctx,
-		`SELECT gate_token FROM gates WHERE id = $1 AND workspace_id = $2`, gateID, wsID,
-	).Scan(&token)
-	if err == pgx.ErrNoRows {
-		return "", repository.ErrNotFound
-	}
-	if err != nil {
-		return "", fmt.Errorf("get gate token: %w", err)
-	}
-	return token, nil
-}
-
-func (r *gateRepository) SetToken(ctx context.Context, gateID, wsID uuid.UUID, token string) error {
-	tag, err := r.pool.Exec(ctx,
-		`UPDATE gates SET gate_token = $3 WHERE id = $1 AND workspace_id = $2`,
-		gateID, wsID, token,
-	)
-	if err != nil {
-		return fmt.Errorf("set gate token: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return repository.ErrNotFound
-	}
-	return nil
-}
-
-func (r *gateRepository) ListIDsForWorkspace(ctx context.Context, wsID uuid.UUID) ([]uuid.UUID, error) {
-	rows, err := r.pool.Query(ctx, `SELECT id FROM gates WHERE workspace_id = $1`, wsID)
-	if err != nil {
-		return nil, fmt.Errorf("list gate ids: %w", err)
-	}
-	defer rows.Close()
-	var ids []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan gate id: %w", err)
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
-}
-
-func (r *gateRepository) ListForWorkspace(ctx context.Context, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID, p model.PaginationParams) ([]model.Gate, int, error) {
+func (r *gateRepository) List(ctx context.Context, role model.Role, memberID uuid.UUID, p model.PaginationParams) ([]model.Gate, int, error) {
 	p = p.Normalize()
-	isAdmin := role == model.RoleOwner || role == model.RoleAdmin
+	isAdmin := role == model.RoleAdmin
 
 	var (
 		countQuery string
@@ -440,24 +315,22 @@ func (r *gateRepository) ListForWorkspace(ctx context.Context, wsID uuid.UUID, r
 	)
 
 	if isAdmin {
-		countQuery = `SELECT COUNT(*) FROM gates WHERE workspace_id = $1`
-		countArgs = []any{wsID}
-		dataQuery = `SELECT ` + colsFull + ` FROM gates WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`
-		dataArgs = []any{wsID, p.Limit, p.Offset}
+		countQuery = `SELECT COUNT(*) FROM gates`
+		countArgs = nil
+		dataQuery = `SELECT ` + colsFull + ` FROM gates ORDER BY created_at DESC LIMIT $1 OFFSET $2`
+		dataArgs = []any{p.Limit, p.Offset}
 	} else {
 		countQuery = `SELECT COUNT(DISTINCT g.id) FROM gates g
-		              JOIN access_policies p ON p.gate_id = g.id AND p.subject_type = 'membership' AND p.subject_id = $2
-		              WHERE g.workspace_id = $1`
-		countArgs = []any{wsID, membershipID}
-		dataQuery = `SELECT DISTINCT g.id, g.workspace_id, g.name, g.integration_type, g.integration_config,
+		              JOIN access_policies p ON p.gate_id = g.id AND p.subject_type = 'membership' AND p.subject_id = $1`
+		countArgs = []any{memberID}
+		dataQuery = `SELECT DISTINCT g.id, g.name, g.integration_type, g.integration_config,
 		                g.open_config, g.close_config, g.status_config,
 		                g.status, g.last_seen_at, g.status_metadata, g.meta_config, g.status_rules,
 		                g.custom_statuses, g.ttl_seconds, g.status_transitions, g.created_at
 		         FROM gates g
-		         JOIN access_policies p ON p.gate_id = g.id AND p.subject_type = 'membership' AND p.subject_id = $2
-		         WHERE g.workspace_id = $1
-		         ORDER BY g.created_at DESC LIMIT $3 OFFSET $4`
-		dataArgs = []any{wsID, membershipID, p.Limit, p.Offset}
+		         JOIN access_policies p ON p.gate_id = g.id AND p.subject_type = 'membership' AND p.subject_id = $1
+		         ORDER BY g.created_at DESC LIMIT $2 OFFSET $3`
+		dataArgs = []any{memberID, p.Limit, p.Offset}
 	}
 
 	var total int
@@ -480,6 +353,113 @@ func (r *gateRepository) ListForWorkspace(ctx context.Context, wsID uuid.UUID, r
 		result = append(result, g)
 	}
 	return result, total, rows.Err()
+}
+
+func (r *gateRepository) ListIDs(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id FROM gates`)
+	if err != nil {
+		return nil, fmt.Errorf("list gate ids: %w", err)
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan gate id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (r *gateRepository) GetByToken(ctx context.Context, gateID uuid.UUID, token string) (*model.Gate, error) {
+	var g model.Gate
+	err := scanGate(
+		r.pool.QueryRow(ctx, `SELECT `+colsFull+` FROM gates WHERE id = $1 AND gate_token = $2`, gateID, token),
+		&g,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, repository.ErrUnauthorized
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get gate by token: %w", err)
+	}
+	return &g, nil
+}
+
+func (r *gateRepository) GetToken(ctx context.Context, gateID uuid.UUID) (string, error) {
+	var token string
+	err := r.pool.QueryRow(ctx,
+		`SELECT gate_token FROM gates WHERE id = $1`, gateID,
+	).Scan(&token)
+	if err == pgx.ErrNoRows {
+		return "", repository.ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("get gate token: %w", err)
+	}
+	return token, nil
+}
+
+func (r *gateRepository) SetToken(ctx context.Context, gateID uuid.UUID, token string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE gates SET gate_token = $2 WHERE id = $1`,
+		gateID, token,
+	)
+	if err != nil {
+		return fmt.Errorf("set gate token: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return repository.ErrNotFound
+	}
+	return nil
+}
+
+func (r *gateRepository) UpdateStatus(ctx context.Context, gateID uuid.UUID, status string, meta map[string]any) error {
+	metaJSON := json.RawMessage("{}")
+	if len(meta) > 0 {
+		b, _ := json.Marshal(meta)
+		metaJSON = json.RawMessage(b)
+	}
+	_, err := r.pool.Exec(ctx,
+		`UPDATE gates SET status = $2, last_seen_at = NOW(), status_metadata = $3 WHERE id = $1`,
+		gateID, status, metaJSON,
+	)
+	if err != nil {
+		return fmt.Errorf("update gate status: %w", err)
+	}
+	return nil
+}
+
+func (r *gateRepository) MarkUnresponsiveWithIDs(ctx context.Context, ttl time.Duration) ([]repository.UnresponsiveGate, error) {
+	defaultTTLSeconds := int(ttl.Seconds())
+
+	rows, err := r.pool.Query(ctx,
+		`UPDATE gates
+		 SET status = $1
+		 WHERE last_seen_at IS NOT NULL
+		   AND last_seen_at < NOW() - INTERVAL '1 second' * COALESCE(ttl_seconds, $2)
+		   AND status NOT IN ($1, $3, $4)
+		 RETURNING id`,
+		string(model.GateStatusUnresponsive),
+		defaultTTLSeconds,
+		string(model.GateStatusUnknown),
+		string(model.GateStatusOffline),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("mark unresponsive: %w", err)
+	}
+	defer rows.Close()
+
+	var results []repository.UnresponsiveGate
+	for rows.Next() {
+		var g repository.UnresponsiveGate
+		if err := rows.Scan(&g.GateID); err != nil {
+			return nil, err
+		}
+		results = append(results, g)
+	}
+	return results, rows.Err()
 }
 
 func (r *gateRepository) ListWebhookGates(ctx context.Context) ([]model.Gate, error) {

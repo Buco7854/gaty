@@ -10,38 +10,36 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/Buco7854/gatie/internal/service"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
 const (
 	sseTicketPrefix = "sse:ticket:"
 	sseTicketTTL    = 30 * time.Second
+	sseChannel      = "gate:events"
 )
 
 // SSEHandler streams gate events to authenticated clients via Server-Sent Events.
 // Implemented as a raw chi handler (not Huma) to support long-lived connections.
 type SSEHandler struct {
-	authSvc     *service.AuthService
-	memberships repository.WorkspaceMembershipRepository
-	redis       *redis.Client
+	authSvc *service.AuthService
+	redis   *redis.Client
 }
 
-func NewSSEHandler(authSvc *service.AuthService, memberships repository.WorkspaceMembershipRepository, redisClient *redis.Client) *SSEHandler {
-	return &SSEHandler{authSvc: authSvc, memberships: memberships, redis: redisClient}
+func NewSSEHandler(authSvc *service.AuthService, redisClient *redis.Client) *SSEHandler {
+	return &SSEHandler{authSvc: authSvc, redis: redisClient}
 }
 
 func (h *SSEHandler) RegisterRoutes(r chi.Router) {
-	r.Post("/api/workspaces/{ws_id}/events/ticket", h.issueTicket)
-	r.Get("/api/workspaces/{ws_id}/events", h.stream)
+	r.Post("/api/events/ticket", h.issueTicket)
+	r.Get("/api/events", h.stream)
 }
 
-// validateSSEAuth validates an access token and checks workspace membership.
-// Returns true if the caller is authorized to receive events for the given workspace.
-func (h *SSEHandler) validateSSEAuth(r *http.Request, wsID string) bool {
+// validateSSEAuth validates an access token from the cookie.
+// Returns true if the caller holds a valid member JWT.
+func (h *SSEHandler) validateSSEAuth(r *http.Request) bool {
 	var token string
 	if c, err := r.Cookie("gatie_access"); err == nil {
 		token = c.Value
@@ -50,32 +48,15 @@ func (h *SSEHandler) validateSSEAuth(r *http.Request, wsID string) bool {
 		return false
 	}
 
-	parsedWsID, err := uuid.Parse(wsID)
-	if err != nil {
+	if _, _, err := h.authSvc.ValidateAccessToken(token); err != nil {
 		return false
 	}
-
-	// Try global JWT first — must verify workspace membership.
-	if userID, err := h.authSvc.ValidateAccessToken(token); err == nil {
-		if _, memberErr := h.memberships.GetByUserID(r.Context(), parsedWsID, userID); memberErr != nil {
-			return false
-		}
-		return true
-	}
-
-	// Try local JWT — workspace must match.
-	if _, tokenWSID, _, err := h.authSvc.ValidateMemberToken(token); err == nil {
-		return tokenWSID.String() == wsID
-	}
-
-	return false
+	return true
 }
 
 // issueTicket authenticates via gatie_access cookie and returns a one-time ticket for SSE.
 func (h *SSEHandler) issueTicket(w http.ResponseWriter, r *http.Request) {
-	wsID := chi.URLParam(r, "ws_id")
-
-	if !h.validateSSEAuth(r, wsID) {
+	if !h.validateSSEAuth(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -87,7 +68,7 @@ func (h *SSEHandler) issueTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	ticket := hex.EncodeToString(b)
 
-	if err := h.redis.Set(r.Context(), sseTicketPrefix+ticket, wsID, sseTicketTTL).Err(); err != nil {
+	if err := h.redis.Set(r.Context(), sseTicketPrefix+ticket, "ok", sseTicketTTL).Err(); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -97,12 +78,10 @@ func (h *SSEHandler) issueTicket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SSEHandler) stream(w http.ResponseWriter, r *http.Request) {
-	wsID := chi.URLParam(r, "ws_id")
-
 	// Authenticate via one-time ticket (preferred) or cookie.
 	authenticated := false
 	if ticket := r.URL.Query().Get("ticket"); ticket != "" {
-		ticketWSID, err := h.redis.GetDel(r.Context(), sseTicketPrefix+ticket).Result()
+		_, err := h.redis.GetDel(r.Context(), sseTicketPrefix+ticket).Result()
 		if err != nil {
 			if errors.Is(err, redis.Nil) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -112,15 +91,11 @@ func (h *SSEHandler) stream(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		if ticketWSID != wsID {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
 		authenticated = true
 	}
 
 	if !authenticated {
-		if !h.validateSSEAuth(r, wsID) {
+		if !h.validateSSEAuth(r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -140,8 +115,7 @@ func (h *SSEHandler) stream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	channel := fmt.Sprintf("gate:events:%s", wsID)
-	pubsub := h.redis.Subscribe(ctx, channel)
+	pubsub := h.redis.Subscribe(ctx, sseChannel)
 	defer pubsub.Close()
 
 	redisCh := pubsub.Channel()
@@ -149,7 +123,7 @@ func (h *SSEHandler) stream(w http.ResponseWriter, r *http.Request) {
 	defer ticker.Stop()
 
 	// Initial comment to establish the stream.
-	fmt.Fprintf(w, ": connected to %s\n\n", channel)
+	fmt.Fprintf(w, ": connected to %s\n\n", sseChannel)
 	flusher.Flush()
 
 	for {

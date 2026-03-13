@@ -1,348 +1,47 @@
 import { useState } from 'react'
-import { useParams, useNavigate } from 'react-router'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { workspacesApi, gatesApi } from '@/api'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { gatesApi, publicApi } from '@/api'
 import type { Gate } from '@/types'
 import { useTranslation } from 'react-i18next'
-import {
-  Container, Title, Text, Stack, Paper, Group, Button, TextInput, PasswordInput, Select, Alert,
-  Switch, Divider, ActionIcon, Badge, Modal, NumberInput, Loader, Center, Collapse, Anchor, TagsInput,
-} from '@mantine/core'
 import { GatePermissionsGrid, useGatePermissions } from '@/components/GatePermissionsGrid'
-import { useDisclosure } from '@mantine/hooks'
-import { KeyRound, Save, CheckCircle2, Plus, Trash2, Pencil, AlertTriangle } from 'lucide-react'
-import { notifySuccess, notifyError } from '@/lib/notify'
+import { KeyRound, Save, CheckCircle2, Info, Loader2 } from 'lucide-react'
 import { QueryError } from '@/components/QueryError'
-import { useAuthStore } from '@/store/auth'
-
-interface RoleMappingEntry {
-  claim: string
-  role: string
-}
-
-interface SSOProvider {
-  id: string
-  name: string
-  type: string
-  client_id: string
-  client_secret: string
-  issuer: string
-  scopes: string[]
-  auth_endpoint: string
-  token_endpoint: string
-  jwks_uri: string
-  auto_provision: boolean
-  default_role: string
-  role_claim: string
-  role_mapping: Record<string, string>
-}
-
-const ROLE_OPTIONS = [
-  { value: 'MEMBER', label: 'Member' },
-  { value: 'ADMIN', label: 'Admin' },
-  { value: 'OWNER', label: 'Owner' },
-]
-
-const PROVIDER_TYPE_OPTIONS = [
-  { value: 'oidc', label: 'OIDC' },
-]
-
-function ProviderModal({
-  opened,
-  onClose,
-  initial,
-  onSave,
-}: {
-  opened: boolean
-  onClose: () => void
-  initial: SSOProvider | null
-  onSave: (p: SSOProvider) => void
-}) {
-  const { t } = useTranslation()
-  const isNew = !initial?.id
-
-  const [name, setName] = useState(initial?.name ?? '')
-  const [type, setType] = useState(initial?.type ?? 'oidc')
-  const [issuer, setIssuer] = useState(initial?.issuer ?? '')
-  const [clientId, setClientId] = useState(initial?.client_id ?? '')
-  const [clientSecret, setClientSecret] = useState('')
-  const [scopes, setScopes] = useState<string[]>(initial?.scopes ?? [])
-  const [authEndpoint, setAuthEndpoint] = useState(initial?.auth_endpoint ?? '')
-  const [tokenEndpoint, setTokenEndpoint] = useState(initial?.token_endpoint ?? '')
-  const [jwksUri, setJwksUri] = useState(initial?.jwks_uri ?? '')
-  const [advancedOpen, setAdvancedOpen] = useState(!!(initial?.auth_endpoint))
-  const [autoProvision, setAutoProvision] = useState(initial?.auto_provision ?? false)
-  const [defaultRole, setDefaultRole] = useState(initial?.default_role ?? 'MEMBER')
-  const [roleClaim, setRoleClaim] = useState(initial?.role_claim ?? '')
-  const [roleMapping, setRoleMapping] = useState<RoleMappingEntry[]>(
-    Object.entries(initial?.role_mapping ?? {}).map(([claim, role]) => ({ claim, role }))
-  )
-
-  function addRoleMappingEntry() {
-    setRoleMapping((prev) => [...prev, { claim: '', role: 'MEMBER' }])
-  }
-
-  function removeRoleMappingEntry(i: number) {
-    setRoleMapping((prev) => prev.filter((_, idx) => idx !== i))
-  }
-
-  function updateRoleMappingEntry(i: number, field: 'claim' | 'role', value: string) {
-    setRoleMapping((prev) => prev.map((e, idx) => idx === i ? { ...e, [field]: value } : e))
-  }
-
-  function handleSave() {
-    const provider: SSOProvider = {
-      id: initial?.id || crypto.randomUUID().slice(0, 8),
-      name,
-      type,
-      issuer,
-      client_id: clientId,
-      client_secret: clientSecret || (initial?.client_secret ? '***' : ''),
-      scopes,
-      auth_endpoint: authEndpoint,
-      token_endpoint: tokenEndpoint,
-      jwks_uri: jwksUri,
-      auto_provision: autoProvision,
-      default_role: defaultRole,
-      role_claim: roleClaim,
-      role_mapping: Object.fromEntries(
-        roleMapping.filter((m) => m.claim.trim()).map((m) => [m.claim.trim(), m.role])
-      ),
-    }
-    onSave(provider)
-    onClose()
-  }
-
-  return (
-    <Modal
-      opened={opened}
-      onClose={onClose}
-      title={isNew ? t('settings.addProvider') : t('settings.editProvider')}
-      size="md"
-    >
-      <Stack>
-        <TextInput
-          label={t('settings.providerName')}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder={t('settings.providerNamePlaceholder')}
-          required
-        />
-        <Select
-          label={t('settings.providerType')}
-          value={type}
-          onChange={(v) => setType(v ?? 'oidc')}
-          data={PROVIDER_TYPE_OPTIONS}
-        />
-
-        {type === 'oidc' && (
-          <>
-            <TextInput
-              label={t('settings.issuerUrl')}
-              description={t('settings.issuerUrlHint')}
-              value={issuer}
-              onChange={(e) => setIssuer(e.target.value)}
-              placeholder="https://accounts.google.com"
-            />
-            <TextInput
-              label={t('settings.clientId')}
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              placeholder="your-client-id"
-            />
-            <PasswordInput
-              label={t('settings.clientSecret')}
-              value={clientSecret}
-              onChange={(e) => setClientSecret(e.target.value)}
-              placeholder={isNew ? '' : t('settings.clientSecretPlaceholder')}
-            />
-            <TagsInput
-              label={t('settings.providerScopes')}
-              description={t('common.optional')}
-              value={scopes}
-              onChange={setScopes}
-              placeholder={scopes.length === 0 ? t('settings.providerScopesPlaceholder') : undefined}
-              splitChars={[' ', ',']}
-            />
-            <Anchor
-              component="button"
-              type="button"
-              size="xs"
-              c="dimmed"
-              onClick={() => setAdvancedOpen((o) => !o)}
-            >
-              {t('settings.advancedEndpoints')} {advancedOpen ? '▲' : '▼'}
-            </Anchor>
-            <Collapse in={advancedOpen}>
-              <Stack gap="xs">
-                <TextInput
-                  label={t('settings.authEndpoint')}
-                  value={authEndpoint}
-                  onChange={(e) => setAuthEndpoint(e.target.value)}
-                  placeholder="https://provider.com/oauth/authorize"
-                />
-                <TextInput
-                  label={t('settings.tokenEndpoint')}
-                  value={tokenEndpoint}
-                  onChange={(e) => setTokenEndpoint(e.target.value)}
-                  placeholder="https://provider.com/oauth/token"
-                />
-                <TextInput
-                  label={t('settings.jwksUri')}
-                  value={jwksUri}
-                  onChange={(e) => setJwksUri(e.target.value)}
-                  placeholder="https://provider.com/.well-known/jwks.json"
-                />
-              </Stack>
-            </Collapse>
-          </>
-        )}
-
-        <Divider my="xs" />
-
-        <Switch
-          label={t('settings.autoProvision')}
-          description={t('settings.autoProvisionHint')}
-          checked={autoProvision}
-          onChange={(e) => setAutoProvision(e.currentTarget.checked)}
-        />
-        <Select
-          label={t('settings.defaultRole')}
-          value={defaultRole}
-          onChange={(v) => setDefaultRole(v ?? 'MEMBER')}
-          data={ROLE_OPTIONS}
-        />
-
-        <Divider my="xs" />
-
-        <TextInput
-          label={t('settings.roleClaim')}
-          description={t('settings.roleClaimHint')}
-          value={roleClaim}
-          onChange={(e) => setRoleClaim(e.target.value)}
-          placeholder="groups"
-        />
-
-        <Stack gap="xs">
-          <Group justify="space-between">
-            <Text size="sm" fw={500}>{t('settings.roleMapping')}</Text>
-            <Button size="xs" variant="subtle" leftSection={<Plus size={14} />} onClick={addRoleMappingEntry} type="button">
-              {t('settings.addRoleMapping')}
-            </Button>
-          </Group>
-          {roleMapping.length === 0 && (
-            <Text size="xs" c="dimmed">{t('settings.roleMappingHint')}</Text>
-          )}
-          {roleMapping.map((entry, i) => (
-            <Group key={i} gap="xs" align="flex-end">
-              <TextInput
-                placeholder={t('settings.claimValue')}
-                value={entry.claim}
-                onChange={(e) => updateRoleMappingEntry(i, 'claim', e.target.value)}
-                style={{ flex: 1 }}
-                size="xs"
-              />
-              <Select
-                value={entry.role}
-                onChange={(v) => updateRoleMappingEntry(i, 'role', v ?? 'MEMBER')}
-                data={ROLE_OPTIONS}
-                size="xs"
-                style={{ width: 110 }}
-              />
-              <ActionIcon variant="subtle" color="red" size="sm" onClick={() => removeRoleMappingEntry(i)} type="button">
-                <Trash2 size={14} />
-              </ActionIcon>
-            </Group>
-          ))}
-        </Stack>
-
-        <Group justify="flex-end" mt="sm">
-          <Button variant="default" onClick={onClose}>{t('common.cancel')}</Button>
-          <Button onClick={handleSave} disabled={!name.trim()}>{t('common.save')}</Button>
-        </Group>
-      </Stack>
-    </Modal>
-  )
-}
+import { api } from '@/lib/api'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
+import { Badge } from '@/components/ui/badge'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 export default function SettingsPage() {
-  const { wsId } = useParams<{ wsId: string }>()
-  const navigate = useNavigate()
   const qc = useQueryClient()
   const { t } = useTranslation()
   const gatePermissions = useGatePermissions()
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
-  const globalAuth = isAuthenticated()
-  const [saved, setSaved] = useState(false)
   const [macSaved, setMacSaved] = useState(false)
-  const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false)
-  const [editingProvider, setEditingProvider] = useState<SSOProvider | null>(null)
-  const [modalKey, setModalKey] = useState(0)
 
-  // Rename
-  const [newName, setNewName] = useState('')
-
-  // Delete workspace
-  const [deleteModalOpened, { open: openDeleteModal, close: closeDeleteModal }] = useDisclosure(false)
-  const [deleteConfirmName, setDeleteConfirmName] = useState('')
-
-  // workspace-get requires global auth — local members cannot call it
-  const { data: wsData } = useQuery({
-    queryKey: ['workspace', wsId],
-    queryFn: () => workspacesApi.get(wsId!),
-    enabled: !!wsId && globalAuth,
-  })
-
-  const renameWorkspace = useMutation({
-    mutationFn: (name: string) => workspacesApi.rename(wsId!, name),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['workspaces'] })
-      qc.invalidateQueries({ queryKey: ['workspace', wsId] })
-      setNewName('')
-      notifySuccess(t('common.saved'))
-    },
-    onError: (err: unknown) => notifyError(err, t('common.error')),
-  })
-
-  const deleteWorkspace = useMutation({
-    mutationFn: () => workspacesApi.delete(wsId!),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['workspaces'] })
-      navigate('/workspaces')
-    },
-    onError: (err: unknown) => notifyError(err, t('common.error')),
-  })
-
-  const { data: ssoData, isLoading: ssoLoading, isError: ssoError, error: ssoFetchError } = useQuery({
-    queryKey: ['sso-settings', wsId],
-    queryFn: () => workspacesApi.getSsoSettings(wsId!),
-    enabled: !!wsId,
+  const { data: ssoProviders = [], isLoading: ssoLoading } = useQuery({
+    queryKey: ['sso-providers'],
+    queryFn: () => publicApi.ssoProviders().catch(() => []),
   })
 
   const { data: macData, isLoading: macLoading, isError: macError, error: macFetchError } = useQuery({
-    queryKey: ['member-auth-config', wsId],
-    queryFn: () => workspacesApi.getMemberAuthConfig(wsId!),
-    enabled: !!wsId,
+    queryKey: ['member-auth-config'],
+    queryFn: () => api.get<Record<string, unknown>>('/auth/sso/settings').then((r) => r.data),
   })
 
   const { data: gatesData } = useQuery({
-    queryKey: ['gates', wsId],
-    queryFn: () => gatesApi.list(wsId!),
-    enabled: !!wsId,
+    queryKey: ['gates'],
+    queryFn: () => gatesApi.list(),
   })
   const gates = (gatesData ?? []) as Gate[]
-
-  const providers: SSOProvider[] = (ssoData?.providers ?? []) as SSOProvider[]
 
   const [passwordAuth, setPasswordAuth] = useState<boolean>(true)
   const [ssoAuth, setSsoAuth] = useState<boolean>(false)
   const [apiTokenAuth, setApiTokenAuth] = useState<boolean>(false)
   const [apiTokenMax, setApiTokenMax] = useState<number>(5)
   const [sessionDuration, setSessionDuration] = useState<number | string>('')
-  // defaultGatePerms: { gate_id -> Set<permCode> }
   const [defaultGatePerms, setDefaultGatePerms] = useState<Record<string, Set<string>>>({})
 
-  // Sync MAC state once data is loaded (only on first load)
   const [macInitialized, setMacInitialized] = useState(false)
   if (macData && !macInitialized) {
     setPasswordAuth((macData.password as boolean) ?? true)
@@ -361,46 +60,14 @@ export default function SettingsPage() {
     setMacInitialized(true)
   }
 
-  const updateSSO = useMutation({
-    mutationFn: (body: Record<string, unknown>) => workspacesApi.updateSsoSettings(wsId!, body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sso-settings', wsId] })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    },
-  })
-
   const updateMAC = useMutation({
-    mutationFn: (body: Record<string, unknown>) => workspacesApi.updateMemberAuthConfig(wsId!, body),
+    mutationFn: (body: Record<string, unknown>) => api.put('/auth/sso/settings', body).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['member-auth-config', wsId] })
+      qc.invalidateQueries({ queryKey: ['member-auth-config'] })
       setMacSaved(true)
       setTimeout(() => setMacSaved(false), 2000)
     },
   })
-
-  function openAddProvider() {
-    setEditingProvider(null)
-    setModalKey((k) => k + 1)
-    openModal()
-  }
-
-  function openEditProvider(p: SSOProvider) {
-    setEditingProvider(p)
-    setModalKey((k) => k + 1)
-    openModal()
-  }
-
-  function handleSaveProvider(p: SSOProvider) {
-    const updated = editingProvider
-      ? providers.map((existing) => existing.id === editingProvider.id ? p : existing)
-      : [...providers, p]
-    updateSSO.mutate({ providers: updated })
-  }
-
-  function handleDeleteProvider(id: string) {
-    updateSSO.mutate({ providers: providers.filter((p) => p.id !== id) })
-  }
 
   function handleSaveMemberAuth() {
     const dur = typeof sessionDuration === 'number' ? sessionDuration : (sessionDuration === '' ? null : parseInt(String(sessionDuration), 10))
@@ -417,154 +84,114 @@ export default function SettingsPage() {
     })
   }
 
-  if (ssoLoading || macLoading) {
+  if (macLoading || ssoLoading) {
     return (
-      <Center py="xl">
-        <Loader />
-      </Center>
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
     )
   }
 
-  if (ssoError || macError) {
+  if (macError) {
     return (
-      <Container size="sm" py="xl">
-        <QueryError error={ssoFetchError ?? macFetchError} />
-      </Container>
+      <div className="max-w-xl mx-auto p-6">
+        <QueryError error={macFetchError} />
+      </div>
     )
   }
 
   return (
-    <Container size="sm" py="xl">
-      <Stack mb="xl" gap={4}>
-        <Title order={2}>{t('settings.title')}</Title>
-        <Text c="dimmed" size="sm">{t('settings.subtitle')}</Text>
-      </Stack>
+    <div className="max-w-xl mx-auto p-6 space-y-6">
+      <div>
+        <h2 className="text-xl font-bold">{t('settings.title')}</h2>
+        <p className="text-sm text-muted-foreground">{t('settings.subtitle')}</p>
+      </div>
 
-      {/* Rename workspace — global users only (local member tokens cannot call workspace-get/rename) */}
-      {globalAuth && <Paper withBorder p="lg" radius="md" mb="md">
-        <Text fw={600} mb="xs">{t('settings.renameWorkspace')}</Text>
-        <Text size="xs" c="dimmed" mb="md">{t('settings.renameWorkspaceHint')}</Text>
-        <Group gap="xs" align="flex-end">
-          <TextInput
-            placeholder={wsData?.name ?? ''}
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            size="sm"
-            style={{ flex: 1 }}
-            label={t('settings.newWorkspaceName')}
-          />
-          <Button
-            size="sm"
-            variant="light"
-            leftSection={<Save size={14} />}
-            loading={renameWorkspace.isPending}
-            disabled={!newName.trim() || newName.trim() === wsData?.name}
-            onClick={() => renameWorkspace.mutate(newName.trim())}
-            mb={1}
-          >
-            {t('common.save')}
-          </Button>
-        </Group>
-      </Paper>}
+      {/* SSO Providers — read-only */}
+      <div className="border rounded-lg p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <KeyRound className="h-4 w-4 opacity-60" />
+          <span className="font-semibold">{t('settings.sso')}</span>
+        </div>
 
-      {/* SSO Providers */}
-      <Paper withBorder p="lg" radius="md" mb="md">
-        <Group justify="space-between" mb="md">
-          <Group gap="xs">
-            <KeyRound size={18} opacity={0.6} />
-            <Text fw={600}>{t('settings.sso')}</Text>
-          </Group>
-          <Button size="xs" variant="light" leftSection={<Plus size={14} />} onClick={openAddProvider}>
-            {t('settings.addProvider')}
-          </Button>
-        </Group>
+        <Alert>
+          <Info className="h-4 w-4" />
+          <AlertDescription>{t('settings.ssoEnvConfigured')}</AlertDescription>
+        </Alert>
 
-        {providers.length === 0 && (
-          <Text size="sm" c="dimmed">{t('settings.noProviders')}</Text>
+        {ssoProviders.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t('settings.noProviders')}</p>
+        ) : (
+          <div className="space-y-2">
+            {ssoProviders.map((p) => (
+              <div key={p.id} className="border rounded-md p-3 flex items-center gap-2">
+                <span className="text-sm font-medium">{p.name}</span>
+                <Badge variant="secondary">{p.type.toUpperCase()}</Badge>
+              </div>
+            ))}
+          </div>
         )}
-
-        <Stack gap="xs">
-          {providers.map((p) => (
-            <Paper key={p.id} withBorder p="sm" radius="sm">
-              <Group justify="space-between">
-                <Group gap="sm">
-                  <Text size="sm" fw={500}>{p.name}</Text>
-                  <Badge size="xs" variant="light">{p.type.toUpperCase()}</Badge>
-                </Group>
-                <Group gap={4}>
-                  <ActionIcon variant="subtle" size="sm" onClick={() => openEditProvider(p)}>
-                    <Pencil size={14} />
-                  </ActionIcon>
-                  <ActionIcon variant="subtle" color="red" size="sm" onClick={() => handleDeleteProvider(p.id)}>
-                    <Trash2 size={14} />
-                  </ActionIcon>
-                </Group>
-              </Group>
-              {p.issuer && (
-                <Text size="xs" c="dimmed" mt={4}>{p.issuer}</Text>
-              )}
-            </Paper>
-          ))}
-        </Stack>
-
-        {saved && (
-          <Alert icon={<CheckCircle2 size={16} />} color="green" variant="light" mt="md">
-            {t('settings.saved')}
-          </Alert>
-        )}
-      </Paper>
+      </div>
 
       {/* Member auth defaults */}
-      <Paper withBorder p="lg" radius="md" mb="md">
-        <Text fw={600} mb="xs">{t('settings.memberAuthDefaults')}</Text>
-        <Text size="xs" c="dimmed" mb="lg">{t('settings.memberAuthDefaultsHint')}</Text>
+      <div className="border rounded-lg p-5 space-y-4">
+        <div>
+          <p className="font-semibold">{t('settings.memberAuthDefaults')}</p>
+          <p className="text-xs text-muted-foreground">{t('settings.memberAuthDefaultsHint')}</p>
+        </div>
 
-        <Stack gap="lg">
+        <div className="space-y-4">
           <Switch
             label={t('settings.passwordAuth')}
             checked={passwordAuth}
-            onChange={(e) => setPasswordAuth(e.currentTarget.checked)}
+            onCheckedChange={setPasswordAuth}
           />
           <Switch
             label={t('settings.ssoAuth')}
             checked={ssoAuth}
-            onChange={(e) => setSsoAuth(e.currentTarget.checked)}
+            onCheckedChange={setSsoAuth}
           />
           <Switch
             label={t('settings.apiTokenAuth')}
             checked={apiTokenAuth}
-            onChange={(e) => setApiTokenAuth(e.currentTarget.checked)}
+            onCheckedChange={setApiTokenAuth}
           />
           {apiTokenAuth && (
-            <NumberInput
+            <Input
               label={t('settings.apiTokenMax')}
-              value={apiTokenMax}
-              onChange={(v) => setApiTokenMax(Number(v) || 5)}
+              type="number"
+              value={String(apiTokenMax)}
+              onChange={(e) => setApiTokenMax(Number(e.target.value) || 5)}
               min={1}
               max={100}
-              w={120}
+              className="w-28"
             />
           )}
-          <NumberInput
-            label={t('settings.memberSessionDuration')}
-            description={t('settings.memberSessionDurationHint')}
-            value={sessionDuration}
-            onChange={setSessionDuration}
-            min={0}
-            step={3600}
-            placeholder={t('settings.memberSessionDurationPlaceholder')}
-            w={200}
-          />
-        </Stack>
-      </Paper>
+          <div>
+            <Input
+              label={t('settings.memberSessionDuration')}
+              description={t('settings.memberSessionDurationHint')}
+              type="number"
+              value={String(sessionDuration)}
+              onChange={(e) => setSessionDuration(e.target.value === '' ? '' : Number(e.target.value))}
+              min={0}
+              step={3600}
+              placeholder={t('settings.memberSessionDurationPlaceholder')}
+              className="w-48"
+            />
+          </div>
+        </div>
+      </div>
 
       {/* Default member permissions */}
-      <Paper withBorder p="lg" radius="md">
-        <Text fw={600} mb="xs">{t('settings.defaultMemberPermissions')}</Text>
-        <Text size="xs" c="dimmed" mb="md">{t('settings.defaultMemberPermissionsHint')}</Text>
+      <div className="border rounded-lg p-5 space-y-4">
+        <div>
+          <p className="font-semibold">{t('settings.defaultMemberPermissions')}</p>
+          <p className="text-xs text-muted-foreground">{t('settings.defaultMemberPermissionsHint')}</p>
+        </div>
 
         {gates.length === 0 ? (
-          <Text size="xs" c="dimmed" fs="italic">{t('settings.noGatesForDefaults')}</Text>
+          <p className="text-xs text-muted-foreground italic">{t('settings.noGatesForDefaults')}</p>
         ) : (
           <GatePermissionsGrid
             gates={gates}
@@ -580,88 +207,21 @@ export default function SettingsPage() {
                 return next
               })
             }}
-            withColumnSelect
           />
         )}
 
         {macSaved && (
-          <Alert icon={<CheckCircle2 size={16} />} color="green" variant="light" mt="md">
-            {t('settings.saved')}
+          <Alert variant="success">
+            <CheckCircle2 className="h-4 w-4" />
+            <AlertDescription>{t('settings.saved')}</AlertDescription>
           </Alert>
         )}
 
-        <Group mt="md">
-          <Button
-            onClick={handleSaveMemberAuth}
-            loading={updateMAC.isPending}
-            leftSection={<Save size={16} />}
-          >
-            {t('settings.saveSso')}
-          </Button>
-        </Group>
-      </Paper>
-
-      {/* Danger zone — global users only */}
-      {globalAuth && <Paper withBorder p="lg" radius="md" mt="md" style={{ borderColor: 'var(--mantine-color-red-6)' }}>
-        <Group gap="xs" mb="md">
-          <AlertTriangle size={18} color="var(--mantine-color-red-6)" />
-          <Text fw={600} c="red">{t('settings.dangerZone')}</Text>
-        </Group>
-
-        <div>
-          <Text size="sm" fw={500} mb={4}>{t('settings.deleteWorkspace')}</Text>
-          <Text size="xs" c="dimmed" mb="xs">{t('settings.deleteWorkspaceHint')}</Text>
-          <Button
-            color="red"
-            variant="light"
-            leftSection={<Trash2 size={14} />}
-            onClick={openDeleteModal}
-            style={{ maxWidth: '100%' }}
-          >
-            {t('settings.deleteWorkspace')}
-          </Button>
-        </div>
-      </Paper>}
-
-      <ProviderModal
-        key={modalKey}
-        opened={modalOpened}
-        onClose={closeModal}
-        initial={editingProvider}
-        onSave={handleSaveProvider}
-      />
-
-      {/* Delete confirmation modal */}
-      <Modal
-        opened={deleteModalOpened}
-        onClose={() => { closeDeleteModal(); setDeleteConfirmName('') }}
-        title={<Text fw={600} c="red">{t('settings.deleteWorkspaceConfirm')}</Text>}
-        size="sm"
-      >
-        <Stack>
-          <Text size="sm">{t('settings.deleteWorkspaceConfirmHint')}</Text>
-          <Text size="sm" fw={600} ff="mono">{wsData?.name}</Text>
-          <TextInput
-            placeholder={wsData?.name ?? ''}
-            value={deleteConfirmName}
-            onChange={(e) => setDeleteConfirmName(e.target.value)}
-          />
-          <Group justify="flex-end">
-            <Button variant="default" onClick={() => { closeDeleteModal(); setDeleteConfirmName('') }}>
-              {t('common.cancel')}
-            </Button>
-            <Button
-              color="red"
-              loading={deleteWorkspace.isPending}
-              disabled={deleteConfirmName !== wsData?.name}
-              leftSection={<Trash2 size={14} />}
-              onClick={() => deleteWorkspace.mutate()}
-            >
-              {t('settings.deleteWorkspaceConfirm')}
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
-    </Container>
+        <Button onClick={handleSaveMemberAuth} loading={updateMAC.isPending}>
+          <Save className="h-4 w-4" />
+          {t('settings.saveSso')}
+        </Button>
+      </div>
+    </div>
   )
 }

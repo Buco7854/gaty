@@ -4,33 +4,32 @@ import axios from 'axios'
 
 export interface GateEvent {
   gate_id: string
-  workspace_id: string
   status: string
   status_metadata?: Record<string, unknown>
 }
 
 /**
- * Subscribes to real-time gate status events via SSE for the given workspace.
+ * Subscribes to real-time gate status events via SSE.
  * Uses a one-time ticket obtained via POST (cookie auth) to avoid exposing the JWT in the URL.
  */
-export function useGateEvents(wsId: string | undefined, onEvent: (event: GateEvent) => void) {
+export function useGateEvents(onEvent: (event: GateEvent) => void) {
   const session = useAuthStore((s) => s.session)
   const onEventRef = useRef(onEvent)
   onEventRef.current = onEvent
 
   useEffect(() => {
-    if (!wsId || !session) return
+    if (!session || session.type !== 'member') return
 
     let es: EventSource | null = null
     let cancelled = false
 
     axios.post<{ ticket: string }>(
-      `/api/workspaces/${wsId}/events/ticket`,
+      '/api/events/ticket',
       null,
       { withCredentials: true },
     ).then(({ data }) => {
       if (cancelled) return
-      const url = `/api/workspaces/${wsId}/events?ticket=${encodeURIComponent(data.ticket)}`
+      const url = `/api/events?ticket=${encodeURIComponent(data.ticket)}`
       es = new EventSource(url)
       es.onmessage = (e) => {
         try {
@@ -48,5 +47,5 @@ export function useGateEvents(wsId: string | undefined, onEvent: (event: GateEve
       cancelled = true
       es?.close()
     }
-  }, [wsId, session])
+  }, [session])
 }

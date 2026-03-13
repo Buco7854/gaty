@@ -1,33 +1,32 @@
-import { useEffect, useRef, useMemo } from 'react'
+import { useEffect, useRef, useMemo, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { publicApi, policiesApi } from '@/api'
-import type { DomainResolveResult } from '@/types'
+import type { DomainResolveResult, GateStatus } from '@/types'
 import { useTranslation } from 'react-i18next'
 import { notifySuccess, notifyError } from '@/lib/notify'
-import { Center, Stack, Group, Text, Title, Loader, Button, Anchor, Paper, Badge } from '@mantine/core'
-import { Hash, KeyRound, LayoutGrid, Users, Activity } from 'lucide-react'
-import type { GateStatus } from '@/types'
+import { Hash, KeyRound, Users, Activity, LayoutGrid, Loader2 } from 'lucide-react'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
 import { useAuthStore } from '@/store/auth'
 import { getNestedValue, hasNestedKey } from '@/lib/utils'
-import { useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 
-function getStatusColor(status: GateStatus | undefined): string {
+function getStatusVariant(status: GateStatus | undefined): 'success' | 'destructive' | 'warning' | 'secondary' {
   switch (status) {
     case 'online':
-    case 'open': return 'green'
+    case 'open': return 'success'
     case 'offline':
-    case 'closed': return 'red'
+    case 'closed': return 'destructive'
     case 'unresponsive':
-    case 'unavailable': return 'orange'
-    default: return 'gray'
+    case 'unavailable': return 'warning'
+    default: return 'secondary'
   }
 }
 
 export default function GatePortalPage() {
-  const { wsId: wsIdParam, gateId: gateIdParam } = useParams<{ wsId?: string; gateId?: string }>()
+  const { gateId: gateIdParam } = useParams<{ gateId?: string }>()
   const navigate = useNavigate()
   const location = useLocation()
   const { t } = useTranslation()
@@ -40,7 +39,6 @@ export default function GatePortalPage() {
 
   const autoTriggeredRef = useRef(false)
 
-  // Resolve gate info
   useEffect(() => {
     if (gateIdParam) {
       publicApi.resolveByGateId(gateIdParam)
@@ -53,7 +51,7 @@ export default function GatePortalPage() {
       .then((data) => setResolved(data))
       .catch(() => {
         if (isAuthenticated()) {
-          navigate('/workspaces', { replace: true })
+          navigate('/gates', { replace: true })
         } else {
           navigate('/login', { replace: true })
         }
@@ -62,22 +60,18 @@ export default function GatePortalPage() {
   }, [gateIdParam])
 
   const effectiveGateId = gateIdParam ?? resolved?.gate_id
-  const effectiveWsId = wsIdParam ?? resolved?.workspace_id
+  const hasSession = session?.type === 'pin_session' || session?.type === 'member'
 
-  // Determine if we have an active session for this gate
-  const hasSession = session?.type === 'pin_session' || session?.type === 'local'
-
-  // Permission derivation for member sessions
   const { data: myPolicies } = useQuery({
-    queryKey: ['policies-me', session?.workspaceId],
-    queryFn: () => policiesApi.listMine(session!.workspaceId!),
-    enabled: session?.type === 'local' && !!session.workspaceId,
+    queryKey: ['policies-me'],
+    queryFn: () => policiesApi.listMine(),
+    enabled: session?.type === 'member',
   })
 
   const permissions = useMemo(() => {
     if (!session) return []
     if (session.type === 'pin_session') return session.permissions ?? []
-    if (session.type === 'local') {
+    if (session.type === 'member') {
       return myPolicies
         ?.filter((p) => p.gate_id === effectiveGateId)
         .map((p) => p.permission_code) ?? []
@@ -90,7 +84,7 @@ export default function GatePortalPage() {
   const canOpen = permissions.includes('gate:trigger_open') && gateHasOpen
   const canClose = permissions.includes('gate:trigger_close') && gateHasClose
   const canViewStatus = permissions.includes('gate:read_status')
-  const isAdminSession = session?.type === 'local' && (session.role === 'ADMIN' || session.role === 'OWNER')
+  const isAdminSession = session?.type === 'member' && session.member?.role === 'ADMIN'
   const policiesReady = session?.type === 'pin_session' || !!myPolicies
 
   const metaRows = useMemo(() => {
@@ -108,16 +102,14 @@ export default function GatePortalPage() {
   async function triggerGate(action: 'open' | 'close') {
     if (session?.type === 'pin_session') {
       await publicApi.triggerWithPinSession(action)
-    } else if (session?.type === 'local' && session.workspaceId && effectiveGateId) {
-      await publicApi.triggerAsLocal(session.workspaceId, effectiveGateId, action)
+    } else if (session?.type === 'member' && effectiveGateId) {
+      await publicApi.triggerAsMember(effectiveGateId, action)
     }
   }
 
   const triggerMutation = useMutation({
     mutationFn: (action: 'open' | 'close') => triggerGate(action),
-    onSuccess: () => {
-      notifySuccess(t('pinpad.gateOpened'))
-    },
+    onSuccess: () => notifySuccess(t('pinpad.gateOpened')),
     onError: (err: unknown) => {
       const status = (err as { response?: { status?: number } })?.response?.status
       if (status === 401) {
@@ -129,12 +121,11 @@ export default function GatePortalPage() {
     },
   })
 
-  // Auto-trigger open when arriving just after authentication
   useEffect(() => {
     if (!location.state?.justAuthenticated) return
     if (autoTriggeredRef.current) return
     if (!hasSession) return
-    if (session?.type === 'local' && !myPolicies) return
+    if (session?.type === 'member' && !myPolicies) return
     if (!canOpen) return
     autoTriggeredRef.current = true
     triggerMutation.mutate('open')
@@ -142,19 +133,19 @@ export default function GatePortalPage() {
   }, [hasSession, policiesReady, canOpen])
 
   function navigateToPin() {
-    if (!effectiveGateId || !effectiveWsId) return
-    navigate(`/workspaces/${effectiveWsId}/gates/${effectiveGateId}/public/pin`)
+    if (!effectiveGateId) return
+    navigate(`/gates/${effectiveGateId}/public/pin`)
   }
 
   function navigateToPassword() {
-    if (!effectiveGateId || !effectiveWsId) return
-    navigate(`/workspaces/${effectiveWsId}/gates/${effectiveGateId}/public/password`)
+    if (!effectiveGateId) return
+    navigate(`/gates/${effectiveGateId}/public/password`)
   }
 
   function navigateToMemberLogin() {
-    if (!effectiveWsId || !effectiveGateId) return
+    if (!effectiveGateId) return
     const params = new URLSearchParams({ gate_id: effectiveGateId, redirect: window.location.pathname })
-    navigate(`/workspaces/${effectiveWsId}/login?${params.toString()}`)
+    navigate(`/member-login?${params.toString()}`)
   }
 
   function handleClearSession() {
@@ -164,48 +155,46 @@ export default function GatePortalPage() {
 
   if (resolving) {
     return (
-      <Center mih="100vh">
-        <Loader />
-      </Center>
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
     )
   }
 
   const gateName = resolved?.gate_name ?? 'Gate'
-  const isPending = triggerMutation.isPending
 
   return (
-    <div style={{ position: 'relative', minHeight: '100vh' }}>
-      <Group gap="xs" style={{ position: 'absolute', top: 12, right: 16, zIndex: 10 }}>
+    <div className="relative min-h-screen">
+      <div className="absolute top-3 right-4 z-10 flex items-center gap-1">
         <LangToggle />
         <ThemeToggle />
-      </Group>
+      </div>
 
-      <Center mih="100vh" p="md" style={{ userSelect: 'none' }}>
-        <Stack align="center" gap="xl" w="100%" maw={320}>
+      <div className="flex items-center justify-center min-h-screen p-4 select-none">
+        <div className="flex flex-col items-center gap-6 w-full max-w-xs">
           {/* Header */}
-          <Stack align="center" gap={4}>
-            <Group gap="sm" justify="center">
-              <Title order={2}>{gateName}</Title>
+          <div className="text-center space-y-1">
+            <div className="flex items-center gap-2 justify-center">
+              <h2 className="text-xl font-bold">{gateName}</h2>
               {canViewStatus && resolved?.status && (
-                <Badge color={getStatusColor(resolved.status)} variant="light">
+                <Badge variant={getStatusVariant(resolved.status)}>
                   {t(`common.${resolved.status}`, { defaultValue: resolved.status })}
                 </Badge>
               )}
-            </Group>
-            <Text size="sm" c="dimmed">
+            </div>
+            <p className="text-sm text-muted-foreground">
               {hasSession ? t('pinpad.sessionActive') : t('pinpad.chooseMethod')}
-            </Text>
-          </Stack>
+            </p>
+          </div>
 
           {/* Session active: gate controls */}
           {hasSession && (
-            <Stack align="center" w="100%" gap="sm">
+            <div className="flex flex-col items-center w-full gap-3">
               {canOpen && (
                 <Button
                   size="lg"
-                  radius="xl"
-                  fullWidth
-                  loading={isPending}
+                  className="w-full rounded-full"
+                  loading={triggerMutation.isPending}
                   onClick={() => triggerMutation.mutate('open')}
                 >
                   {t('gates.open')}
@@ -214,87 +203,85 @@ export default function GatePortalPage() {
               {canClose && (
                 <Button
                   size="lg"
-                  radius="xl"
-                  fullWidth
-                  variant="default"
-                  loading={isPending}
+                  variant="outline"
+                  className="w-full rounded-full"
+                  loading={triggerMutation.isPending}
                   onClick={() => triggerMutation.mutate('close')}
                 >
                   {t('gates.close')}
                 </Button>
               )}
-              {isAdminSession && session?.workspaceId && (
+              {isAdminSession && (
                 <Button
-                  variant="subtle"
-                  size="xs"
-                  leftSection={<LayoutGrid size={14} />}
-                  onClick={() => navigate(`/workspaces/${session.workspaceId}`)}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate('/gates')}
                 >
-                  {t('pinpad.myWorkspace')}
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                  {t('pinpad.myDashboard')}
                 </Button>
               )}
               {canViewStatus && metaRows.length > 0 && (
-                <Paper withBorder p="sm" radius="md" w="100%">
-                  <Group gap="xs" mb="xs">
-                    <Activity size={14} opacity={0.6} />
-                    <Text size="sm" fw={600}>{t('gates.liveData')}</Text>
-                  </Group>
-                  <Stack gap={4}>
+                <div className="border rounded-lg p-3 w-full">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <Activity className="h-3.5 w-3.5 opacity-60" />
+                    <p className="text-sm font-semibold">{t('gates.liveData')}</p>
+                  </div>
+                  <div className="space-y-1">
                     {metaRows.map((row) => (
-                      <Group key={row.label} justify="space-between" py={2}>
-                        <Text size="sm">{row.label}</Text>
-                        <Text size="sm" fw={500} ff="mono">
+                      <div key={row.label} className="flex items-center justify-between py-0.5">
+                        <span className="text-sm">{row.label}</span>
+                        <span className="text-sm font-medium font-mono">
                           {row.value}{row.unit ? ` ${row.unit}` : ''}
-                        </Text>
-                      </Group>
+                        </span>
+                      </div>
                     ))}
-                  </Stack>
-                </Paper>
+                  </div>
+                </div>
               )}
-              <Anchor component="button" type="button" size="xs" c="dimmed" onClick={handleClearSession}>
+              <button
+                type="button"
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                onClick={handleClearSession}
+              >
                 {t('pinpad.useAnotherMethod')}
-              </Anchor>
-            </Stack>
+              </button>
+            </div>
           )}
 
           {/* No session: auth options */}
           {!hasSession && effectiveGateId && (
-            <Stack align="center" w="100%" gap="sm">
+            <div className="flex flex-col items-center w-full gap-3">
               <Button
                 size="lg"
-                radius="xl"
-                fullWidth
-                leftSection={<Hash size={16} />}
+                className="w-full rounded-full"
                 onClick={navigateToPin}
               >
+                <Hash className="h-4 w-4" />
                 {t('pinpad.enterPinCode')}
               </Button>
               <Button
                 size="lg"
-                radius="xl"
-                fullWidth
-                variant="default"
-                leftSection={<KeyRound size={16} />}
+                variant="outline"
+                className="w-full rounded-full"
                 onClick={navigateToPassword}
               >
+                <KeyRound className="h-4 w-4" />
                 {t('pinpad.enterPasswordCode')}
               </Button>
-              {effectiveWsId && (
-                <Button
-                  size="lg"
-                  radius="xl"
-                  fullWidth
-                  variant="default"
-                  leftSection={<Users size={16} />}
-                  onClick={navigateToMemberLogin}
-                >
-                  {t('pinpad.memberLogin')}
-                </Button>
-              )}
-            </Stack>
+              <Button
+                size="lg"
+                variant="outline"
+                className="w-full rounded-full"
+                onClick={navigateToMemberLogin}
+              >
+                <Users className="h-4 w-4" />
+                {t('pinpad.memberLogin')}
+              </Button>
+            </div>
           )}
-        </Stack>
-      </Center>
+        </div>
+      </div>
     </div>
   )
 }

@@ -21,39 +21,37 @@ func NewPolicyHandler(policies *service.PolicyService) *PolicyHandler {
 }
 
 type ListPoliciesOutput struct {
-	Body PaginatedBody[model.MembershipPolicy]
+	Body PaginatedBody[model.MemberPolicy]
 }
 
 // --- List for gate ---
 
 type ListPoliciesInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
+	GateID uuid.UUID `path:"gate_id"`
 	PaginationQuery
 }
 
 func (h *PolicyHandler) List(ctx context.Context, input *ListPoliciesInput) (*ListPoliciesOutput, error) {
 	p := input.Params()
-	policies, total, err := h.policies.List(ctx, input.GateID, p)
+	policies, total, err := h.policies.ListForGate(ctx, input.GateID, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list policies", err)
 	}
 	return &ListPoliciesOutput{Body: NewPaginatedBody(policies, total, p)}, nil
 }
 
-// --- List for membership ---
+// --- List for member ---
 
-type ListMembershipPoliciesInput struct {
-	WorkspaceID  uuid.UUID `path:"ws_id"`
-	MembershipID uuid.UUID `path:"membership_id"`
+type ListMemberPoliciesInput struct {
+	MemberID uuid.UUID `path:"member_id"`
 	PaginationQuery
 }
 
-func (h *PolicyHandler) ListByMembership(ctx context.Context, input *ListMembershipPoliciesInput) (*ListPoliciesOutput, error) {
+func (h *PolicyHandler) ListByMember(ctx context.Context, input *ListMemberPoliciesInput) (*ListPoliciesOutput, error) {
 	p := input.Params()
-	policies, total, err := h.policies.ListForMembership(ctx, input.MembershipID, p)
+	policies, total, err := h.policies.ListForMember(ctx, input.MemberID, p)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to list membership policies", err)
+		return nil, huma.Error500InternalServerError("failed to list member policies", err)
 	}
 	return &ListPoliciesOutput{Body: NewPaginatedBody(policies, total, p)}, nil
 }
@@ -61,17 +59,16 @@ func (h *PolicyHandler) ListByMembership(ctx context.Context, input *ListMembers
 // --- List mine (authenticated member's own policies) ---
 
 type ListMyPoliciesInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
 	PaginationQuery
 }
 
 func (h *PolicyHandler) ListMine(ctx context.Context, input *ListMyPoliciesInput) (*ListPoliciesOutput, error) {
-	membershipID, ok := middleware.WorkspaceMembershipIDFromContext(ctx)
+	memberID, ok := middleware.MemberIDFromContext(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized("not authenticated")
 	}
 	p := input.Params()
-	policies, total, err := h.policies.ListForMembership(ctx, membershipID, p)
+	policies, total, err := h.policies.ListForMember(ctx, memberID, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list policies", err)
 	}
@@ -81,31 +78,29 @@ func (h *PolicyHandler) ListMine(ctx context.Context, input *ListMyPoliciesInput
 // --- Grant ---
 
 type GrantPolicyInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
-	Body        struct {
-		MembershipID   uuid.UUID `json:"membership_id"`
+	GateID uuid.UUID `path:"gate_id"`
+	Body   struct {
+		MemberID       uuid.UUID `json:"member_id"`
 		PermissionCode string    `json:"permission_code" minLength:"1"`
 	}
 }
 
 func (h *PolicyHandler) Grant(ctx context.Context, input *GrantPolicyInput) (*struct{}, error) {
-	if err := h.policies.Grant(ctx, input.Body.MembershipID, input.GateID, input.Body.PermissionCode); err != nil {
+	if err := h.policies.Grant(ctx, input.Body.MemberID, input.GateID, input.Body.PermissionCode); err != nil {
 		return nil, huma.Error500InternalServerError("failed to grant policy", err)
 	}
 	return nil, nil
 }
 
-// --- Revoke all for a membership ---
+// --- Revoke all for a member ---
 
-type PolicyMembershipPathParam struct {
-	WorkspaceID  uuid.UUID `path:"ws_id"`
-	GateID       uuid.UUID `path:"gate_id"`
-	MembershipID uuid.UUID `path:"membership_id"`
+type PolicyMemberPathParam struct {
+	GateID   uuid.UUID `path:"gate_id"`
+	MemberID uuid.UUID `path:"member_id"`
 }
 
-func (h *PolicyHandler) Revoke(ctx context.Context, input *PolicyMembershipPathParam) (*struct{}, error) {
-	if err := h.policies.Revoke(ctx, input.MembershipID, input.GateID); err != nil {
+func (h *PolicyHandler) Revoke(ctx context.Context, input *PolicyMemberPathParam) (*struct{}, error) {
+	if err := h.policies.Revoke(ctx, input.MemberID, input.GateID); err != nil {
 		return nil, huma.Error500InternalServerError("failed to revoke policy", err)
 	}
 	return nil, nil
@@ -114,14 +109,13 @@ func (h *PolicyHandler) Revoke(ctx context.Context, input *PolicyMembershipPathP
 // --- Revoke a specific permission ---
 
 type RevokePermissionPathParam struct {
-	WorkspaceID    uuid.UUID `path:"ws_id"`
 	GateID         uuid.UUID `path:"gate_id"`
-	MembershipID   uuid.UUID `path:"membership_id"`
+	MemberID       uuid.UUID `path:"member_id"`
 	PermissionCode string    `path:"permission_code"`
 }
 
 func (h *PolicyHandler) RevokePermission(ctx context.Context, input *RevokePermissionPathParam) (*struct{}, error) {
-	err := h.policies.RevokePermission(ctx, input.MembershipID, input.GateID, input.PermissionCode)
+	err := h.policies.RevokePermission(ctx, input.MemberID, input.GateID, input.PermissionCode)
 	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("policy not found")
 	}
@@ -137,8 +131,8 @@ type MemberGateScheduleOutput struct {
 	Body *model.AccessSchedule
 }
 
-func (h *PolicyHandler) GetMemberGateSchedule(ctx context.Context, input *PolicyMembershipPathParam) (*MemberGateScheduleOutput, error) {
-	schedule, err := h.policies.GetMemberGateSchedule(ctx, input.MembershipID, input.GateID)
+func (h *PolicyHandler) GetMemberGateSchedule(ctx context.Context, input *PolicyMemberPathParam) (*MemberGateScheduleOutput, error) {
+	schedule, err := h.policies.GetMemberGateSchedule(ctx, input.MemberID, input.GateID)
 	if errors.Is(err, model.ErrNotFound) {
 		return &MemberGateScheduleOutput{Body: nil}, nil
 	}
@@ -149,23 +143,22 @@ func (h *PolicyHandler) GetMemberGateSchedule(ctx context.Context, input *Policy
 }
 
 type SetMemberGateScheduleInput struct {
-	WorkspaceID  uuid.UUID `path:"ws_id"`
-	GateID       uuid.UUID `path:"gate_id"`
-	MembershipID uuid.UUID `path:"membership_id"`
-	Body         struct {
+	GateID   uuid.UUID `path:"gate_id"`
+	MemberID uuid.UUID `path:"member_id"`
+	Body     struct {
 		ScheduleID uuid.UUID `json:"schedule_id"`
 	}
 }
 
 func (h *PolicyHandler) SetMemberGateSchedule(ctx context.Context, input *SetMemberGateScheduleInput) (*struct{}, error) {
-	if err := h.policies.SetMemberGateSchedule(ctx, input.MembershipID, input.GateID, input.Body.ScheduleID); err != nil {
+	if err := h.policies.SetMemberGateSchedule(ctx, input.MemberID, input.GateID, input.Body.ScheduleID); err != nil {
 		return nil, huma.Error500InternalServerError("failed to set schedule", err)
 	}
 	return nil, nil
 }
 
-func (h *PolicyHandler) RemoveMemberGateSchedule(ctx context.Context, input *PolicyMembershipPathParam) (*struct{}, error) {
-	if err := h.policies.RemoveMemberGateSchedule(ctx, input.MembershipID, input.GateID); err != nil {
+func (h *PolicyHandler) RemoveMemberGateSchedule(ctx context.Context, input *PolicyMemberPathParam) (*struct{}, error) {
+	if err := h.policies.RemoveMemberGateSchedule(ctx, input.MemberID, input.GateID); err != nil {
 		return nil, huma.Error500InternalServerError("failed to remove schedule", err)
 	}
 	return nil, nil
@@ -175,88 +168,88 @@ func (h *PolicyHandler) RemoveMemberGateSchedule(ctx context.Context, input *Pol
 
 func (h *PolicyHandler) RegisterRoutes(
 	api huma.API,
-	wsMember func(huma.Context, func(huma.Context)),
-	wsAdmin func(huma.Context, func(huma.Context)),
-	wsGateManager func(huma.Context, func(huma.Context)),
+	requireAuth func(huma.Context, func(huma.Context)),
+	requireAdmin func(huma.Context, func(huma.Context)),
+	gateManager func(huma.Context, func(huma.Context)),
 ) {
 	huma.Register(api, huma.Operation{
 		OperationID: "policy-list-mine",
 		Method:      http.MethodGet,
-		Path:        "/api/workspaces/{ws_id}/policies/me",
+		Path:        "/api/policies/me",
 		Summary:     "List all policies for the authenticated member",
 		Tags:        []string{"Policies"},
-		Middlewares: huma.Middlewares{wsMember},
+		Middlewares: huma.Middlewares{requireAuth},
 	}, h.ListMine)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "policy-list",
 		Method:      http.MethodGet,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/policies",
-		Summary:     "List membership policies for a gate",
+		Path:        "/api/gates/{gate_id}/policies",
+		Summary:     "List member policies for a gate",
 		Tags:        []string{"Policies"},
-		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+		Middlewares: huma.Middlewares{requireAuth, gateManager},
 	}, h.List)
 
 	huma.Register(api, huma.Operation{
-		OperationID: "policy-list-by-membership",
+		OperationID: "policy-list-by-member",
 		Method:      http.MethodGet,
-		Path:        "/api/workspaces/{ws_id}/members/{membership_id}/policies",
-		Summary:     "List all policies for a membership",
+		Path:        "/api/members/{member_id}/policies",
+		Summary:     "List all policies for a member",
 		Tags:        []string{"Policies"},
-		Middlewares: huma.Middlewares{wsAdmin},
-	}, h.ListByMembership)
+		Middlewares: huma.Middlewares{requireAdmin},
+	}, h.ListByMember)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "policy-grant",
 		Method:      http.MethodPost,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/policies",
-		Summary:     "Grant a permission to a membership on a gate",
+		Path:        "/api/gates/{gate_id}/policies",
+		Summary:     "Grant a permission to a member on a gate",
 		Tags:        []string{"Policies"},
-		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+		Middlewares: huma.Middlewares{requireAuth, gateManager},
 	}, h.Grant)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "policy-revoke",
 		Method:      http.MethodDelete,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/policies/{membership_id}",
-		Summary:     "Revoke all permissions from a membership on a gate",
+		Path:        "/api/gates/{gate_id}/policies/{member_id}",
+		Summary:     "Revoke all permissions from a member on a gate",
 		Tags:        []string{"Policies"},
-		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+		Middlewares: huma.Middlewares{requireAuth, gateManager},
 	}, h.Revoke)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "policy-revoke-permission",
 		Method:      http.MethodDelete,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/policies/{membership_id}/{permission_code}",
-		Summary:     "Revoke a specific permission from a membership on a gate",
+		Path:        "/api/gates/{gate_id}/policies/{member_id}/{permission_code}",
+		Summary:     "Revoke a specific permission from a member on a gate",
 		Tags:        []string{"Policies"},
-		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+		Middlewares: huma.Middlewares{requireAuth, gateManager},
 	}, h.RevokePermission)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "policy-get-schedule",
 		Method:      http.MethodGet,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/policies/{membership_id}/schedule",
+		Path:        "/api/gates/{gate_id}/policies/{member_id}/schedule",
 		Summary:     "Get the time-restriction schedule for a member-gate pair",
 		Tags:        []string{"Policies"},
-		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+		Middlewares: huma.Middlewares{requireAuth, gateManager},
 	}, h.GetMemberGateSchedule)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "policy-set-schedule",
 		Method:      http.MethodPut,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/policies/{membership_id}/schedule",
+		Path:        "/api/gates/{gate_id}/policies/{member_id}/schedule",
 		Summary:     "Attach (or replace) a time-restriction schedule on a member-gate pair",
 		Tags:        []string{"Policies"},
-		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+		Middlewares: huma.Middlewares{requireAuth, gateManager},
 	}, h.SetMemberGateSchedule)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "policy-remove-schedule",
 		Method:      http.MethodDelete,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/policies/{membership_id}/schedule",
+		Path:        "/api/gates/{gate_id}/policies/{member_id}/schedule",
 		Summary:     "Remove the time-restriction schedule from a member-gate pair",
 		Tags:        []string{"Policies"},
-		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+		Middlewares: huma.Middlewares{requireAuth, gateManager},
 	}, h.RemoveMemberGateSchedule)
 }

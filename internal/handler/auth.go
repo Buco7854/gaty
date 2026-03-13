@@ -8,10 +8,8 @@ import (
 
 	"github.com/Buco7854/gatie/internal/middleware"
 	"github.com/Buco7854/gatie/internal/model"
-	"github.com/Buco7854/gatie/internal/repository"
 	"github.com/Buco7854/gatie/internal/service"
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/google/uuid"
 )
 
 const (
@@ -53,102 +51,34 @@ func clearAuthCookies(secure bool) [2]string {
 
 type AuthHandler struct {
 	authSvc      *service.AuthService
-	users        repository.UserRepository
+	members      *service.MemberService
 	cookieSecure bool
 }
 
-func NewAuthHandler(authSvc *service.AuthService, users repository.UserRepository, cookieSecure bool) *AuthHandler {
-	return &AuthHandler{authSvc: authSvc, users: users, cookieSecure: cookieSecure}
+func NewAuthHandler(authSvc *service.AuthService, members *service.MemberService, cookieSecure bool) *AuthHandler {
+	return &AuthHandler{authSvc: authSvc, members: members, cookieSecure: cookieSecure}
 }
 
-// --- Register ---
-
-type RegisterInput struct {
-	Body struct {
-		Email    string `json:"email" format:"email" doc:"User email address"`
-		Password string `json:"password" minLength:"8" maxLength:"128" doc:"Password (min 8 chars, must contain uppercase, lowercase, and digit)"`
-	}
-}
-
-type GlobalAuthOutput struct {
-	SetCookie  string `header:"Set-Cookie"`
-	SetCookie2 string `header:"Set-Cookie2"`
-	Body       struct {
-		Type string     `json:"type"`
-		User model.User `json:"user"`
-	}
-}
-
-func (h *AuthHandler) Register(ctx context.Context, input *RegisterInput) (*GlobalAuthOutput, error) {
-	tokens, user, err := h.authSvc.Register(ctx, input.Body.Email, input.Body.Password)
-	if errors.Is(err, service.ErrWeakPassword) {
-		return nil, huma.Error400BadRequest(err.Error())
-	}
-	if errors.Is(err, service.ErrEmailTaken) {
-		return nil, huma.Error409Conflict("registration failed")
-	}
-	if err != nil {
-		return nil, huma.Error500InternalServerError("registration failed")
-	}
-	cookies := setAuthCookies(tokens, h.cookieSecure)
-	resp := &GlobalAuthOutput{}
-	resp.SetCookie = cookies[0]
-	resp.SetCookie2 = cookies[1]
-	resp.Body.Type = "global"
-	resp.Body.User = *user
-	return resp, nil
-}
-
-// --- Login (global) ---
+// --- Login ---
 
 type LoginInput struct {
 	Body struct {
-		Email    string `json:"email" format:"email"`
-		Password string `json:"password"`
+		Username string `json:"username" minLength:"1" doc:"Member username"`
+		Password string `json:"password" minLength:"1" doc:"Password"`
 	}
 }
 
-func (h *AuthHandler) Login(ctx context.Context, input *LoginInput) (*GlobalAuthOutput, error) {
-	tokens, user, err := h.authSvc.Login(ctx, input.Body.Email, input.Body.Password)
-	if errors.Is(err, service.ErrInvalidCredentials) {
-		return nil, huma.Error401Unauthorized("invalid credentials")
-	}
-	if err != nil {
-		return nil, huma.Error500InternalServerError("login failed")
-	}
-	cookies := setAuthCookies(tokens, h.cookieSecure)
-	resp := &GlobalAuthOutput{}
-	resp.SetCookie = cookies[0]
-	resp.SetCookie2 = cookies[1]
-	resp.Body.Type = "global"
-	resp.Body.User = *user
-	return resp, nil
-}
-
-// --- Login (local membership) ---
-
-type LoginLocalInput struct {
-	Body struct {
-		WorkspaceID  uuid.UUID `json:"workspace_id"`
-		LocalUsername string    `json:"local_username" minLength:"1"`
-		Password     string    `json:"password" minLength:"1"`
-	}
-}
-
-type LocalAuthOutput struct {
+type AuthOutput struct {
 	SetCookie  string `header:"Set-Cookie"`
 	SetCookie2 string `header:"Set-Cookie2"`
 	Body       struct {
-		Type         string              `json:"type"`
-		MembershipID string              `json:"membership_id"`
-		WorkspaceID  string              `json:"workspace_id"`
-		Role         model.WorkspaceRole `json:"role"`
-		DisplayName  string              `json:"display_name,omitempty"`
+		Type   string       `json:"type"`
+		Member model.Member `json:"member"`
 	}
 }
 
-func (h *AuthHandler) LoginLocal(ctx context.Context, input *LoginLocalInput) (*LocalAuthOutput, error) {
-	tokens, membership, err := h.authSvc.LoginLocal(ctx, input.Body.WorkspaceID, input.Body.LocalUsername, input.Body.Password)
+func (h *AuthHandler) Login(ctx context.Context, input *LoginInput) (*AuthOutput, error) {
+	tokens, member, err := h.authSvc.Login(ctx, input.Body.Username, input.Body.Password)
 	if errors.Is(err, service.ErrInvalidCredentials) {
 		return nil, huma.Error401Unauthorized("invalid credentials")
 	}
@@ -156,17 +86,12 @@ func (h *AuthHandler) LoginLocal(ctx context.Context, input *LoginLocalInput) (*
 		return nil, huma.Error500InternalServerError("login failed")
 	}
 	cookies := setAuthCookies(tokens, h.cookieSecure)
-	out := &LocalAuthOutput{}
-	out.SetCookie = cookies[0]
-	out.SetCookie2 = cookies[1]
-	out.Body.Type = "local"
-	out.Body.MembershipID = membership.ID.String()
-	out.Body.WorkspaceID = membership.WorkspaceID.String()
-	out.Body.Role = membership.Role
-	if membership.DisplayName != nil {
-		out.Body.DisplayName = *membership.DisplayName
-	}
-	return out, nil
+	resp := &AuthOutput{}
+	resp.SetCookie = cookies[0]
+	resp.SetCookie2 = cookies[1]
+	resp.Body.Type = "member"
+	resp.Body.Member = *member
+	return resp, nil
 }
 
 // --- Refresh ---
@@ -179,14 +104,10 @@ type RefreshOutput struct {
 	SetCookie  string `header:"Set-Cookie"`
 	SetCookie2 string `header:"Set-Cookie2"`
 	Body       struct {
-		Type         string              `json:"type"`
-		User         *model.User         `json:"user,omitempty"`
-		MembershipID string              `json:"membership_id,omitempty"`
-		WorkspaceID  string              `json:"workspace_id,omitempty"`
-		Role         model.WorkspaceRole `json:"role,omitempty"`
-		DisplayName  string              `json:"display_name,omitempty"`
-		GateID       string              `json:"gate_id,omitempty"`
-		Permissions  []string            `json:"permissions,omitempty"`
+		Type        string        `json:"type"`
+		Member      *model.Member `json:"member,omitempty"`
+		GateID      string        `json:"gate_id,omitempty"`
+		Permissions []string      `json:"permissions,omitempty"`
 	}
 }
 
@@ -211,17 +132,8 @@ func (h *AuthHandler) Refresh(ctx context.Context, input *RefreshInput) (*Refres
 	resp.Body.Type = result.Type
 
 	switch result.Type {
-	case "global":
-		resp.Body.User = result.User
-	case "local":
-		if result.Membership != nil {
-			resp.Body.MembershipID = result.Membership.ID.String()
-			resp.Body.WorkspaceID = result.Membership.WorkspaceID.String()
-			resp.Body.Role = result.Membership.Role
-			if result.Membership.DisplayName != nil {
-				resp.Body.DisplayName = *result.Membership.DisplayName
-			}
-		}
+	case "member":
+		resp.Body.Member = result.Member
 	case "pin_session":
 		resp.Body.GateID = result.GateID.String()
 		resp.Body.Permissions = result.Permissions
@@ -249,74 +161,34 @@ func (h *AuthHandler) Logout(ctx context.Context, input *LogoutInput) (*LogoutOu
 	return &LogoutOutput{SetCookie: cookies[0], SetCookie2: cookies[1]}, nil
 }
 
-// --- Merge (link local membership to global user) ---
-
-type MergeInput struct {
-	Body struct {
-		WorkspaceID  uuid.UUID `json:"workspace_id"`
-		LocalUsername string    `json:"local_username" minLength:"1"`
-		Password     string    `json:"password" minLength:"1"`
-	}
-}
-
-func (h *AuthHandler) Merge(ctx context.Context, input *MergeInput) (*struct{}, error) {
-	userID, _ := middleware.UserIDFromContext(ctx)
-	err := h.authSvc.Merge(ctx, userID, input.Body.WorkspaceID, input.Body.LocalUsername, input.Body.Password)
-	if errors.Is(err, service.ErrInvalidCredentials) {
-		return nil, huma.Error401Unauthorized("invalid credentials")
-	}
-	if errors.Is(err, service.ErrAlreadyMerged) {
-		return nil, huma.Error409Conflict("membership already linked to a user account")
-	}
-	if err != nil {
-		return nil, huma.Error500InternalServerError("merge failed")
-	}
-	return nil, nil
-}
-
 // --- Me ---
 
 type MeOutput struct {
-	Body model.User
+	Body model.Member
 }
 
 func (h *AuthHandler) Me(ctx context.Context, _ *struct{}) (*MeOutput, error) {
-	userID, _ := middleware.UserIDFromContext(ctx)
-	user, err := h.users.GetByID(ctx, userID)
-	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to fetch user")
+	memberID, ok := middleware.MemberIDFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized("not authenticated")
 	}
-	return &MeOutput{Body: *user}, nil
+	member, err := h.members.GetByID(ctx, memberID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to fetch member")
+	}
+	return &MeOutput{Body: *member}, nil
 }
 
 // RegisterRoutes wires auth endpoints onto the Huma API.
 func (h *AuthHandler) RegisterRoutes(api huma.API, requireAuth func(huma.Context, func(huma.Context)), authRateLimit func(huma.Context, func(huma.Context))) {
 	huma.Register(api, huma.Operation{
-		OperationID: "auth-register",
-		Method:      http.MethodPost,
-		Path:        "/api/auth/register",
-		Summary:     "Register a new platform user",
-		Tags:        []string{"Auth"},
-		Middlewares: huma.Middlewares{authRateLimit},
-	}, h.Register)
-
-	huma.Register(api, huma.Operation{
 		OperationID: "auth-login",
 		Method:      http.MethodPost,
 		Path:        "/api/auth/login",
-		Summary:     "Login with email and password (platform user)",
+		Summary:     "Login with username and password",
 		Tags:        []string{"Auth"},
 		Middlewares: huma.Middlewares{authRateLimit},
 	}, h.Login)
-
-	huma.Register(api, huma.Operation{
-		OperationID: "auth-login-local",
-		Method:      http.MethodPost,
-		Path:        "/api/auth/login/local",
-		Summary:     "Login as a managed member (local credentials)",
-		Tags:        []string{"Auth"},
-		Middlewares: huma.Middlewares{authRateLimit},
-	}, h.LoginLocal)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "auth-refresh",
@@ -335,19 +207,10 @@ func (h *AuthHandler) RegisterRoutes(api huma.API, requireAuth func(huma.Context
 	}, h.Logout)
 
 	huma.Register(api, huma.Operation{
-		OperationID: "auth-merge",
-		Method:      http.MethodPost,
-		Path:        "/api/auth/merge",
-		Summary:     "Link a local membership to the authenticated platform user",
-		Tags:        []string{"Auth"},
-		Middlewares: huma.Middlewares{requireAuth},
-	}, h.Merge)
-
-	huma.Register(api, huma.Operation{
 		OperationID: "auth-me",
 		Method:      http.MethodGet,
 		Path:        "/api/auth/me",
-		Summary:     "Get current platform user",
+		Summary:     "Get current authenticated member",
 		Tags:        []string{"Auth"},
 		Middlewares: huma.Middlewares{requireAuth},
 	}, h.Me)

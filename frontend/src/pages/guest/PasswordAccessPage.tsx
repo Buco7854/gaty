@@ -3,13 +3,14 @@ import { useParams, useNavigate } from 'react-router'
 import { publicApi } from '@/api'
 import { useAuthStore } from '@/store/auth'
 import { useTranslation } from 'react-i18next'
-import { Center, Stack, Group, Text, Title, Button, Anchor, PasswordInput } from '@mantine/core'
 import { notifyError } from '@/lib/notify'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 export default function PasswordAccessPage() {
-  const { wsId, gateId } = useParams<{ wsId?: string; gateId: string }>()
+  const { gateId } = useParams<{ gateId: string }>()
   const navigate = useNavigate()
   const { t } = useTranslation()
 
@@ -17,13 +18,10 @@ export default function PasswordAccessPage() {
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  const portalPath = wsId && gateId
-    ? `/workspaces/${wsId}/gates/${gateId}/public`
-    : gateId ? `/unlock/${gateId}` : '/'
+  const portalPath = gateId ? `/gates/${gateId}/public` : '/'
 
   useEffect(() => {
     if (!gateId) return
-    // If we already have a pin session, redirect to portal
     const session = useAuthStore.getState().session
     if (session?.type === 'pin_session') {
       navigate(portalPath, { replace: true })
@@ -56,41 +54,44 @@ export default function PasswordAccessPage() {
   }
 
   return (
-    <div style={{ position: 'relative', minHeight: '100vh' }}>
-      <Group gap="xs" style={{ position: 'absolute', top: 12, right: 16, zIndex: 10 }}>
+    <div className="relative min-h-screen">
+      <div className="absolute top-3 right-4 z-10 flex items-center gap-1">
         <LangToggle />
         <ThemeToggle />
-      </Group>
+      </div>
 
-      <Center mih="100vh" p="md">
-        <Stack align="center" gap="xl" w="100%" maw={320}>
-          <Stack align="center" gap={4}>
-            <Title order={2}>{gateName ?? 'Gate'}</Title>
-            <Text size="sm" c="dimmed">{t('pinpad.enterPasswordCode')}</Text>
-          </Stack>
+      <div className="flex items-center justify-center min-h-screen p-4">
+        <div className="flex flex-col items-center gap-6 w-full max-w-xs">
+          <div className="text-center space-y-1">
+            <h2 className="text-xl font-bold">{gateName ?? 'Gate'}</h2>
+            <p className="text-sm text-muted-foreground">{t('pinpad.enterPasswordCode')}</p>
+          </div>
 
-          <form onSubmit={(e) => { e.preventDefault(); submit() }} style={{ width: '100%' }}>
-            <Stack>
-              <PasswordInput
-                placeholder={t('pinpad.enterPasswordCode')}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoFocus
-                disabled={submitting}
-              />
-              {password.length > 0 && (
-                <Button type="submit" size="md" radius="xl" loading={submitting}>
-                  {t('common.confirm')}
-                </Button>
-              )}
-            </Stack>
+          <form onSubmit={(e) => { e.preventDefault(); submit() }} className="w-full space-y-3">
+            <Input
+              type="password"
+              placeholder={t('pinpad.enterPasswordCode')}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoFocus
+              disabled={submitting}
+            />
+            {password.length > 0 && (
+              <Button type="submit" size="lg" className="w-full rounded-full" loading={submitting}>
+                {t('common.confirm')}
+              </Button>
+            )}
           </form>
 
-          <Anchor component="button" type="button" size="xs" c="dimmed" onClick={() => navigate(portalPath)}>
+          <button
+            type="button"
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+            onClick={() => navigate(portalPath)}
+          >
             {t('pinpad.useAnotherMethod')}
-          </Anchor>
-        </Stack>
-      </Center>
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

@@ -21,7 +21,7 @@ func (d *MQTTGatieDriver) Execute(_ context.Context, gate *model.Gate) error {
 	if err != nil {
 		return fmt.Errorf("mqtt_gatie driver: marshal payload: %w", err)
 	}
-	topic := internalmqtt.CommandTopic(gate.WorkspaceID, gate.ID)
+	topic := internalmqtt.CommandTopic(gate.ID)
 	if err := d.client.Publish(topic, payload); err != nil {
 		return fmt.Errorf("mqtt_gatie driver: publish: %w", err)
 	}
@@ -40,7 +40,7 @@ func (d *MQTTCustomDriver) Execute(_ context.Context, gate *model.Gate) error {
 	if err != nil {
 		return fmt.Errorf("mqtt_custom driver: marshal payload: %w", err)
 	}
-	topic := internalmqtt.CommandTopic(gate.WorkspaceID, gate.ID)
+	topic := internalmqtt.CommandTopic(gate.ID)
 	if err := d.client.Publish(topic, payload); err != nil {
 		return fmt.Errorf("mqtt_custom driver: publish: %w", err)
 	}

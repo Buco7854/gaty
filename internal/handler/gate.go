@@ -23,14 +23,12 @@ func NewGateHandler(gates *service.GateService) *GateHandler {
 // --- Shared path params (used by policy.go too) ---
 
 type GatePathParam struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
+	GateID uuid.UUID `path:"gate_id"`
 }
 
 // --- List gates ---
 
 type ListGatesInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
 	PaginationQuery
 }
 
@@ -39,11 +37,11 @@ type ListGatesOutput struct {
 }
 
 func (h *GateHandler) List(ctx context.Context, input *ListGatesInput) (*ListGatesOutput, error) {
-	role, _ := middleware.WorkspaceRoleFromContext(ctx)
-	membershipID, _ := middleware.WorkspaceMembershipIDFromContext(ctx)
+	role, _ := middleware.MemberRoleFromContext(ctx)
+	memberID, _ := middleware.MemberIDFromContext(ctx)
 
 	p := input.Params()
-	gates, total, err := h.gates.List(ctx, input.WorkspaceID, role, membershipID, p)
+	gates, total, err := h.gates.List(ctx, role, memberID, p)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to list gates", err)
 	}
@@ -53,8 +51,7 @@ func (h *GateHandler) List(ctx context.Context, input *ListGatesInput) (*ListGat
 // --- Create gate ---
 
 type CreateGateInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	Body        struct {
+	Body struct {
 		Name              string                    `json:"name" minLength:"1"`
 		IntegrationType   model.GateIntegrationType `json:"integration_type,omitempty" default:"MQTT"`
 		IntegrationConfig map[string]any            `json:"integration_config,omitempty"`
@@ -66,9 +63,9 @@ type CreateGateInput struct {
 		// StatusRules define conditions evaluated against metadata to override the gate status.
 		StatusRules []model.StatusRule `json:"status_rules,omitempty"`
 		// CustomStatuses are user-defined statuses in addition to the defaults (open, closed, unavailable).
-		CustomStatuses    []string                    `json:"custom_statuses,omitempty"`
-		TTLSeconds        *int                        `json:"ttl_seconds,omitempty"`
-		StatusTransitions []model.StatusTransition    `json:"status_transitions,omitempty"`
+		CustomStatuses    []string                `json:"custom_statuses,omitempty"`
+		TTLSeconds        *int                    `json:"ttl_seconds,omitempty"`
+		StatusTransitions []model.StatusTransition `json:"status_transitions,omitempty"`
 	}
 }
 
@@ -106,7 +103,7 @@ func (h *GateHandler) Create(ctx context.Context, input *CreateGateInput) (*Gate
 	if err := validateStatusTransitions(b.StatusTransitions, b.CustomStatuses); err != nil {
 		return nil, gateFieldErr("status_transitions", err)
 	}
-	gate, err := h.gates.Create(ctx, input.WorkspaceID, service.CreateGateParams{
+	gate, err := h.gates.Create(ctx, service.CreateGateParams{
 		Name:              input.Body.Name,
 		IntegrationType:   input.Body.IntegrationType,
 		IntegrationConfig: input.Body.IntegrationConfig,
@@ -129,10 +126,10 @@ func (h *GateHandler) Create(ctx context.Context, input *CreateGateInput) (*Gate
 // --- Get gate ---
 
 func (h *GateHandler) Get(ctx context.Context, input *GatePathParam) (*GateOutput, error) {
-	role, _ := middleware.WorkspaceRoleFromContext(ctx)
-	membershipID, _ := middleware.WorkspaceMembershipIDFromContext(ctx)
+	role, _ := middleware.MemberRoleFromContext(ctx)
+	memberID, _ := middleware.MemberIDFromContext(ctx)
 
-	gate, err := h.gates.Get(ctx, input.GateID, input.WorkspaceID, role, membershipID)
+	gate, err := h.gates.Get(ctx, input.GateID, role, memberID)
 	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")
 	}
@@ -148,21 +145,20 @@ func (h *GateHandler) Get(ctx context.Context, input *GatePathParam) (*GateOutpu
 // --- Update gate ---
 
 type UpdateGateInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
-	Body        struct {
+	GateID uuid.UUID `path:"gate_id"`
+	Body   struct {
 		// All fields are optional: omit a field to leave it unchanged.
 		// Action configs: null = clear to NULL in DB, omit = unchanged.
 		// For meta_config, status_rules, custom_statuses: send an empty array [] to clear.
-		Name           *string                              `json:"name,omitempty" minLength:"1"`
-		OpenConfig     OmittableNullable[model.ActionConfig] `json:"open_config,omitempty"`
-		CloseConfig    OmittableNullable[model.ActionConfig] `json:"close_config,omitempty"`
-		StatusConfig   OmittableNullable[model.ActionConfig] `json:"status_config,omitempty"`
-		MetaConfig     []model.MetaField                    `json:"meta_config,omitempty"`
-		StatusRules    []model.StatusRule                    `json:"status_rules,omitempty"`
-		CustomStatuses []string                             `json:"custom_statuses,omitempty"`
-		TTLSeconds        OmittableNullable[int]               `json:"ttl_seconds,omitempty"`
-		StatusTransitions []model.StatusTransition             `json:"status_transitions,omitempty"`
+		Name              *string                               `json:"name,omitempty" minLength:"1"`
+		OpenConfig        OmittableNullable[model.ActionConfig] `json:"open_config,omitempty"`
+		CloseConfig       OmittableNullable[model.ActionConfig] `json:"close_config,omitempty"`
+		StatusConfig      OmittableNullable[model.ActionConfig] `json:"status_config,omitempty"`
+		MetaConfig        []model.MetaField                     `json:"meta_config,omitempty"`
+		StatusRules       []model.StatusRule                     `json:"status_rules,omitempty"`
+		CustomStatuses    []string                              `json:"custom_statuses,omitempty"`
+		TTLSeconds        OmittableNullable[int]                `json:"ttl_seconds,omitempty"`
+		StatusTransitions []model.StatusTransition              `json:"status_transitions,omitempty"`
 	}
 }
 
@@ -203,7 +199,7 @@ func (h *GateHandler) Update(ctx context.Context, input *UpdateGateInput) (*Gate
 			return nil, gateFieldErr("status_transitions", err)
 		}
 	}
-	gate, err := h.gates.Update(ctx, input.GateID, input.WorkspaceID, service.UpdateGateParams{
+	gate, err := h.gates.Update(ctx, input.GateID, service.UpdateGateParams{
 		Name:              input.Body.Name,
 		OpenConfig:        input.Body.OpenConfig.ToModel(),
 		CloseConfig:       input.Body.CloseConfig.ToModel(),
@@ -226,12 +222,11 @@ func (h *GateHandler) Update(ctx context.Context, input *UpdateGateInput) (*Gate
 // --- Delete gate ---
 
 type DeleteGateInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
+	GateID uuid.UUID `path:"gate_id"`
 }
 
 func (h *GateHandler) Delete(ctx context.Context, input *DeleteGateInput) (*struct{}, error) {
-	err := h.gates.Delete(ctx, input.GateID, input.WorkspaceID)
+	err := h.gates.Delete(ctx, input.GateID)
 	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")
 	}
@@ -244,9 +239,8 @@ func (h *GateHandler) Delete(ctx context.Context, input *DeleteGateInput) (*stru
 // --- Trigger gate (open or close) ---
 
 type TriggerInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
-	Body        struct {
+	GateID uuid.UUID `path:"gate_id"`
+	Body   struct {
 		// Action selects which gate action to perform. Defaults to "open".
 		Action string `json:"action,omitempty" enum:"open,close" default:"open"`
 	}
@@ -257,11 +251,11 @@ func (h *GateHandler) Trigger(ctx context.Context, input *TriggerInput) (*struct
 	if action == "" {
 		action = "open"
 	}
-	role, _ := middleware.WorkspaceRoleFromContext(ctx)
-	membershipID, _ := middleware.WorkspaceMembershipIDFromContext(ctx)
+	role, _ := middleware.MemberRoleFromContext(ctx)
+	memberID, _ := middleware.MemberIDFromContext(ctx)
 	credentialID, _ := middleware.CredentialIDFromContext(ctx)
 
-	err := h.gates.Trigger(ctx, input.GateID, input.WorkspaceID, role, membershipID, credentialID, action)
+	err := h.gates.Trigger(ctx, input.GateID, role, memberID, credentialID, action)
 	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")
 	}
@@ -292,7 +286,7 @@ type GateTokenOutput struct {
 
 // GetToken returns the current gate authentication token.
 func (h *GateHandler) GetToken(ctx context.Context, input *GatePathParam) (*GateTokenOutput, error) {
-	token, err := h.gates.GetToken(ctx, input.GateID, input.WorkspaceID)
+	token, err := h.gates.GetToken(ctx, input.GateID)
 	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")
 	}
@@ -307,7 +301,7 @@ func (h *GateHandler) GetToken(ctx context.Context, input *GatePathParam) (*Gate
 
 // RotateToken generates a new gate authentication token, invalidating the old one.
 func (h *GateHandler) RotateToken(ctx context.Context, input *GatePathParam) (*GateTokenOutput, error) {
-	token, err := h.gates.RotateToken(ctx, input.GateID, input.WorkspaceID)
+	token, err := h.gates.RotateToken(ctx, input.GateID)
 	if errors.Is(err, model.ErrNotFound) {
 		return nil, huma.Error404NotFound("gate not found")
 	}
@@ -323,83 +317,83 @@ func (h *GateHandler) RotateToken(ctx context.Context, input *GatePathParam) (*G
 // RegisterRoutes wires all gate endpoints onto the Huma API.
 func (h *GateHandler) RegisterRoutes(
 	api huma.API,
-	wsMember func(huma.Context, func(huma.Context)),
-	wsAdmin func(huma.Context, func(huma.Context)),
-	wsGateManager func(huma.Context, func(huma.Context)),
+	requireAuth func(huma.Context, func(huma.Context)),
+	requireAdmin func(huma.Context, func(huma.Context)),
+	gateManager func(huma.Context, func(huma.Context)),
 ) {
 	huma.Register(api, huma.Operation{
 		OperationID: "gate-list",
 		Method:      http.MethodGet,
-		Path:        "/api/workspaces/{ws_id}/gates",
-		Summary:     "List gates for a workspace",
+		Path:        "/api/gates",
+		Summary:     "List gates",
 		Tags:        []string{"Gates"},
-		Middlewares: huma.Middlewares{wsMember},
+		Middlewares: huma.Middlewares{requireAuth},
 	}, h.List)
 
 	huma.Register(api, huma.Operation{
 		OperationID:   "gate-create",
 		Method:        http.MethodPost,
-		Path:          "/api/workspaces/{ws_id}/gates",
+		Path:          "/api/gates",
 		Summary:       "Create a gate",
 		Description:   "The response includes gate_token (the gate's auth secret). Store it — it won't be returned again (use rotate-token to get a new one).",
 		Tags:          []string{"Gates"},
 		DefaultStatus: http.StatusCreated,
-		Middlewares:   huma.Middlewares{wsAdmin},
+		Middlewares:   huma.Middlewares{requireAdmin},
 	}, h.Create)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "gate-get",
 		Method:      http.MethodGet,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}",
+		Path:        "/api/gates/{gate_id}",
 		Summary:     "Get a gate",
 		Tags:        []string{"Gates"},
-		Middlewares: huma.Middlewares{wsMember},
+		Middlewares: huma.Middlewares{requireAuth},
 	}, h.Get)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "gate-update",
 		Method:      http.MethodPatch,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}",
+		Path:        "/api/gates/{gate_id}",
 		Summary:     "Update a gate",
 		Tags:        []string{"Gates"},
-		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+		Middlewares: huma.Middlewares{requireAuth, gateManager},
 	}, h.Update)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "gate-delete",
 		Method:      http.MethodDelete,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}",
+		Path:        "/api/gates/{gate_id}",
 		Summary:     "Delete a gate",
 		Tags:        []string{"Gates"},
-		Middlewares: huma.Middlewares{wsAdmin},
+		Middlewares: huma.Middlewares{requireAdmin},
 	}, h.Delete)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "gate-trigger",
 		Method:      http.MethodPost,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/trigger",
+		Path:        "/api/gates/{gate_id}/trigger",
 		Summary:     "Send open or close command to a gate",
 		Tags:        []string{"Gates"},
-		Middlewares: huma.Middlewares{wsMember},
+		Middlewares: huma.Middlewares{requireAuth},
 	}, h.Trigger)
 
 	// Token management: admin only.
 	huma.Register(api, huma.Operation{
 		OperationID: "gate-token-get",
 		Method:      http.MethodGet,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/token",
+		Path:        "/api/gates/{gate_id}/token",
 		Summary:     "Get the gate authentication token",
 		Tags:        []string{"Gates"},
-		Middlewares: huma.Middlewares{wsAdmin},
+		Middlewares: huma.Middlewares{requireAdmin},
 	}, h.GetToken)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "gate-token-rotate",
 		Method:      http.MethodPost,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/token/rotate",
+		Path:        "/api/gates/{gate_id}/token/rotate",
 		Summary:     "Rotate (regenerate) the gate authentication token",
 		Description: "Generates a new token and immediately invalidates the old one. Update the gate firmware.",
 		Tags:        []string{"Gates"},
-		Middlewares: huma.Middlewares{wsAdmin},
+		Middlewares: huma.Middlewares{requireAdmin},
 	}, h.RotateToken)
 }

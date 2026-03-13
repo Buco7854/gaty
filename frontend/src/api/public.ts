@@ -27,13 +27,13 @@ export const publicApi = {
   triggerWithPinSession: (action: 'open' | 'close' = 'open') =>
     api.post('/public/trigger', { action }),
 
-  /** Trigger gate as a local member (cookie sent automatically). */
-  triggerAsLocal: (workspaceId: string, gateId: string, action: 'open' | 'close' = 'open') =>
-    api.post(`/workspaces/${workspaceId}/gates/${gateId}/trigger`, { action }),
+  /** Trigger gate as an authenticated member. */
+  triggerAsMember: (gateId: string, action: 'open' | 'close' = 'open') =>
+    api.post(`/gates/${gateId}/trigger`, { action }),
 
-  /** List public SSO providers for a workspace (public, no auth required). */
-  ssoProviders: (wsId: string) =>
+  /** List public SSO providers (public, no auth required). */
+  ssoProviders: () =>
     axios.get<{ id: string; name: string; type: string }[]>(
-      `/api/auth/sso/${encodeURIComponent(wsId)}/providers`,
+      '/api/auth/sso/providers',
     ).then((r) => r.data),
 }

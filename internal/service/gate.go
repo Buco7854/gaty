@@ -14,7 +14,6 @@ import (
 )
 
 // GateTriggerFn physically executes an open or close action on a gate.
-// Errors are fire-and-forget: the implementation logs them internally.
 type GateTriggerFn func(ctx context.Context, gate *model.Gate, action string)
 
 // CreateGateParams holds the fields for creating a new gate.
@@ -33,17 +32,16 @@ type CreateGateParams struct {
 }
 
 // UpdateGateParams holds optional fields for updating a gate.
-// For action configs, use model.OmittableNullable: Sent=false = unchanged, Null=true = clear to NULL.
 type UpdateGateParams struct {
 	Name              *string
 	OpenConfig        model.OmittableNullable[model.ActionConfig]
 	CloseConfig       model.OmittableNullable[model.ActionConfig]
 	StatusConfig      model.OmittableNullable[model.ActionConfig]
-	MetaConfig        []model.MetaField  // nil = unchanged, [] = clear
-	StatusRules       []model.StatusRule // nil = unchanged, [] = clear
-	CustomStatuses    []string           // nil = unchanged, [] = clear
+	MetaConfig        []model.MetaField
+	StatusRules       []model.StatusRule
+	CustomStatuses    []string
 	TTLSeconds        model.OmittableNullable[int]
-	StatusTransitions []model.StatusTransition // nil = unchanged, [] = clear
+	StatusTransitions []model.StatusTransition
 }
 
 type GateService struct {
@@ -82,10 +80,9 @@ func NewGateService(
 	}
 }
 
-// AuthenticateToken validates a JWT gate token (signature + DB rotation check)
-// and returns the authenticated gate.
+// AuthenticateToken validates a JWT gate token and returns the authenticated gate.
 func (s *GateService) AuthenticateToken(ctx context.Context, token string) (*model.Gate, error) {
-	gateID, _, err := ParseGateToken(token, s.jwtSecret)
+	gateID, err := ParseGateToken(token, s.jwtSecret)
 	if err != nil {
 		return nil, repository.ErrUnauthorized
 	}
@@ -101,12 +98,12 @@ func (s *GateService) ProcessStatus(ctx context.Context, gate *model.Gate, rawSt
 	return ProcessGateStatus(ctx, s.gates, s.redis, gate, rawStatus, meta)
 }
 
-func (s *GateService) Create(ctx context.Context, wsID uuid.UUID, params CreateGateParams) (*model.Gate, error) {
+func (s *GateService) Create(ctx context.Context, params CreateGateParams) (*model.Gate, error) {
 	intType := params.IntegrationType
 	if intType == "" {
 		intType = model.IntegrationTypeMQTT
 	}
-	gate, err := s.gates.Create(ctx, wsID, repository.CreateGateParams{
+	gate, err := s.gates.Create(ctx, repository.CreateGateParams{
 		Name:              params.Name,
 		IntegrationType:   intType,
 		IntegrationConfig: params.IntegrationConfig,
@@ -123,18 +120,14 @@ func (s *GateService) Create(ctx context.Context, wsID uuid.UUID, params CreateG
 		return nil, fmt.Errorf("create gate: %w", err)
 	}
 
-	// Replace the DB-generated random token with a JWT containing gate identity.
-	jwtToken, err := IssueGateToken(gate.ID, gate.WorkspaceID, s.jwtSecret)
+	jwtToken, err := IssueGateToken(gate.ID, s.jwtSecret)
 	if err != nil {
 		return nil, fmt.Errorf("issue gate token: %w", err)
 	}
-	if err := s.gates.SetToken(ctx, gate.ID, gate.WorkspaceID, jwtToken); err != nil {
+	if err := s.gates.SetToken(ctx, gate.ID, jwtToken); err != nil {
 		return nil, fmt.Errorf("set gate token: %w", err)
 	}
 
-	// Sync credentials with the MQTT broker (DynSec or noop depending on auth mode).
-	// ── Migration note: if the broker auth plugin changes, this call becomes
-	// a no-op via NoopBrokerAuth — see BrokerAuthManager interface.
 	if err := s.brokerAuth.SyncCredentials(ctx, gate.ID, jwtToken); err != nil {
 		slog.Warn("gate: failed to sync broker credentials (gate still created)", "gate_id", gate.ID, "error", err)
 	}
@@ -144,8 +137,8 @@ func (s *GateService) Create(ctx context.Context, wsID uuid.UUID, params CreateG
 	return gate, nil
 }
 
-func (s *GateService) List(ctx context.Context, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID, p model.PaginationParams) ([]model.Gate, int, error) {
-	gates, total, err := s.gates.ListForWorkspace(ctx, wsID, role, membershipID, p)
+func (s *GateService) List(ctx context.Context, role model.Role, memberID uuid.UUID, p model.PaginationParams) ([]model.Gate, int, error) {
+	gates, total, err := s.gates.List(ctx, role, memberID, p)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list gates: %w", err)
 	}
@@ -158,20 +151,20 @@ func (s *GateService) List(ctx context.Context, wsID uuid.UUID, role model.Works
 	return gates, total, nil
 }
 
-func (s *GateService) Get(ctx context.Context, gateID, wsID uuid.UUID, role model.WorkspaceRole, membershipID uuid.UUID) (*model.Gate, error) {
-	gate, err := s.gates.GetByID(ctx, gateID, wsID)
+func (s *GateService) Get(ctx context.Context, gateID uuid.UUID, role model.Role, memberID uuid.UUID) (*model.Gate, error) {
+	gate, err := s.gates.GetByID(ctx, gateID)
 	if err != nil {
 		return nil, err
 	}
 	if role == model.RoleMember {
-		ok, err := s.policies.HasAnyPermission(ctx, membershipID, gate.ID)
+		ok, err := s.policies.HasAnyPermission(ctx, memberID, gate.ID)
 		if err != nil {
 			return nil, fmt.Errorf("check permissions: %w", err)
 		}
 		if !ok {
 			return nil, model.ErrUnauthorized
 		}
-		hasStatus, _ := s.policies.HasPermission(ctx, membershipID, gate.ID, "gate:read_status")
+		hasStatus, _ := s.policies.HasPermission(ctx, memberID, gate.ID, "gate:read_status")
 		if !hasStatus {
 			gate.StatusMetadata = nil
 		}
@@ -180,14 +173,14 @@ func (s *GateService) Get(ctx context.Context, gateID, wsID uuid.UUID, role mode
 	return gate, nil
 }
 
-func (s *GateService) Update(ctx context.Context, gateID, wsID uuid.UUID, params UpdateGateParams) (*model.Gate, error) {
-	gate, err := s.gates.Update(ctx, gateID, wsID, repository.UpdateGateParams{
-		Name:           params.Name,
-		OpenConfig:     params.OpenConfig,
-		CloseConfig:    params.CloseConfig,
-		StatusConfig:   params.StatusConfig,
-		MetaConfig:     params.MetaConfig,
-		StatusRules:    params.StatusRules,
+func (s *GateService) Update(ctx context.Context, gateID uuid.UUID, params UpdateGateParams) (*model.Gate, error) {
+	gate, err := s.gates.Update(ctx, gateID, repository.UpdateGateParams{
+		Name:              params.Name,
+		OpenConfig:        params.OpenConfig,
+		CloseConfig:       params.CloseConfig,
+		StatusConfig:      params.StatusConfig,
+		MetaConfig:        params.MetaConfig,
+		StatusRules:       params.StatusRules,
 		CustomStatuses:    params.CustomStatuses,
 		TTLSeconds:        params.TTLSeconds,
 		StatusTransitions: params.StatusTransitions,
@@ -199,37 +192,34 @@ func (s *GateService) Update(ctx context.Context, gateID, wsID uuid.UUID, params
 	return gate, nil
 }
 
-func (s *GateService) Delete(ctx context.Context, gateID, wsID uuid.UUID) error {
-	if err := s.gates.Delete(ctx, gateID, wsID); err != nil {
+func (s *GateService) Delete(ctx context.Context, gateID uuid.UUID) error {
+	if err := s.gates.Delete(ctx, gateID); err != nil {
 		return err
 	}
-	// ── Migration note: broker credential cleanup — see BrokerAuthManager.
 	if err := s.brokerAuth.RemoveCredentials(ctx, gateID); err != nil {
 		slog.Warn("gate: failed to remove broker credentials (gate already deleted)", "gate_id", gateID, "error", err)
 	}
 	return nil
 }
 
-func (s *GateService) GetToken(ctx context.Context, gateID, wsID uuid.UUID) (string, error) {
-	return s.gates.GetToken(ctx, gateID, wsID)
+func (s *GateService) GetToken(ctx context.Context, gateID uuid.UUID) (string, error) {
+	return s.gates.GetToken(ctx, gateID)
 }
 
-// RotateToken issues a new JWT gate token and stores it, invalidating the previous one.
-func (s *GateService) RotateToken(ctx context.Context, gateID, wsID uuid.UUID) (string, error) {
-	// Verify the gate exists and belongs to the workspace.
-	gate, err := s.gates.GetByID(ctx, gateID, wsID)
+// RotateToken issues a new JWT gate token and stores it.
+func (s *GateService) RotateToken(ctx context.Context, gateID uuid.UUID) (string, error) {
+	gate, err := s.gates.GetByID(ctx, gateID)
 	if err != nil {
 		return "", err
 	}
-	jwtToken, err := IssueGateToken(gate.ID, gate.WorkspaceID, s.jwtSecret)
+	jwtToken, err := IssueGateToken(gate.ID, s.jwtSecret)
 	if err != nil {
 		return "", fmt.Errorf("issue gate token: %w", err)
 	}
-	if err := s.gates.SetToken(ctx, gateID, wsID, jwtToken); err != nil {
+	if err := s.gates.SetToken(ctx, gateID, jwtToken); err != nil {
 		return "", fmt.Errorf("set gate token: %w", err)
 	}
 
-	// ── Migration note: broker credential sync — see BrokerAuthManager.
 	if err := s.brokerAuth.SyncCredentials(ctx, gate.ID, jwtToken); err != nil {
 		slog.Warn("gate: failed to sync broker credentials after rotation", "gate_id", gateID, "error", err)
 	}
@@ -238,16 +228,12 @@ func (s *GateService) RotateToken(ctx context.Context, gateID, wsID uuid.UUID) (
 }
 
 // Trigger executes an open or close action on a gate.
-// For MEMBER role it checks the required permission and any attached schedule.
-// If credentialID is set, also checks credential-level policies and schedule (AND logic with membership schedule).
-func (s *GateService) Trigger(ctx context.Context, gateID, wsID uuid.UUID, role model.WorkspaceRole, membershipID, credentialID uuid.UUID, action string) error {
+func (s *GateService) Trigger(ctx context.Context, gateID uuid.UUID, role model.Role, memberID, credentialID uuid.UUID, action string) error {
 	permCode := "gate:trigger_open"
 	if action == "close" {
 		permCode = "gate:trigger_close"
 	}
 
-	// 1. Check credential-level schedule (user-defined time restriction on the token).
-	// Fail-closed: if the schedule lookup fails (DB/Redis error), deny access.
 	if credentialID != uuid.Nil {
 		scheduleID, err := s.credPolicies.GetScheduleID(ctx, credentialID)
 		if err == nil {
@@ -266,8 +252,7 @@ func (s *GateService) Trigger(ctx context.Context, gateID, wsID uuid.UUID, role 
 		}
 	}
 
-	// 2. Permission check: credential policies take precedence if set, else fall back to membership policies.
-	needsMembershipCheck := role == model.RoleMember
+	needsMemberCheck := role == model.RoleMember
 	if credentialID != uuid.Nil {
 		hasCredPolicies, err := s.credPolicies.HasAny(ctx, credentialID)
 		if err != nil {
@@ -281,11 +266,11 @@ func (s *GateService) Trigger(ctx context.Context, gateID, wsID uuid.UUID, role 
 			if !ok {
 				return model.ErrUnauthorized
 			}
-			needsMembershipCheck = false
+			needsMemberCheck = false
 		}
 	}
-	if needsMembershipCheck {
-		ok, err := s.policies.HasPermission(ctx, membershipID, gateID, permCode)
+	if needsMemberCheck {
+		ok, err := s.policies.HasPermission(ctx, memberID, gateID, permCode)
 		if err != nil {
 			return fmt.Errorf("check permission: %w", err)
 		}
@@ -294,27 +279,25 @@ func (s *GateService) Trigger(ctx context.Context, gateID, wsID uuid.UUID, role 
 		}
 	}
 
-	// 3. Membership-level schedule: admin-defined ceiling — always applies for members and token users.
-	// Fail-closed: if the schedule lookup fails (DB/Redis error), deny access.
 	if role == model.RoleMember || credentialID != uuid.Nil {
-		scheduleID, err := s.policies.GetMemberGateScheduleID(ctx, membershipID, gateID)
+		scheduleID, err := s.policies.GetMemberGateScheduleID(ctx, memberID, gateID)
 		if err == nil {
 			schedule, err := s.schedules.GetPublic(ctx, scheduleID)
 			if err != nil {
-				slog.Error("gate trigger: failed to load membership schedule", "membership_id", membershipID, "schedule_id", scheduleID, "error", err)
-				return fmt.Errorf("load membership schedule: %w", err)
+				slog.Error("gate trigger: failed to load member schedule", "member_id", memberID, "schedule_id", scheduleID, "error", err)
+				return fmt.Errorf("load member schedule: %w", err)
 			}
 			if err := s.schedules.Check(schedule, time.Now()); err != nil {
-				slog.Info("gate trigger: membership schedule rejected", "membership_id", membershipID, "gate_id", gateID)
+				slog.Info("gate trigger: member schedule rejected", "member_id", memberID, "gate_id", gateID)
 				return ErrScheduleDenied
 			}
 		} else if !errors.Is(err, repository.ErrNotFound) {
-			slog.Error("gate trigger: failed to lookup membership schedule", "membership_id", membershipID, "gate_id", gateID, "error", err)
-			return fmt.Errorf("lookup membership schedule: %w", err)
+			slog.Error("gate trigger: failed to lookup member schedule", "member_id", memberID, "gate_id", gateID, "error", err)
+			return fmt.Errorf("lookup member schedule: %w", err)
 		}
 	}
 
-	gate, err := s.gates.GetByID(ctx, gateID, wsID)
+	gate, err := s.gates.GetByID(ctx, gateID)
 	if err != nil {
 		return err
 	}
@@ -326,9 +309,9 @@ func (s *GateService) Trigger(ctx context.Context, gateID, wsID uuid.UUID, role 
 		auditAction = "gate:trigger_close"
 	}
 	_ = s.audit.Insert(ctx, repository.AuditEntry{
-		WorkspaceID: wsID,
-		GateID:      &gateID,
-		Action:      auditAction,
+		GateID:   &gateID,
+		MemberID: &memberID,
+		Action:   auditAction,
 	})
 	return nil
 }

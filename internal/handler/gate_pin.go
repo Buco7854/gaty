@@ -25,9 +25,8 @@ func NewGatePinHandler(pins *service.GatePinService, cookieSecure bool) *GatePin
 // --- Admin: Create PIN ---
 
 type CreatePINInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
-	Body        struct {
+	GateID uuid.UUID `path:"gate_id"`
+	Body   struct {
 		PIN        string         `json:"pin" minLength:"1" maxLength:"72"`
 		CodeType   string         `json:"code_type,omitempty" enum:"pin,password" default:"pin"`
 		Label      string         `json:"label" minLength:"1" maxLength:"100"`
@@ -57,8 +56,7 @@ func (h *GatePinHandler) CreatePIN(ctx context.Context, input *CreatePINInput) (
 // --- Admin: List PINs ---
 
 type ListGatePinsInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
+	GateID uuid.UUID `path:"gate_id"`
 	PaginationQuery
 }
 
@@ -78,10 +76,9 @@ func (h *GatePinHandler) ListPINs(ctx context.Context, input *ListGatePinsInput)
 // --- Admin: Update PIN ---
 
 type UpdatePINInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
-	PinID       uuid.UUID `path:"pin_id"`
-	Body        struct {
+	GateID uuid.UUID `path:"gate_id"`
+	PinID  uuid.UUID `path:"pin_id"`
+	Body   struct {
 		Label    *string        `json:"label,omitempty" minLength:"1" maxLength:"100"`
 		Metadata map[string]any `json:"metadata,omitempty"`
 	}
@@ -104,10 +101,9 @@ func (h *GatePinHandler) UpdatePIN(ctx context.Context, input *UpdatePINInput) (
 // --- Admin: Set schedule on a PIN ---
 
 type SetPinScheduleInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
-	PinID       uuid.UUID `path:"pin_id"`
-	Body        struct {
+	GateID uuid.UUID `path:"gate_id"`
+	PinID  uuid.UUID `path:"pin_id"`
+	Body   struct {
 		ScheduleID uuid.UUID `json:"schedule_id"`
 	}
 }
@@ -126,9 +122,8 @@ func (h *GatePinHandler) SetPinSchedule(ctx context.Context, input *SetPinSchedu
 // --- Admin: Clear schedule from a PIN ---
 
 type PinIDPathParam struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
-	PinID       uuid.UUID `path:"pin_id"`
+	GateID uuid.UUID `path:"gate_id"`
+	PinID  uuid.UUID `path:"pin_id"`
 }
 
 func (h *GatePinHandler) ClearPinSchedule(ctx context.Context, input *PinIDPathParam) (*GatePinOutput, error) {
@@ -145,9 +140,8 @@ func (h *GatePinHandler) ClearPinSchedule(ctx context.Context, input *PinIDPathP
 // --- Admin: Delete PIN ---
 
 type DeletePINInput struct {
-	WorkspaceID uuid.UUID `path:"ws_id"`
-	GateID      uuid.UUID `path:"gate_id"`
-	PinID       uuid.UUID `path:"pin_id"`
+	GateID uuid.UUID `path:"gate_id"`
+	PinID  uuid.UUID `path:"pin_id"`
 }
 
 func (h *GatePinHandler) DeletePIN(ctx context.Context, input *DeletePINInput) (*struct{}, error) {
@@ -288,62 +282,62 @@ func mapPINError(err error) error {
 // RegisterRoutes wires gate pin endpoints onto the Huma API.
 func (h *GatePinHandler) RegisterRoutes(
 	api huma.API,
-	wsMember func(huma.Context, func(huma.Context)),
-	wsGateManager func(huma.Context, func(huma.Context)),
+	requireAuth func(huma.Context, func(huma.Context)),
+	gateManager func(huma.Context, func(huma.Context)),
 ) {
 	huma.Register(api, huma.Operation{
 		OperationID:   "gate-pin-create",
 		Method:        http.MethodPost,
-		Path:          "/api/workspaces/{ws_id}/gates/{gate_id}/pins",
+		Path:          "/api/gates/{gate_id}/pins",
 		Summary:       "Create a PIN code for a gate",
 		Tags:          []string{"Gate Pins"},
 		DefaultStatus: http.StatusCreated,
-		Middlewares:   huma.Middlewares{wsMember, wsGateManager},
+		Middlewares:   huma.Middlewares{requireAuth, gateManager},
 	}, h.CreatePIN)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "gate-pin-list",
 		Method:      http.MethodGet,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/pins",
+		Path:        "/api/gates/{gate_id}/pins",
 		Summary:     "List PIN codes for a gate",
 		Tags:        []string{"Gate Pins"},
-		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+		Middlewares: huma.Middlewares{requireAuth, gateManager},
 	}, h.ListPINs)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "gate-pin-update",
 		Method:      http.MethodPatch,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/pins/{pin_id}",
+		Path:        "/api/gates/{gate_id}/pins/{pin_id}",
 		Summary:     "Update an access code (label, metadata)",
 		Tags:        []string{"Gate Pins"},
-		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+		Middlewares: huma.Middlewares{requireAuth, gateManager},
 	}, h.UpdatePIN)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "gate-pin-delete",
 		Method:      http.MethodDelete,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/pins/{pin_id}",
+		Path:        "/api/gates/{gate_id}/pins/{pin_id}",
 		Summary:     "Delete an access code",
 		Tags:        []string{"Gate Pins"},
-		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+		Middlewares: huma.Middlewares{requireAuth, gateManager},
 	}, h.DeletePIN)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "gate-pin-set-schedule",
 		Method:      http.MethodPut,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/pins/{pin_id}/schedule",
+		Path:        "/api/gates/{gate_id}/pins/{pin_id}/schedule",
 		Summary:     "Attach (or replace) a time-restriction schedule on a PIN",
 		Tags:        []string{"Gate Pins"},
-		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+		Middlewares: huma.Middlewares{requireAuth, gateManager},
 	}, h.SetPinSchedule)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "gate-pin-clear-schedule",
 		Method:      http.MethodDelete,
-		Path:        "/api/workspaces/{ws_id}/gates/{gate_id}/pins/{pin_id}/schedule",
+		Path:        "/api/gates/{gate_id}/pins/{pin_id}/schedule",
 		Summary:     "Remove the time-restriction schedule from a PIN",
 		Tags:        []string{"Gate Pins"},
-		Middlewares: huma.Middlewares{wsMember, wsGateManager},
+		Middlewares: huma.Middlewares{requireAuth, gateManager},
 	}, h.ClearPinSchedule)
 
 	// Backward-compatible one-shot unlock (always opens immediately, no session).

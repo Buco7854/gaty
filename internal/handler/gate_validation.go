@@ -19,7 +19,7 @@ func validateActionConfig(field string, cfg *model.ActionConfig) error {
 	}
 	switch cfg.Type {
 	case model.DriverTypeMQTTGatie:
-		// No extra config required: topic is derived from workspace_id + gate_id.
+		// No extra config required: topic is derived from gate_id.
 	case model.DriverTypeMQTTCustom:
 		payload, _ := cfg.Config["payload"].(map[string]any)
 		if payload == nil {
