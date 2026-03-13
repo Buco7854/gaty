@@ -1,11 +1,10 @@
 import { useState } from 'react'
-import { useParams } from 'react-router'
 import { useQuery, useMutation, useQueryClient, useQueries } from '@tanstack/react-query'
 import { membersApi, gatesApi, policiesApi, schedulesApi } from '@/api'
-import type { WorkspaceMembership, Gate, MembershipPolicy, AccessSchedule } from '@/types'
+import type { Member, Gate, MemberPolicy, AccessSchedule } from '@/types'
 import { useTranslation } from 'react-i18next'
 import {
-  Container, Title, Text, Group, Button, Modal, Stack, Alert, Tabs,
+  Container, Title, Text, Group, Button, Modal, Stack, Alert,
   TextInput, PasswordInput, Select, Badge, Avatar, ActionIcon, Center, Skeleton,
   Checkbox, Paper, SegmentedControl, Drawer,
 } from '@mantine/core'
@@ -14,9 +13,9 @@ import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { UserPlus, Trash2, Users, AlertCircle, Settings2, X, Pencil } from 'lucide-react'
 import { notifySuccess, notifyError, extractApiError } from '@/lib/notify'
 import { QueryError } from '@/components/QueryError'
+import { Tabs } from '@mantine/core'
 
 const ROLE_COLOR: Record<string, string> = {
-  OWNER: 'yellow',
   ADMIN: 'blue',
   MEMBER: 'gray',
 }
@@ -32,13 +31,11 @@ const AUTH_METHODS = [
 // ---------- Schedule tab for member drawer ----------
 
 function MemberSchedulesTab({
-  wsId,
   member,
   gates,
   schedules,
 }: {
-  wsId: string
-  member: WorkspaceMembership
+  member: Member
   gates: Gate[]
   schedules: AccessSchedule[]
 }) {
@@ -47,10 +44,10 @@ function MemberSchedulesTab({
 
   const scheduleQueries = useQueries({
     queries: gates.map((gate) => ({
-      queryKey: ['member-gate-schedule', wsId, gate.id, member.id],
+      queryKey: ['member-gate-schedule', gate.id, member.id],
       queryFn: async () => {
         try {
-          return await policiesApi.getMemberGateSchedule(wsId, gate.id, member.id)
+          return await policiesApi.getMemberGateSchedule(gate.id, member.id)
         } catch (e: unknown) {
           if ((e as { response?: { status?: number } })?.response?.status === 404) return null
           throw e
@@ -67,11 +64,11 @@ function MemberSchedulesTab({
   async function handleScheduleChange(gate: Gate, scheduleId: string) {
     try {
       if (scheduleId === '') {
-        await policiesApi.removeMemberGateSchedule(wsId, gate.id, member.id)
+        await policiesApi.removeMemberGateSchedule(gate.id, member.id)
       } else {
-        await policiesApi.setMemberGateSchedule(wsId, gate.id, member.id, scheduleId)
+        await policiesApi.setMemberGateSchedule(gate.id, member.id, scheduleId)
       }
-      qc.invalidateQueries({ queryKey: ['member-gate-schedule', wsId, gate.id, member.id] })
+      qc.invalidateQueries({ queryKey: ['member-gate-schedule', gate.id, member.id] })
       notifySuccess(t('common.saved'))
     } catch (err) {
       notifyError(err, t('common.error'))
@@ -112,14 +109,12 @@ function MemberSchedulesTab({
 // ---------- Member settings Drawer ----------
 
 function MemberSettingsDrawer({
-  wsId,
   member,
   gates,
   opened,
   onClose,
 }: {
-  wsId: string
-  member: WorkspaceMembership
+  member: Member
   gates: Gate[]
   opened: boolean
   onClose: () => void
@@ -129,15 +124,15 @@ function MemberSettingsDrawer({
   const qc = useQueryClient()
 
   const { data: schedules = [] } = useQuery<AccessSchedule[]>({
-    queryKey: ['schedules', wsId],
-    queryFn: () => schedulesApi.list(wsId),
+    queryKey: ['schedules'],
+    queryFn: () => schedulesApi.list(),
     enabled: opened,
   })
 
   const updateAuth = useMutation({
     mutationFn: (cfg: Record<string, unknown>) =>
-      membersApi.update(wsId, member.id, { auth_config: cfg }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members', wsId] }); notifySuccess(t('common.saved')) },
+      membersApi.update(member.id, { auth_config: cfg }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members'] }); notifySuccess(t('common.saved')) },
     onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
@@ -154,9 +149,9 @@ function MemberSettingsDrawer({
     updateAuth.mutate({ ...current, [key]: mapped })
   }
 
-  const { data: policies = [] } = useQuery<MembershipPolicy[]>({
-    queryKey: ['member-policies', wsId, member.id],
-    queryFn: () => policiesApi.listByMembership(wsId, member.id),
+  const { data: policies = [] } = useQuery<MemberPolicy[]>({
+    queryKey: ['member-policies', member.id],
+    queryFn: () => policiesApi.listByMember(member.id),
     enabled: opened,
   })
 
@@ -164,20 +159,20 @@ function MemberSettingsDrawer({
   const hasPermission = (gateId: string, permCode: string) => policySet.has(`${gateId}:${permCode}`)
 
   function invalidatePolicies() {
-    qc.invalidateQueries({ queryKey: ['member-policies', wsId, member.id] })
+    qc.invalidateQueries({ queryKey: ['member-policies', member.id] })
   }
 
   async function toggle(gateId: string, permCode: string, on: boolean) {
     try {
-      if (on) await policiesApi.revoke(wsId, gateId, member.id, permCode)
-      else await policiesApi.grant(wsId, gateId, member.id, permCode)
+      if (on) await policiesApi.revoke(gateId, member.id, permCode)
+      else await policiesApi.grant(gateId, member.id, permCode)
       invalidatePolicies()
     } catch (err) {
       notifyError(err, t('common.error'))
     }
   }
 
-  const memberName = member.display_name ?? member.local_username ?? member.user_email ?? member.id.slice(0, 8)
+  const memberName = member.display_name ?? member.username ?? member.id.slice(0, 8)
 
   return (
     <Drawer
@@ -216,7 +211,7 @@ function MemberSettingsDrawer({
         </Tabs.Panel>
 
         <Tabs.Panel value="schedules" p="md">
-          <MemberSchedulesTab wsId={wsId} member={member} gates={gates} schedules={schedules} />
+          <MemberSchedulesTab member={member} gates={gates} schedules={schedules} />
         </Tabs.Panel>
 
         <Tabs.Panel value="auth" p="md">
@@ -248,32 +243,30 @@ function MemberSettingsDrawer({
 // ---------- Edit member modal ----------
 
 function EditMemberModal({
-  wsId,
   member,
   opened,
   onClose,
 }: {
-  wsId: string
-  member: WorkspaceMembership
+  member: Member
   opened: boolean
   onClose: () => void
 }) {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const [displayName, setDisplayName] = useState(member.display_name ?? '')
-  const [localUsername, setLocalUsername] = useState(member.local_username ?? '')
+  const [username, setUsername] = useState(member.username ?? '')
   const [role, setRole] = useState(member.role)
   const [error, setError] = useState<string | null>(null)
 
   const update = useMutation({
     mutationFn: () =>
-      membersApi.update(wsId, member.id, {
+      membersApi.update(member.id, {
         display_name: displayName || undefined,
-        local_username: member.local_username != null ? (localUsername || undefined) : undefined,
+        username: username || undefined,
         role: role !== member.role ? role : undefined,
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['members', wsId] })
+      qc.invalidateQueries({ queryKey: ['members'] })
       onClose()
     },
     onError: (err: unknown) => {
@@ -291,25 +284,21 @@ function EditMemberModal({
             onChange={(e) => setDisplayName(e.target.value)}
             placeholder={t('members.displayNamePlaceholder')}
           />
-          {member.local_username != null && (
-            <TextInput
-              label={t('members.username')}
-              value={localUsername}
-              onChange={(e) => setLocalUsername(e.target.value)}
-              placeholder={t('members.usernamePlaceholder')}
-            />
-          )}
-          {member.role !== 'OWNER' && (
-            <Select
-              label={t('common.role')}
-              value={role}
-              onChange={(v) => v && setRole(v as WorkspaceMembership['role'])}
-              data={[
-                { value: 'MEMBER', label: 'Member' },
-                { value: 'ADMIN', label: 'Admin' },
-              ]}
-            />
-          )}
+          <TextInput
+            label={t('members.username')}
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder={t('members.usernamePlaceholder')}
+          />
+          <Select
+            label={t('common.role')}
+            value={role}
+            onChange={(v) => v && setRole(v as Member['role'])}
+            data={[
+              { value: 'MEMBER', label: 'Member' },
+              { value: 'ADMIN', label: 'Admin' },
+            ]}
+          />
           {error && <Alert icon={<AlertCircle size={16} />} color="red" variant="light">{error}</Alert>}
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>{t('common.cancel')}</Button>
@@ -324,54 +313,41 @@ function EditMemberModal({
 // ---------- Main Page ----------
 
 export default function MembersPage() {
-  const { wsId } = useParams<{ wsId: string }>()
   const qc = useQueryClient()
   const { t } = useTranslation()
 
   const [addOpened, { open: openAdd, close: closeAdd }] = useDisclosure(false)
-  const [activeTab, setActiveTab] = useState<string | null>('invite')
-  const [email, setEmail] = useState('')
   const [username, setUsername] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
   const [role, setRole] = useState('MEMBER')
   const [addError, setAddError] = useState<string | null>(null)
 
-  const [drawerMember, setDrawerMember] = useState<WorkspaceMembership | null>(null)
-  const [editMember, setEditMember] = useState<WorkspaceMembership | null>(null)
+  const [drawerMember, setDrawerMember] = useState<Member | null>(null)
+  const [editMember, setEditMember] = useState<Member | null>(null)
   const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set())
   const [bulkLoading, setBulkLoading] = useState(false)
   const [bulkMode, setBulkMode] = useState<'permissions' | 'auth'>('permissions')
 
-  const { data: members, isLoading, isError, error } = useQuery<WorkspaceMembership[]>({
-    queryKey: ['members', wsId],
-    queryFn: () => membersApi.list(wsId!),
+  const { data: members, isLoading, isError, error } = useQuery<Member[]>({
+    queryKey: ['members'],
+    queryFn: () => membersApi.list(),
   })
 
   const { data: gates = [] } = useQuery<Gate[]>({
-    queryKey: ['gates', wsId],
-    queryFn: () => gatesApi.list(wsId!),
-    enabled: !!wsId,
+    queryKey: ['gates'],
+    queryFn: () => gatesApi.list(),
   })
 
-  const invite = useMutation({
-    mutationFn: () => membersApi.invite(wsId!, email, role),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members', wsId] }); resetAndClose(); notifySuccess(t('common.saved')) },
-    onError: (err: unknown) => {
-      const msg = (err as { response?: { data?: { title?: string } } })?.response?.data?.title
-      setAddError(msg ?? t('common.error'))
-    },
-  })
-
-  const createLocal = useMutation({
+  const createMember = useMutation({
     mutationFn: () =>
-      membersApi.createLocal(wsId!, {
-        local_username: username,
+      membersApi.create({
+        username,
         display_name: displayName || undefined,
         password,
         role,
       }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members', wsId] }); resetAndClose(); notifySuccess(t('common.saved')) },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members'] }); resetAndClose(); notifySuccess(t('common.saved')) },
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { title?: string } } })?.response?.data?.title
       setAddError(msg ?? t('common.error'))
@@ -379,23 +355,22 @@ export default function MembersPage() {
   })
 
   const deleteMember = useMutation({
-    mutationFn: (memberId: string) => membersApi.delete(wsId!, memberId),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members', wsId] }); notifySuccess(t('common.saved')) },
+    mutationFn: (memberId: string) => membersApi.delete(memberId),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['members'] }); notifySuccess(t('common.saved')) },
     onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
 
   function resetAndClose() {
     closeAdd()
-    setEmail(''); setUsername(''); setDisplayName(''); setPassword('')
+    setUsername(''); setDisplayName(''); setPassword('')
     setRole('MEMBER'); setAddError(null)
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setAddError(null)
-    if (activeTab === 'invite') invite.mutate()
-    else createLocal.mutate()
+    createMember.mutate()
   }
 
   function toggleSelected(memberId: string) {
@@ -408,20 +383,20 @@ export default function MembersPage() {
   }
 
   async function bulkTogglePermission(permCode: PermCode, grant: boolean) {
-    if (selectedMembers.size === 0 || !wsId) return
+    if (selectedMembers.size === 0) return
     setBulkLoading(true)
     try {
       await Promise.all(
         Array.from(selectedMembers).flatMap((memberId) =>
           gates.map((gate) =>
             grant
-              ? policiesApi.grant(wsId, gate.id, memberId, permCode).catch(() => {})
-              : policiesApi.revoke(wsId, gate.id, memberId, permCode).catch(() => {})
+              ? policiesApi.grant(gate.id, memberId, permCode).catch(() => {})
+              : policiesApi.revoke(gate.id, memberId, permCode).catch(() => {})
           )
         )
       )
       Array.from(selectedMembers).forEach((memberId) =>
-        qc.invalidateQueries({ queryKey: ['member-policies', wsId, memberId] })
+        qc.invalidateQueries({ queryKey: ['member-policies', memberId] })
       )
       notifySuccess(t('common.saved'))
     } catch (err) {
@@ -432,13 +407,13 @@ export default function MembersPage() {
   }
 
   async function bulkSetAuth(key: string, value: boolean | null) {
-    if (selectedMembers.size === 0 || !wsId) return
+    if (selectedMembers.size === 0) return
     setBulkLoading(true)
     try {
       await Promise.all(Array.from(selectedMembers).map((memberId) =>
-        membersApi.update(wsId, memberId, { auth_config: { [key]: value } })
+        membersApi.update(memberId, { auth_config: { [key]: value } })
       ))
-      qc.invalidateQueries({ queryKey: ['members', wsId] })
+      qc.invalidateQueries({ queryKey: ['members'] })
       notifySuccess(t('common.saved'))
     } catch (err) {
       notifyError(err, t('common.error'))
@@ -448,7 +423,6 @@ export default function MembersPage() {
   }
 
   const isMobile = useMediaQuery('(max-width: 768px)') ?? false
-  const isPending = invite.isPending || createLocal.isPending
   const selectableMembers = members?.filter((m) => m.role === 'MEMBER') ?? []
 
   return (
@@ -463,30 +437,18 @@ export default function MembersPage() {
 
       {/* Add member modal */}
       <Modal opened={addOpened} onClose={resetAndClose} title={t('members.add')}>
-        <Tabs value={activeTab} onChange={setActiveTab}>
-          <Tabs.List mb="md">
-            <Tabs.Tab value="invite">{t('members.inviteByEmail')}</Tabs.Tab>
-            <Tabs.Tab value="create">{t('members.createLocal')}</Tabs.Tab>
-          </Tabs.List>
-        </Tabs>
         <form onSubmit={handleSubmit}>
           <Stack>
-            {activeTab === 'invite' ? (
-              <TextInput label={t('auth.email')} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="user@example.com" />
-            ) : (
-              <>
-                <TextInput label={t('members.username')} value={username} onChange={(e) => setUsername(e.target.value)} required placeholder={t('members.usernamePlaceholder')} />
-                <TextInput label={t('members.displayName')} value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={t('members.displayNamePlaceholder')} />
-                <PasswordInput label={t('auth.password')} value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
-              </>
-            )}
+            <TextInput label={t('members.username')} value={username} onChange={(e) => setUsername(e.target.value)} required placeholder={t('members.usernamePlaceholder')} />
+            <TextInput label={t('members.displayName')} value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={t('members.displayNamePlaceholder')} />
+            <PasswordInput label={t('auth.password')} value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
             <Select label={t('common.role')} value={role} onChange={(v) => setRole(v ?? 'MEMBER')}
               data={[{ value: 'MEMBER', label: 'Member' }, { value: 'ADMIN', label: 'Admin' }]}
             />
             {addError && <Alert icon={<AlertCircle size={16} />} color="red" variant="light">{addError}</Alert>}
             <Group justify="flex-end">
               <Button variant="default" onClick={resetAndClose}>{t('common.cancel')}</Button>
-              <Button type="submit" loading={isPending}>{t('common.add')}</Button>
+              <Button type="submit" loading={createMember.isPending}>{t('common.add')}</Button>
             </Group>
           </Stack>
         </form>
@@ -529,7 +491,7 @@ export default function MembersPage() {
           {members?.map((m) => {
             const isSelectable = m.role === 'MEMBER'
             const isSelected = selectedMembers.has(m.id)
-            const memberName = m.display_name ?? m.local_username ?? m.user_email ?? m.id.slice(0, 8)
+            const memberName = m.display_name ?? m.username ?? m.id.slice(0, 8)
 
             return (
               <Paper key={m.id} withBorder radius="md" p="sm">
@@ -540,8 +502,8 @@ export default function MembersPage() {
                   <Avatar color="indigo" radius="xl" size={32} style={{ flexShrink: 0 }}>{memberName[0].toUpperCase()}</Avatar>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <Text size="sm" fw={500} truncate>{memberName}</Text>
-                    {m.local_username && m.display_name && (
-                      <Text size="xs" c="dimmed" ff="mono" truncate>{m.local_username}</Text>
+                    {m.username && m.display_name && (
+                      <Text size="xs" c="dimmed" ff="mono" truncate>{m.username}</Text>
                     )}
                   </div>
                   <Badge visibleFrom="xs" color={ROLE_COLOR[m.role]} variant="light" size="sm" style={{ flexShrink: 0 }}>{m.role}</Badge>
@@ -565,11 +527,9 @@ export default function MembersPage() {
                         <Settings2 size={14} />
                       </ActionIcon>
                     )}
-                    {m.role !== 'OWNER' && (
-                      <ActionIcon variant="subtle" color="red" size="sm" onClick={() => deleteMember.mutate(m.id)}>
-                        <Trash2 size={14} />
-                      </ActionIcon>
-                    )}
+                    <ActionIcon variant="subtle" color="red" size="sm" onClick={() => deleteMember.mutate(m.id)}>
+                      <Trash2 size={14} />
+                    </ActionIcon>
                   </Group>
                 </Group>
               </Paper>
@@ -581,7 +541,6 @@ export default function MembersPage() {
       {/* Edit member modal */}
       {editMember && (
         <EditMemberModal
-          wsId={wsId!}
           member={editMember}
           opened={!!editMember}
           onClose={() => setEditMember(null)}
@@ -591,7 +550,6 @@ export default function MembersPage() {
       {/* Per-member settings drawer */}
       {drawerMember && (
         <MemberSettingsDrawer
-          wsId={wsId!}
           member={members?.find((m) => m.id === drawerMember.id) ?? drawerMember}
           gates={gates}
           opened={!!drawerMember}

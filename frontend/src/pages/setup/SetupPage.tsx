@@ -8,12 +8,12 @@ import { useAuthStore } from '@/store/auth'
 import { extractApiError } from '@/lib/notify'
 
 export default function SetupPage() {
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const setGlobalSession = useAuthStore((s) => s.setGlobalSession)
+  const setMemberSession = useAuthStore((s) => s.setMemberSession)
   const qc = useQueryClient()
   const { t } = useTranslation()
 
@@ -26,8 +26,8 @@ export default function SetupPage() {
     setError(null)
     setLoading(true)
     try {
-      const data = await setupApi.init(email, password)
-      setGlobalSession(data.user)
+      const data = await setupApi.init(username, password)
+      setMemberSession(data.member)
       qc.setQueryData(['setup-status'], { setup_required: false })
     } catch (err: unknown) {
       setError(extractApiError(err, t('setup.failed')))
@@ -45,13 +45,12 @@ export default function SetupPage() {
       <form onSubmit={handleSubmit}>
         <Stack gap="md">
           <TextInput
-            label={t('auth.email')}
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            label={t('auth.username')}
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
             required
-            autoComplete="email"
-            placeholder={t('auth.emailPlaceholder')}
+            autoComplete="username"
+            placeholder={t('auth.usernamePlaceholder')}
           />
           <PasswordInput
             label={t('auth.password')}

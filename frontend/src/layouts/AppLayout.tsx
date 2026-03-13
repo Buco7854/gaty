@@ -1,9 +1,7 @@
-import { NavLink as RouterNavLink, Outlet, useNavigate, useParams } from 'react-router'
-import { useQuery } from '@tanstack/react-query'
+import { NavLink as RouterNavLink, Outlet, useNavigate } from 'react-router'
 import { useAuthStore } from '@/store/auth'
-import type { WorkspaceWithRole } from '@/types'
-import { workspacesApi, memberCredApi, workspaceCredApi, gatesApi, schedulesApi } from '@/api'
-import type { MemberCredential, CreatedToken, MyEffectiveAuthConfig } from '@/api'
+import { credentialsApi, gatesApi, schedulesApi } from '@/api'
+import type { MemberCredential, CreatedToken } from '@/api'
 import type { Gate, AccessSchedule } from '@/types'
 import { GatePermissionsGrid, useGatePermissions } from '@/components/GatePermissionsGrid'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -41,27 +39,23 @@ import {
   Settings,
   LogOut,
   ChevronDown,
-  Home,
   DoorOpen,
   KeyRound,
   Copy,
   Check,
   Trash2,
   CalendarClock,
-  User,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 export default function AppLayout() {
-  const { wsId } = useParams<{ wsId?: string }>()
   const { t } = useTranslation()
   const tokenPermissions = useGatePermissions()
   const session = useAuthStore((s) => s.session)
   const logout = useAuthStore((s) => s.logout)
-  const user = session?.type === 'global' ? session.user : null
-  const isGlobalAuth = session?.type === 'global'
+  const member = session?.type === 'member' ? session.member : null
+  const isAdmin = member?.role === 'ADMIN'
   const navigate = useNavigate()
-  const [wsMenuOpen, setWsMenuOpen] = useState(false)
   const [navOpened, setNavOpened] = useState(false)
   const [tokenModalOpened, { open: openTokenModal, close: closeTokenModal }] = useDisclosure(false)
   const [tokens, setTokens] = useState<MemberCredential[]>([])
@@ -69,76 +63,35 @@ export default function AppLayout() {
   const [tokenLabel, setTokenLabel] = useState('')
   const [tokenExpiresAt, setTokenExpiresAt] = useState('')
   const [newToken, setNewToken] = useState<CreatedToken | null>(null)
-  const [memberAuthConfig, setMemberAuthConfig] = useState<MyEffectiveAuthConfig | null>(null)
   const [tokenGates, setTokenGates] = useState<Gate[]>([])
   const [tokenSchedules, setTokenSchedules] = useState<AccessSchedule[]>([])
   const [tokenScheduleId, setTokenScheduleId] = useState('')
   const [tokenRestrictPerms, setTokenRestrictPerms] = useState(false)
   const [tokenPolicies, setTokenPolicies] = useState<{ gate_id: string; permission_code: string }[]>([])
 
-  const isAdmin = isGlobalAuth
-
-  const localSession = !isAdmin && wsId && session?.type === 'local' ? session : null
-
-  const { data: workspaces } = useQuery<WorkspaceWithRole[]>({
-    queryKey: ['workspaces'],
-    queryFn: workspacesApi.list,
-    enabled: isAdmin,
-  })
-
-  const currentWs = workspaces?.find((w) => w.id === wsId)
-
   async function handleLogout() {
     await logout()
     navigate('/login')
   }
 
-  function handleMemberLogout() {
-    useAuthStore.getState().clearSession()
-    navigate(wsId ? `/workspaces/${wsId}/login` : '/login')
-  }
-
   function handleLogoClick() {
-    if (isAdmin) {
-      navigate('/workspaces')
-    } else if (wsId) {
-      navigate(`/workspaces/${wsId}`)
-    }
+    navigate('/gates')
   }
 
-  // Load tokens, auth config, gates and schedules when modal opens
+  // Load tokens, gates and schedules when modal opens
   useEffect(() => {
-    if (!tokenModalOpened) return
+    if (!tokenModalOpened || !member) return
     setTokensLoading(true)
-    setMemberAuthConfig(null)
-    if (isAdmin && wsId) {
-      Promise.all([
-        workspaceCredApi.listTokens(wsId),
-        workspaceCredApi.getMyAuthConfig(wsId).catch(() => null),
-        gatesApi.list(wsId).catch(() => []),
-        schedulesApi.listMine(wsId).catch(() => []),
-      ]).then(([tks, cfg, gates, schedules]) => {
-        setTokens(tks)
-        setMemberAuthConfig(cfg)
-        setTokenGates(gates as Gate[])
-        setTokenSchedules(schedules as AccessSchedule[])
-      }).finally(() => setTokensLoading(false))
-    } else if (localSession && wsId) {
-      Promise.all([
-        memberCredApi.listTokens(),
-        workspaceCredApi.getMyAuthConfig(wsId).catch(() => null),
-        gatesApi.list(wsId).catch(() => []),
-        schedulesApi.listMine(wsId).catch(() => []),
-      ]).then(([tks, cfg, gates, schedules]) => {
-        setTokens(tks)
-        setMemberAuthConfig(cfg)
-        setTokenGates(gates as Gate[])
-        setTokenSchedules(schedules as AccessSchedule[])
-      }).finally(() => setTokensLoading(false))
-    } else {
-      setTokensLoading(false)
-    }
-  }, [tokenModalOpened, isAdmin, wsId, localSession])
+    Promise.all([
+      credentialsApi.listTokens(),
+      gatesApi.list().catch(() => []),
+      schedulesApi.listMine().catch(() => []),
+    ]).then(([tks, gates, schedules]) => {
+      setTokens(tks)
+      setTokenGates(gates as Gate[])
+      setTokenSchedules(schedules as AccessSchedule[])
+    }).finally(() => setTokensLoading(false))
+  }, [tokenModalOpened, member])
 
   function resetTokenForm() {
     setTokenLabel('')
@@ -159,205 +112,95 @@ export default function AppLayout() {
   async function handleCreateToken(e: React.FormEvent) {
     e.preventDefault()
     if (!tokenLabel.trim()) return
-    let created: CreatedToken
-    if (isAdmin && wsId) {
-      const policies = tokenRestrictPerms && tokenPolicies.length > 0 ? tokenPolicies : undefined
-      created = await workspaceCredApi.createToken(wsId, tokenLabel, tokenExpiresAt || undefined, policies, tokenScheduleId || undefined)
-      const updated = await workspaceCredApi.listTokens(wsId)
-      setTokens(updated)
-    } else if (localSession) {
-      const policies = tokenRestrictPerms && tokenPolicies.length > 0 ? tokenPolicies : undefined
-      created = await memberCredApi.createToken(tokenLabel, tokenExpiresAt || undefined, policies, tokenScheduleId || undefined)
-      const updated = await memberCredApi.listTokens()
-      setTokens(updated)
-    } else {
-      return
-    }
+    const policies = tokenRestrictPerms && tokenPolicies.length > 0 ? tokenPolicies : undefined
+    const created = await credentialsApi.createToken(tokenLabel, tokenExpiresAt || undefined, policies, tokenScheduleId || undefined)
+    const updated = await credentialsApi.listTokens()
+    setTokens(updated)
     setNewToken(created)
     resetTokenForm()
   }
 
   async function handleDeleteToken(credId: string) {
-    if (isAdmin && wsId) {
-      await workspaceCredApi.deleteToken(wsId, credId)
-    } else if (localSession) {
-      await memberCredApi.deleteToken(credId)
-    } else {
-      return
-    }
+    await credentialsApi.deleteToken(credId)
     setTokens((prev) => prev.filter((t) => t.id !== credId))
     if (newToken?.id === credId) setNewToken(null)
   }
 
-  const initials = user?.email?.slice(0, 2).toUpperCase() ?? 'U'
+  const initials = member?.username?.slice(0, 2).toUpperCase() ?? 'U'
 
-  // Shared nav body: workspace selector + nav links + footer
+  // Shared nav body: nav links + footer
   const renderNavBody = () => (
     <>
-      {/* Workspace section */}
-      <div style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}>
-        {isAdmin ? (
-          currentWs ? (
-            <Menu opened={wsMenuOpen} onChange={setWsMenuOpen} width={220} shadow="md" styles={{ dropdown: { padding: 4 }, item: { borderRadius: 'var(--mantine-radius-sm)', marginBottom: 2 } }}>
-              <Menu.Target>
-                <UnstyledButton
-                  px="md"
-                  py="sm"
-                  style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
-                >
-                  <Group gap="xs">
-                    <Avatar size={22} color="indigo" radius="sm">
-                      {currentWs.name[0].toUpperCase()}
-                    </Avatar>
-                    <Text size="sm" fw={500} style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {currentWs.name}
-                    </Text>
-                  </Group>
-                  <ChevronDown size={14} />
-                </UnstyledButton>
-              </Menu.Target>
-              <Menu.Dropdown>
-                {workspaces?.map((w) => (
-                  <Menu.Item
-                    key={w.id}
-                    leftSection={<Avatar size={16} color="indigo" radius="xs">{w.name[0].toUpperCase()}</Avatar>}
-                    onClick={() => { navigate(`/workspaces/${w.id}`); setWsMenuOpen(false); setNavOpened(false) }}
-                  >
-                    <Text size="sm" truncate>{w.name}</Text>
-                  </Menu.Item>
-                ))}
-                <Divider my={4} />
-                <Menu.Item
-                  leftSection={<Home size={14} />}
-                  onClick={() => { navigate('/workspaces'); setWsMenuOpen(false); setNavOpened(false) }}
-                >
-                  <Text size="sm">{t('workspaces.title')}</Text>
-                </Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
-          ) : (
-            <NavLink
-              component={RouterNavLink as React.FC}
-              to="/workspaces"
-              label={t('workspaces.title')}
-              leftSection={<Home size={16} />}
-              px="md"
-              py="sm"
-              onClick={() => setNavOpened(false)}
-            />
-          )
-        ) : (
-          // Local member: static workspace indicator
-          <Group px="md" py="sm" gap="xs">
-            <Avatar size={22} color="indigo" radius="sm">
-              <DoorOpen size={12} />
-            </Avatar>
-            <Text size="sm" fw={500} c="dimmed" style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {t('portal.myGates')}
-            </Text>
-          </Group>
-        )}
-      </div>
-
       {/* Navigation */}
       <ScrollArea style={{ flex: 1 }}>
-        {wsId && (
-          <Stack gap={2} p="xs">
-            <NavLink
-              component={RouterNavLink as React.FC}
-              to={`/workspaces/${wsId}`}
-              end
-              label={t('gates.title')}
-              leftSection={<LayoutGrid size={18} />}
-              onClick={() => setNavOpened(false)}
-              styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
-            />
-            <NavLink
-              component={RouterNavLink as React.FC}
-              to={`/workspaces/${wsId}/schedules`}
-              label={t('schedules.title')}
-              leftSection={<CalendarClock size={18} />}
-              onClick={() => setNavOpened(false)}
-              styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
-            />
-            {(isAdmin || localSession?.role === 'ADMIN' || localSession?.role === 'OWNER') && (
-              <>
-                <Divider my={4} label={<Text size="xs" c="dimmed" fw={500}>{t('common.administration')}</Text>} />
-                <NavLink
-                  component={RouterNavLink as React.FC}
-                  to={`/workspaces/${wsId}/members`}
-                  label={t('members.title')}
-                  leftSection={<Users size={18} />}
-                  onClick={() => setNavOpened(false)}
-                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
-                />
-                <NavLink
-                  component={RouterNavLink as React.FC}
-                  to={`/workspaces/${wsId}/settings`}
-                  label={t('settings.title')}
-                  leftSection={<Settings size={18} />}
-                  onClick={() => setNavOpened(false)}
-                  styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
-                />
-              </>
-            )}
-          </Stack>
-        )}
+        <Stack gap={2} p="xs">
+          <NavLink
+            component={RouterNavLink as React.FC}
+            to="/gates"
+            end
+            label={t('gates.title')}
+            leftSection={<LayoutGrid size={18} />}
+            onClick={() => setNavOpened(false)}
+            styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
+          />
+          <NavLink
+            component={RouterNavLink as React.FC}
+            to="/schedules"
+            label={t('schedules.title')}
+            leftSection={<CalendarClock size={18} />}
+            onClick={() => setNavOpened(false)}
+            styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
+          />
+          {isAdmin && (
+            <>
+              <Divider my={4} label={<Text size="xs" c="dimmed" fw={500}>{t('common.administration')}</Text>} />
+              <NavLink
+                component={RouterNavLink as React.FC}
+                to="/members"
+                label={t('members.title')}
+                leftSection={<Users size={18} />}
+                onClick={() => setNavOpened(false)}
+                styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
+              />
+              <NavLink
+                component={RouterNavLink as React.FC}
+                to="/settings"
+                label={t('settings.title')}
+                leftSection={<Settings size={18} />}
+                onClick={() => setNavOpened(false)}
+                styles={{ root: { borderRadius: 'var(--mantine-radius-md)', paddingTop: 8, paddingBottom: 8 } }}
+              />
+            </>
+          )}
+        </Stack>
       </ScrollArea>
 
       {/* Footer */}
       <div style={{ borderTop: '1px solid var(--mantine-color-default-border)', padding: '8px 12px', flexShrink: 0 }}>
-        {isAdmin ? (
-          <Group justify="space-between" wrap="nowrap">
-            <Group gap={4} wrap="nowrap">
-              <LangToggle />
-              <ThemeToggle />
-            </Group>
-            <Menu position="top-end" width={190} styles={{ dropdown: { padding: 4 }, item: { borderRadius: 'var(--mantine-radius-sm)', marginBottom: 2 } }}>
-              <Menu.Target>
-                <UnstyledButton style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Avatar size={24} color="indigo" radius="xl">{initials}</Avatar>
-                  <ChevronDown size={11} style={{ color: 'var(--mantine-color-dimmed)' }} />
-                </UnstyledButton>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Label style={{ fontSize: 10 }}>{user?.email}</Menu.Label>
-                {wsId && (
-                  <Menu.Item leftSection={<KeyRound size={14} />} onClick={openTokenModal}>
-                    {t('members.apiTokens')}
-                  </Menu.Item>
-                )}
-                <Divider my={4} />
-                <Menu.Item leftSection={<LogOut size={14} />} color="red" onClick={handleLogout}>
-                  {t('auth.signOut')}
-                </Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
+        <Group justify="space-between" wrap="nowrap">
+          <Group gap={4} wrap="nowrap">
+            <LangToggle />
+            <ThemeToggle />
           </Group>
-        ) : (
-          <Group justify="space-between" wrap="nowrap">
-            <Group gap={4} wrap="nowrap">
-              <LangToggle />
-              <ThemeToggle />
-            </Group>
-            <Menu position="top-end" width={160} styles={{ dropdown: { padding: 4 }, item: { borderRadius: 'var(--mantine-radius-sm)', marginBottom: 2 } }}>
-              <Menu.Target>
-                <ActionIcon variant="subtle" color="gray" size="sm">
-                  <User size={14} />
-                </ActionIcon>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Item leftSection={<KeyRound size={14} />} onClick={openTokenModal}>
-                  {t('members.apiTokens')}
-                </Menu.Item>
-                <Divider my={4} />
-                <Menu.Item leftSection={<LogOut size={14} />} color="red" onClick={handleMemberLogout}>
-                  {t('auth.signOut')}
-                </Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
-          </Group>
-        )}
+          <Menu position="top-end" width={190} styles={{ dropdown: { padding: 4 }, item: { borderRadius: 'var(--mantine-radius-sm)', marginBottom: 2 } }}>
+            <Menu.Target>
+              <UnstyledButton style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Avatar size={24} color="indigo" radius="xl">{initials}</Avatar>
+                <ChevronDown size={11} style={{ color: 'var(--mantine-color-dimmed)' }} />
+              </UnstyledButton>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Label style={{ fontSize: 10 }}>{member?.username}</Menu.Label>
+              <Menu.Item leftSection={<KeyRound size={14} />} onClick={openTokenModal}>
+                {t('members.apiTokens')}
+              </Menu.Item>
+              <Divider my={4} />
+              <Menu.Item leftSection={<LogOut size={14} />} color="red" onClick={handleLogout}>
+                {t('auth.signOut')}
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+        </Group>
       </div>
     </>
   )
@@ -450,17 +293,11 @@ export default function AppLayout() {
       {/* API token management modal */}
       <Modal
         opened={tokenModalOpened}
-        onClose={() => { closeTokenModal(); setNewToken(null); resetTokenForm(); setMemberAuthConfig(null) }}
+        onClose={() => { closeTokenModal(); setNewToken(null); resetTokenForm() }}
         title={t('members.apiTokens')}
         size="lg"
       >
         <Stack gap="xl">
-          {memberAuthConfig?.api_token === false && (
-            <Alert color="orange" variant="light" title={t('members.tokenDisabled')}>
-              <Text size="sm">{t('members.tokenDisabledHint')}</Text>
-            </Alert>
-          )}
-
           {newToken && (
             <Alert
               color="green"
@@ -485,74 +322,72 @@ export default function AppLayout() {
             </Alert>
           )}
 
-          {memberAuthConfig?.api_token !== false && (
-            <div>
-              <Text fw={600} mb="sm">{t('members.newToken')}</Text>
-              <form onSubmit={handleCreateToken}>
-                <Stack gap="sm">
-                  <TextInput
-                    label={t('members.tokenLabel')}
-                    placeholder={t('members.tokenLabelPlaceholder')}
-                    value={tokenLabel}
-                    onChange={(e) => setTokenLabel(e.target.value)}
-                    withAsterisk
+          <div>
+            <Text fw={600} mb="sm">{t('members.newToken')}</Text>
+            <form onSubmit={handleCreateToken}>
+              <Stack gap="sm">
+                <TextInput
+                  label={t('members.tokenLabel')}
+                  placeholder={t('members.tokenLabelPlaceholder')}
+                  value={tokenLabel}
+                  onChange={(e) => setTokenLabel(e.target.value)}
+                  withAsterisk
+                />
+                <TextInput
+                  label={`${t('members.tokenExpiresAt')} (${t('common.optional')})`}
+                  type="date"
+                  value={tokenExpiresAt}
+                  onChange={(e) => setTokenExpiresAt(e.target.value)}
+                />
+
+                {tokenSchedules.length > 0 && (
+                  <Select
+                    label={t('members.tokenSchedule')}
+                    description={t('members.tokenScheduleHint')}
+                    value={tokenScheduleId}
+                    onChange={(v) => setTokenScheduleId(v ?? '')}
+                    data={[
+                      { value: '', label: t('common.none') },
+                      ...tokenSchedules.map((s) => ({ value: s.id, label: s.name })),
+                    ]}
+                    clearable
                   />
-                  <TextInput
-                    label={`${t('members.tokenExpiresAt')} (${t('common.optional')})`}
-                    type="date"
-                    value={tokenExpiresAt}
-                    onChange={(e) => setTokenExpiresAt(e.target.value)}
+                )}
+
+                {tokenGates.length > 0 && (
+                  <Switch
+                    label={t('members.tokenRestrictPerms')}
+                    description={t('members.tokenRestrictPermsHint')}
+                    checked={tokenRestrictPerms}
+                    onChange={(e) => {
+                      setTokenRestrictPerms(e.currentTarget.checked)
+                      if (!e.currentTarget.checked) setTokenPolicies([])
+                    }}
                   />
+                )}
 
-                  {tokenSchedules.length > 0 && (
-                    <Select
-                      label={t('members.tokenSchedule')}
-                      description={t('members.tokenScheduleHint')}
-                      value={tokenScheduleId}
-                      onChange={(v) => setTokenScheduleId(v ?? '')}
-                      data={[
-                        { value: '', label: t('common.none') },
-                        ...tokenSchedules.map((s) => ({ value: s.id, label: s.name })),
-                      ]}
-                      clearable
+                {tokenRestrictPerms && tokenGates.length > 0 && (
+                  <div>
+                    <Text size="sm" fw={600} mb={6}>{t('members.gatePermissions')}</Text>
+                    <GatePermissionsGrid
+                      gates={tokenGates}
+                      permissions={tokenPermissions}
+                      isChecked={(gateId, code) =>
+                        tokenPolicies.some((p) => p.gate_id === gateId && p.permission_code === code)
+                      }
+                      onToggle={togglePolicy}
+                      withColumnSelect
+                      maxHeight={200}
                     />
-                  )}
+                  </div>
+                )}
 
-                  {tokenGates.length > 0 && (
-                    <Switch
-                      label={t('members.tokenRestrictPerms')}
-                      description={t('members.tokenRestrictPermsHint')}
-                      checked={tokenRestrictPerms}
-                      onChange={(e) => {
-                        setTokenRestrictPerms(e.currentTarget.checked)
-                        if (!e.currentTarget.checked) setTokenPolicies([])
-                      }}
-                    />
-                  )}
-
-                  {tokenRestrictPerms && tokenGates.length > 0 && (
-                    <div>
-                      <Text size="sm" fw={600} mb={6}>{t('members.gatePermissions')}</Text>
-                      <GatePermissionsGrid
-                        gates={tokenGates}
-                        permissions={tokenPermissions}
-                        isChecked={(gateId, code) =>
-                          tokenPolicies.some((p) => p.gate_id === gateId && p.permission_code === code)
-                        }
-                        onToggle={togglePolicy}
-                        withColumnSelect
-                        maxHeight={200}
-                      />
-                    </div>
-                  )}
-
-                  <Button type="submit" disabled={!tokenLabel.trim()} fullWidth>
-                    {t('common.add')}
-                  </Button>
-                </Stack>
-              </form>
-            </div>
-          )}
+                <Button type="submit" disabled={!tokenLabel.trim()} fullWidth>
+                  {t('common.add')}
+                </Button>
+              </Stack>
+            </form>
+          </div>
 
           <div>
             <Text fw={600} mb="sm">{t('members.existingTokens')}</Text>

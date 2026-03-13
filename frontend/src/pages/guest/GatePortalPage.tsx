@@ -6,7 +6,7 @@ import type { DomainResolveResult } from '@/types'
 import { useTranslation } from 'react-i18next'
 import { notifySuccess, notifyError } from '@/lib/notify'
 import { Center, Stack, Group, Text, Title, Loader, Button, Anchor, Paper, Badge } from '@mantine/core'
-import { Hash, KeyRound, LayoutGrid, Users, Activity } from 'lucide-react'
+import { Hash, KeyRound, Users, Activity, LayoutGrid } from 'lucide-react'
 import type { GateStatus } from '@/types'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
@@ -27,7 +27,7 @@ function getStatusColor(status: GateStatus | undefined): string {
 }
 
 export default function GatePortalPage() {
-  const { wsId: wsIdParam, gateId: gateIdParam } = useParams<{ wsId?: string; gateId?: string }>()
+  const { gateId: gateIdParam } = useParams<{ gateId?: string }>()
   const navigate = useNavigate()
   const location = useLocation()
   const { t } = useTranslation()
@@ -53,7 +53,7 @@ export default function GatePortalPage() {
       .then((data) => setResolved(data))
       .catch(() => {
         if (isAuthenticated()) {
-          navigate('/workspaces', { replace: true })
+          navigate('/gates', { replace: true })
         } else {
           navigate('/login', { replace: true })
         }
@@ -62,22 +62,21 @@ export default function GatePortalPage() {
   }, [gateIdParam])
 
   const effectiveGateId = gateIdParam ?? resolved?.gate_id
-  const effectiveWsId = wsIdParam ?? resolved?.workspace_id
 
   // Determine if we have an active session for this gate
-  const hasSession = session?.type === 'pin_session' || session?.type === 'local'
+  const hasSession = session?.type === 'pin_session' || session?.type === 'member'
 
   // Permission derivation for member sessions
   const { data: myPolicies } = useQuery({
-    queryKey: ['policies-me', session?.workspaceId],
-    queryFn: () => policiesApi.listMine(session!.workspaceId!),
-    enabled: session?.type === 'local' && !!session.workspaceId,
+    queryKey: ['policies-me'],
+    queryFn: () => policiesApi.listMine(),
+    enabled: session?.type === 'member',
   })
 
   const permissions = useMemo(() => {
     if (!session) return []
     if (session.type === 'pin_session') return session.permissions ?? []
-    if (session.type === 'local') {
+    if (session.type === 'member') {
       return myPolicies
         ?.filter((p) => p.gate_id === effectiveGateId)
         .map((p) => p.permission_code) ?? []
@@ -90,7 +89,7 @@ export default function GatePortalPage() {
   const canOpen = permissions.includes('gate:trigger_open') && gateHasOpen
   const canClose = permissions.includes('gate:trigger_close') && gateHasClose
   const canViewStatus = permissions.includes('gate:read_status')
-  const isAdminSession = session?.type === 'local' && (session.role === 'ADMIN' || session.role === 'OWNER')
+  const isAdminSession = session?.type === 'member' && session.member?.role === 'ADMIN'
   const policiesReady = session?.type === 'pin_session' || !!myPolicies
 
   const metaRows = useMemo(() => {
@@ -108,8 +107,8 @@ export default function GatePortalPage() {
   async function triggerGate(action: 'open' | 'close') {
     if (session?.type === 'pin_session') {
       await publicApi.triggerWithPinSession(action)
-    } else if (session?.type === 'local' && session.workspaceId && effectiveGateId) {
-      await publicApi.triggerAsLocal(session.workspaceId, effectiveGateId, action)
+    } else if (session?.type === 'member' && effectiveGateId) {
+      await publicApi.triggerAsMember(effectiveGateId, action)
     }
   }
 
@@ -134,7 +133,7 @@ export default function GatePortalPage() {
     if (!location.state?.justAuthenticated) return
     if (autoTriggeredRef.current) return
     if (!hasSession) return
-    if (session?.type === 'local' && !myPolicies) return
+    if (session?.type === 'member' && !myPolicies) return
     if (!canOpen) return
     autoTriggeredRef.current = true
     triggerMutation.mutate('open')
@@ -142,19 +141,19 @@ export default function GatePortalPage() {
   }, [hasSession, policiesReady, canOpen])
 
   function navigateToPin() {
-    if (!effectiveGateId || !effectiveWsId) return
-    navigate(`/workspaces/${effectiveWsId}/gates/${effectiveGateId}/public/pin`)
+    if (!effectiveGateId) return
+    navigate(`/gates/${effectiveGateId}/public/pin`)
   }
 
   function navigateToPassword() {
-    if (!effectiveGateId || !effectiveWsId) return
-    navigate(`/workspaces/${effectiveWsId}/gates/${effectiveGateId}/public/password`)
+    if (!effectiveGateId) return
+    navigate(`/gates/${effectiveGateId}/public/password`)
   }
 
   function navigateToMemberLogin() {
-    if (!effectiveWsId || !effectiveGateId) return
+    if (!effectiveGateId) return
     const params = new URLSearchParams({ gate_id: effectiveGateId, redirect: window.location.pathname })
-    navigate(`/workspaces/${effectiveWsId}/login?${params.toString()}`)
+    navigate(`/member-login?${params.toString()}`)
   }
 
   function handleClearSession() {
@@ -223,14 +222,14 @@ export default function GatePortalPage() {
                   {t('gates.close')}
                 </Button>
               )}
-              {isAdminSession && session?.workspaceId && (
+              {isAdminSession && (
                 <Button
                   variant="subtle"
                   size="xs"
                   leftSection={<LayoutGrid size={14} />}
-                  onClick={() => navigate(`/workspaces/${session.workspaceId}`)}
+                  onClick={() => navigate('/gates')}
                 >
-                  {t('pinpad.myWorkspace')}
+                  {t('pinpad.myDashboard')}
                 </Button>
               )}
               {canViewStatus && metaRows.length > 0 && (
@@ -279,18 +278,16 @@ export default function GatePortalPage() {
               >
                 {t('pinpad.enterPasswordCode')}
               </Button>
-              {effectiveWsId && (
-                <Button
-                  size="lg"
-                  radius="xl"
-                  fullWidth
-                  variant="default"
-                  leftSection={<Users size={16} />}
-                  onClick={navigateToMemberLogin}
-                >
-                  {t('pinpad.memberLogin')}
-                </Button>
-              )}
+              <Button
+                size="lg"
+                radius="xl"
+                fullWidth
+                variant="default"
+                leftSection={<Users size={16} />}
+                onClick={navigateToMemberLogin}
+              >
+                {t('pinpad.memberLogin')}
+              </Button>
             </Stack>
           )}
         </Stack>

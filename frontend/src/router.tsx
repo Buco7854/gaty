@@ -3,13 +3,11 @@ import { useAuthStore } from '@/store/auth'
 import AppLayout from '@/layouts/AppLayout'
 import AuthLayout from '@/layouts/AuthLayout'
 import LoginPage from '@/pages/auth/LoginPage'
-import RegisterPage from '@/pages/auth/RegisterPage'
-import WorkspacesPage from '@/pages/workspaces/WorkspacesPage'
-import WorkspacePage from '@/pages/workspace/WorkspacePage'
 import GatePage from '@/pages/gate/GatePage'
 import MembersPage from '@/pages/workspace/MembersPage'
 import SchedulesPage from '@/pages/workspace/SchedulesPage'
 import SettingsPage from '@/pages/workspace/SettingsPage'
+import DashboardPage from '@/pages/workspace/WorkspacePage'
 import GatePortalPage from '@/pages/guest/GatePortalPage'
 import PinPadPage from '@/pages/guest/PinPadPage'
 import PasswordAccessPage from '@/pages/guest/PasswordAccessPage'
@@ -21,25 +19,24 @@ function RequireAuth() {
   if (!session) {
     return <Navigate to="/login" replace />
   }
-  // Allow global users and local members (cookies handle actual auth)
   return <Outlet />
 }
 
 function RequireGuest() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
-  if (isAuthenticated()) return <Navigate to="/workspaces" replace />
+  if (isAuthenticated()) return <Navigate to="/gates" replace />
   return <Outlet />
 }
 
 export const router = createBrowserRouter([
-  // Custom domain root — resolve by hostname; redirect to /workspaces if not a custom domain
+  // Custom domain root — resolve by hostname; redirect to /gates if not a custom domain
   { path: '/', element: <GatePortalPage /> },
   // Public gate portal (no auth required)
-  { path: '/workspaces/:wsId/gates/:gateId/public', element: <GatePortalPage /> },
-  { path: '/workspaces/:wsId/gates/:gateId/public/pin', element: <PinPadPage /> },
-  { path: '/workspaces/:wsId/gates/:gateId/public/password', element: <PasswordAccessPage /> },
-  // Member login — workspace-scoped, gate_id optional for redirect context
-  { path: '/workspaces/:wsId/login', element: <MemberLoginPage /> },
+  { path: '/gates/:gateId/public', element: <GatePortalPage /> },
+  { path: '/gates/:gateId/public/pin', element: <PinPadPage /> },
+  { path: '/gates/:gateId/public/password', element: <PasswordAccessPage /> },
+  // Member login — gate_id optional for redirect context
+  { path: '/member-login', element: <MemberLoginPage /> },
   // SSO callback — handles redirect from SSO provider after authentication
   { path: '/auth/sso/callback', element: <SsoCallbackPage /> },
   // Auth routes (only for unauthenticated users)
@@ -50,7 +47,6 @@ export const router = createBrowserRouter([
         element: <AuthLayout />,
         children: [
           { path: '/login', element: <LoginPage /> },
-          { path: '/register', element: <RegisterPage /> },
         ],
       },
     ],
@@ -62,12 +58,11 @@ export const router = createBrowserRouter([
       {
         element: <AppLayout />,
         children: [
-          { path: '/workspaces', element: <WorkspacesPage /> },
-          { path: '/workspaces/:wsId', element: <WorkspacePage /> },
-          { path: '/workspaces/:wsId/members', element: <MembersPage /> },
-          { path: '/workspaces/:wsId/schedules', element: <SchedulesPage /> },
-          { path: '/workspaces/:wsId/settings', element: <SettingsPage /> },
-          { path: '/workspaces/:wsId/gates/:gateId', element: <GatePage /> },
+          { path: '/gates', element: <DashboardPage /> },
+          { path: '/members', element: <MembersPage /> },
+          { path: '/schedules', element: <SchedulesPage /> },
+          { path: '/settings', element: <SettingsPage /> },
+          { path: '/gates/:gateId', element: <GatePage /> },
         ],
       },
     ],

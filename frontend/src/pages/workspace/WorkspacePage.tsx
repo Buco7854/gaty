@@ -1,9 +1,9 @@
 import { useState, useCallback } from 'react'
-import { useParams, useNavigate } from 'react-router'
+import { useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { gatesApi, policiesApi } from '@/api'
 import type { ActionConfig } from '@/api'
-import type { Gate, GateStatus, WorkspaceWithRole } from '@/types'
+import type { Gate, GateStatus } from '@/types'
 import { useGateEvents } from '@/hooks/useGateEvents'
 import type { GateEvent } from '@/hooks/useGateEvents'
 import { useTranslation } from 'react-i18next'
@@ -101,18 +101,13 @@ function ActionConfigForm({
   )
 }
 
-export default function WorkspacePage() {
-  const { wsId } = useParams<{ wsId: string }>()
+export default function DashboardPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { t } = useTranslation()
   const session = useAuthStore((s) => s.session)
-  const globalAuth = session?.type === 'global'
-  const localSession = !globalAuth && session?.type === 'local' ? session : null
-
-  const ws = qc.getQueryData<WorkspaceWithRole[]>(['workspaces'])?.find((w) => w.id === wsId)
-  const effectiveRole = globalAuth ? ws?.role : localSession?.role
-  const canManage = effectiveRole === 'ADMIN' || effectiveRole === 'OWNER'
+  const member = session?.type === 'member' ? session.member : null
+  const isAdmin = member?.role === 'ADMIN'
 
   const [opened, { open, close }] = useDisclosure(false)
   const [advancedOpened, setAdvancedOpened] = useState(false)
@@ -123,58 +118,56 @@ export default function WorkspacePage() {
   const [triggeringId, setTriggeringId] = useState<string | null>(null)
 
   const { data: gates, isLoading, isError, error } = useQuery<Gate[]>({
-    queryKey: ['gates', wsId],
-    queryFn: () => gatesApi.list(wsId!),
-    refetchInterval: globalAuth ? 15_000 : false,
-    enabled: globalAuth || !!localSession,
+    queryKey: ['gates'],
+    queryFn: () => gatesApi.list(),
+    refetchInterval: 15_000,
+    enabled: !!member,
   })
 
   const { data: myPolicies } = useQuery({
-    queryKey: ['policies-me', wsId],
-    queryFn: () => policiesApi.listMine(wsId!),
-    enabled: !canManage && (globalAuth || !!localSession),
+    queryKey: ['policies-me'],
+    queryFn: () => policiesApi.listMine(),
+    enabled: !isAdmin && !!member,
   })
 
   const canManageGate = (gateId: string) =>
-    canManage || myPolicies?.some((p) => p.gate_id === gateId && p.permission_code === 'gate:manage')
+    isAdmin || myPolicies?.some((p) => p.gate_id === gateId && p.permission_code === 'gate:manage')
 
-  // SSE: update gate status + metadata in real-time (both list and detail caches)
+  // SSE: update gate status + metadata in real-time
   const handleGateEvent = useCallback(
     (event: GateEvent) => {
       const patch = { status: event.status as GateStatus, status_metadata: event.status_metadata }
-      qc.setQueryData<Gate[]>(['gates', wsId], (prev) =>
+      qc.setQueryData<Gate[]>(['gates'], (prev) =>
         prev?.map((g) =>
           g.id === event.gate_id
             ? { ...g, ...patch, status_metadata: patch.status_metadata ?? g.status_metadata }
             : g
         )
       )
-      // Also update the single-gate cache so the detail page stays in sync
-      qc.setQueryData<Gate>(['gate', wsId, event.gate_id], (prev) =>
+      qc.setQueryData<Gate>(['gate', event.gate_id], (prev) =>
         prev ? { ...prev, ...patch, status_metadata: patch.status_metadata ?? prev.status_metadata } : prev
       )
     },
-    [qc, wsId]
+    [qc]
   )
-  useGateEvents(globalAuth ? wsId : undefined, handleGateEvent)
+  useGateEvents(handleGateEvent)
 
   const createGate = useMutation({
     mutationFn: () =>
-      gatesApi.create(wsId!, {
+      gatesApi.create({
         name: gateName,
         open_config: openConfig,
         close_config: closeConfig,
         status_config: statusConfig,
       }),
     onSuccess: (gate) => {
-      qc.invalidateQueries({ queryKey: ['gates', wsId] })
+      qc.invalidateQueries({ queryKey: ['gates'] })
       close()
       setGateName('')
       setOpenConfig({ type: 'MQTT_GATIE' })
       setCloseConfig(null)
       setStatusConfig(null)
       setAdvancedOpened(false)
-      // Show the gate token notification (it's only returned on creation)
       if (gate.gate_token) {
         notifySuccess(`${t('common.created')} — token: ${gate.gate_token.slice(0, 8)}…`)
       } else {
@@ -187,16 +180,15 @@ export default function WorkspacePage() {
   async function triggerGate(gateId: string, action: 'open' | 'close' = 'open') {
     if (triggeringId) return
     setTriggeringId(gateId)
-    // Optimistic update: immediately reflect the expected status
     const optimisticStatus = (action === 'open' ? 'open' : 'closed') as GateStatus
-    qc.setQueryData<Gate[]>(['gates', wsId], (prev) =>
+    qc.setQueryData<Gate[]>(['gates'], (prev) =>
       prev?.map((g) => g.id === gateId ? { ...g, status: optimisticStatus } : g)
     )
-    qc.setQueryData<Gate>(['gate', wsId, gateId], (prev) =>
+    qc.setQueryData<Gate>(['gate', gateId], (prev) =>
       prev ? { ...prev, status: optimisticStatus } : prev
     )
     try {
-      await gatesApi.trigger(wsId!, gateId, action)
+      await gatesApi.trigger(gateId, action)
     } catch { /* fire-and-forget */ }
     setTriggeringId(null)
   }
@@ -205,17 +197,17 @@ export default function WorkspacePage() {
     <Container size="lg" py="xl">
       <Group justify="space-between" mb="xl">
         <div>
-          <Title order={2}>{ws?.name ?? t('gates.title')}</Title>
+          <Title order={2}>{t('gates.title')}</Title>
           <Text c="dimmed" size="sm">{t('gates.subtitle')}</Text>
         </div>
-        {canManage && (
+        {isAdmin && (
           <Button leftSection={<Plus size={16} />} onClick={open}>
             {t('gates.add')}
           </Button>
         )}
       </Group>
 
-      {canManage && (
+      {isAdmin && (
         <Modal opened={opened} onClose={close} title={t('gates.add')} size="md">
           <form onSubmit={(e) => { e.preventDefault(); createGate.mutate() }}>
             <Stack>
@@ -272,7 +264,7 @@ export default function WorkspacePage() {
           <Stack align="center" gap="xs">
             <DoorOpen size={40} opacity={0.3} />
             <Text fw={500}>{t('gates.noGates')}</Text>
-            {canManage && <Text size="sm" c="dimmed">{t('gates.noGatesHint')}</Text>}
+            {isAdmin && <Text size="sm" c="dimmed">{t('gates.noGatesHint')}</Text>}
           </Stack>
         </Center>
       ) : (
@@ -283,7 +275,7 @@ export default function WorkspacePage() {
                 <Text fw={600} truncate style={{ flex: 1 }}>{gate.name}</Text>
                 <StatusBadge status={gate.status} />
               </Group>
-              {canManage && (
+              {isAdmin && (
                 <Text size="xs" c="dimmed" mb="md">
                   {(() => {
                     const types = [gate.open_config, gate.close_config, gate.status_config]
@@ -309,7 +301,7 @@ export default function WorkspacePage() {
                     <ActionIcon
                       variant="default"
                       size="sm"
-                      onClick={() => navigate(`/workspaces/${wsId}/gates/${gate.id}`)}
+                      onClick={() => navigate(`/gates/${gate.id}`)}
                     >
                       <ChevronRight size={14} />
                     </ActionIcon>

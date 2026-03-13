@@ -7,16 +7,16 @@ function normalizeList(data: unknown): CustomDomain[] {
 }
 
 export const domainsApi = {
-  list: (wsId: string, gateId: string) =>
-    api.get(`/workspaces/${wsId}/gates/${gateId}/domains`)
+  list: (gateId: string) =>
+    api.get(`/gates/${gateId}/domains`)
       .then((r) => normalizeList(r.data)),
 
-  create: (wsId: string, gateId: string, domain: string) =>
-    api.post<CustomDomain>(`/workspaces/${wsId}/gates/${gateId}/domains`, { domain }).then((r) => r.data),
+  create: (gateId: string, domain: string) =>
+    api.post<CustomDomain>(`/gates/${gateId}/domains`, { domain }).then((r) => r.data),
 
-  verify: (wsId: string, gateId: string, domainId: string) =>
-    api.post<{ verified: boolean; message?: string }>(`/workspaces/${wsId}/gates/${gateId}/domains/${domainId}/verify`, {}).then((r) => r.data),
+  verify: (gateId: string, domainId: string) =>
+    api.post<{ verified: boolean; message?: string }>(`/gates/${gateId}/domains/${domainId}/verify`, {}).then((r) => r.data),
 
-  delete: (wsId: string, gateId: string, domainId: string) =>
-    api.delete(`/workspaces/${wsId}/gates/${gateId}/domains/${domainId}`),
+  delete: (gateId: string, domainId: string) =>
+    api.delete(`/gates/${gateId}/domains/${domainId}`),
 }

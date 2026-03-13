@@ -12,7 +12,7 @@ import { LangToggle } from '@/components/LangToggle'
 const DIGITS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫']
 
 export default function PinPadPage() {
-  const { wsId, gateId } = useParams<{ wsId?: string; gateId: string }>()
+  const { gateId } = useParams<{ gateId: string }>()
   const navigate = useNavigate()
   const { t } = useTranslation()
 
@@ -21,9 +21,7 @@ export default function PinPadPage() {
   const [submitting, setSubmitting] = useState(false)
   const [usePassword, setUsePassword] = useState(false)
 
-  const portalPath = wsId && gateId
-    ? `/workspaces/${wsId}/gates/${gateId}/public`
-    : gateId ? `/unlock/${gateId}` : '/'
+  const portalPath = gateId ? `/gates/${gateId}/public` : '/'
 
   // If we already have a pin session, redirect to portal
   useEffect(() => {
@@ -48,7 +46,6 @@ export default function PinPadPage() {
     try {
       const result = await publicApi.open(gateId, value)
       if (result.has_session && result.gate_id && result.permissions) {
-        // Cookies set by backend; store session metadata in zustand
         useAuthStore.getState().setPinSession(result.gate_id, result.permissions)
       }
       navigate(portalPath, { replace: true, state: { justAuthenticated: true } })

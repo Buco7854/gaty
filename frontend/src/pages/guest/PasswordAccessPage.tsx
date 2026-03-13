@@ -9,7 +9,7 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import { LangToggle } from '@/components/LangToggle'
 
 export default function PasswordAccessPage() {
-  const { wsId, gateId } = useParams<{ wsId?: string; gateId: string }>()
+  const { gateId } = useParams<{ gateId: string }>()
   const navigate = useNavigate()
   const { t } = useTranslation()
 
@@ -17,9 +17,7 @@ export default function PasswordAccessPage() {
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  const portalPath = wsId && gateId
-    ? `/workspaces/${wsId}/gates/${gateId}/public`
-    : gateId ? `/unlock/${gateId}` : '/'
+  const portalPath = gateId ? `/gates/${gateId}/public` : '/'
 
   useEffect(() => {
     if (!gateId) return

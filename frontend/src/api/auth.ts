@@ -1,19 +1,10 @@
 import { api } from '@/lib/api'
-import type { GlobalAuthResponse, LocalAuthResponse, User } from '@/types'
+import type { AuthResponse, Member } from '@/types'
 
 export const authApi = {
-  login: (email: string, password: string) =>
-    api.post<GlobalAuthResponse>('/auth/login', { email, password }).then((r) => r.data),
-
-  loginLocal: (workspaceId: string, localUsername: string, password: string) =>
-    api.post<LocalAuthResponse>('/auth/login/local', { workspace_id: workspaceId, local_username: localUsername, password }).then((r) => r.data),
-
-  register: (email: string, password: string) =>
-    api.post<GlobalAuthResponse>('/auth/register', { email, password }).then((r) => r.data),
+  login: (username: string, password: string) =>
+    api.post<AuthResponse>('/auth/login', { username, password }).then((r) => r.data),
 
   me: () =>
-    api.get<User>('/auth/me').then((r) => r.data),
-
-  merge: (workspaceId: string, localUsername: string, localPassword: string) =>
-    api.post('/auth/merge', { workspace_id: workspaceId, local_username: localUsername, local_password: localPassword }).then((r) => r.data),
+    api.get<Member>('/auth/me').then((r) => r.data),
 }

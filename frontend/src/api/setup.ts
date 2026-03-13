@@ -1,11 +1,11 @@
 import axios from 'axios'
 import { api } from '@/lib/api'
-import type { User } from '@/types'
+import type { Member } from '@/types'
 
 export const setupApi = {
   status: () =>
     axios.get<{ setup_required: boolean }>('/api/setup/status').then((r) => r.data),
 
-  init: (email: string, password: string) =>
-    api.post<{ user: User }>('/setup/init', { email, password }).then((r) => r.data),
+  init: (username: string, password: string) =>
+    api.post<{ member: Member }>('/setup/init', { username, password }).then((r) => r.data),
 }

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { gatesApi, pinsApi, domainsApi, policiesApi, schedulesApi } from '@/api'
 import type { ActionConfig, PinMetadata } from '@/api'
-import type { Gate, GatePin, CustomDomain, WorkspaceWithRole, AccessSchedule, MetaField, StatusRule, StatusTransition, GateStatus } from '@/types'
+import type { Gate, GatePin, CustomDomain, AccessSchedule, MetaField, StatusRule, StatusTransition, GateStatus } from '@/types'
 import { useAuthStore } from '@/store/auth'
 import { useTranslation } from 'react-i18next'
 import { notifySuccess, notifyError } from '@/lib/notify'
@@ -625,7 +625,7 @@ function StatusRulesEditor({
 // ---------- Main page ----------
 
 export default function GatePage() {
-  const { wsId, gateId } = useParams<{ wsId: string; gateId: string }>()
+  const { gateId } = useParams<{ gateId: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { t } = useTranslation()
@@ -633,21 +633,17 @@ export default function GatePage() {
   const tokenClipboard = useClipboard({ timeout: 2000 })
 
   const session = useAuthStore((s) => s.session)
-  const globalAuth = session?.type === 'global'
-  const localSession = !globalAuth && session?.type === 'local' ? session : null
-  const ws = qc.getQueryData<WorkspaceWithRole[]>(['workspaces'])?.find((w) => w.id === wsId)
-  const effectiveRole = globalAuth ? ws?.role : localSession?.role
-  const canManage = effectiveRole === 'ADMIN' || effectiveRole === 'OWNER'
+  const isAdmin = session?.type === 'member' && session.member?.role === 'ADMIN'
 
   const { data: myPolicies } = useQuery({
-    queryKey: ['policies-me', wsId],
-    queryFn: () => policiesApi.listMine(wsId!),
-    enabled: !canManage && (globalAuth || !!localSession),
+    queryKey: ['policies-me'],
+    queryFn: () => policiesApi.listMine(),
+    enabled: !isAdmin && session?.type === 'member',
   })
   const canManageGate =
-    canManage || myPolicies?.some((p) => p.gate_id === gateId && p.permission_code === 'gate:manage')
+    isAdmin || myPolicies?.some((p) => p.gate_id === gateId && p.permission_code === 'gate:manage')
   const canViewStatus =
-    canManage || myPolicies?.some((p) => p.gate_id === gateId && p.permission_code === 'gate:read_status')
+    isAdmin || myPolicies?.some((p) => p.gate_id === gateId && p.permission_code === 'gate:read_status')
 
   // Modal state
   const [pinModalOpened, { open: openPinModal, close: closePinModal }] = useDisclosure(false)
@@ -709,8 +705,8 @@ export default function GatePage() {
   }
 
   const { data: gate, isError: gateError, error: gateFetchError } = useQuery<Gate>({
-    queryKey: ['gate', wsId, gateId],
-    queryFn: () => gatesApi.get(wsId!, gateId!),
+    queryKey: ['gate', gateId],
+    queryFn: () => gatesApi.get(gateId!),
     refetchInterval: 15_000,
   })
 
@@ -719,11 +715,10 @@ export default function GatePage() {
     (event: GateEvent) => {
       if (event.gate_id !== gateId) return
       const patch = { status: event.status as GateStatus, status_metadata: event.status_metadata }
-      qc.setQueryData<Gate>(['gate', wsId, gateId], (prev) =>
+      qc.setQueryData<Gate>(['gate', gateId], (prev) =>
         prev ? { ...prev, ...patch, status_metadata: patch.status_metadata ?? prev.status_metadata } : prev
       )
-      // Also update the list cache so the workspace page stays in sync
-      qc.setQueryData<Gate[]>(['gates', wsId], (prev) =>
+      qc.setQueryData<Gate[]>(['gates'], (prev) =>
         prev?.map((g) =>
           g.id === event.gate_id
             ? { ...g, ...patch, status_metadata: patch.status_metadata ?? g.status_metadata }
@@ -731,39 +726,39 @@ export default function GatePage() {
         )
       )
     },
-    [qc, wsId, gateId]
+    [qc, gateId]
   )
-  useGateEvents(globalAuth ? wsId : undefined, handleGateEvent)
+  useGateEvents(handleGateEvent)
 
   const { data: pins } = useQuery<GatePin[]>({
-    queryKey: ['pins', wsId, gateId],
-    queryFn: () => pinsApi.list(wsId!, gateId!),
+    queryKey: ['pins', gateId],
+    queryFn: () => pinsApi.list(gateId!),
   })
 
   const { data: domains } = useQuery<CustomDomain[]>({
-    queryKey: ['domains', wsId, gateId],
-    queryFn: () => domainsApi.list(wsId!, gateId!),
+    queryKey: ['domains', gateId],
+    queryFn: () => domainsApi.list(gateId!),
     enabled: canManageGate,
   })
 
   const { data: schedules = [] } = useQuery<AccessSchedule[]>({
-    queryKey: ['schedules', wsId],
-    queryFn: () => schedulesApi.list(wsId!),
+    queryKey: ['schedules'],
+    queryFn: () => schedulesApi.list(),
     enabled: canManageGate,
   })
 
   // Lazy token fetch: only triggered when admin clicks "Show token"
   const { data: tokenData } = useQuery({
-    queryKey: ['gate-token', wsId, gateId],
-    queryFn: () => gatesApi.getToken(wsId!, gateId!),
-    enabled: canManage && showToken,
+    queryKey: ['gate-token', gateId],
+    queryFn: () => gatesApi.getToken(gateId!),
+    enabled: isAdmin && showToken,
   })
   const gateToken = tokenData?.gate_token
 
   const rotateToken = useMutation({
-    mutationFn: () => gatesApi.rotateToken(wsId!, gateId!),
+    mutationFn: () => gatesApi.rotateToken(gateId!),
     onSuccess: (data) => {
-      qc.setQueryData(['gate-token', wsId, gateId], data)
+      qc.setQueryData(['gate-token', gateId], data)
       setShowToken(true)
       closeTokenWarning()
       notifySuccess(t('gates.tokenRotated'))
@@ -772,14 +767,13 @@ export default function GatePage() {
   })
 
   const trigger = useMutation({
-    mutationFn: (action: 'open' | 'close') => gatesApi.trigger(wsId!, gateId!, action),
+    mutationFn: (action: 'open' | 'close') => gatesApi.trigger(gateId!, action),
     onMutate: (action) => {
-      // Optimistic update: immediately reflect the expected status
       const optimisticStatus = (action === 'open' ? 'open' : 'closed') as GateStatus
-      qc.setQueryData<Gate>(['gate', wsId, gateId], (prev) =>
+      qc.setQueryData<Gate>(['gate', gateId], (prev) =>
         prev ? { ...prev, status: optimisticStatus } : prev
       )
-      qc.setQueryData<Gate[]>(['gates', wsId], (prev) =>
+      qc.setQueryData<Gate[]>(['gates'], (prev) =>
         prev?.map((g) => g.id === gateId ? { ...g, status: optimisticStatus } : g)
       )
     },
@@ -789,7 +783,7 @@ export default function GatePage() {
 
   const updateConfig = useMutation({
     mutationFn: () =>
-      gatesApi.update(wsId!, gateId!, {
+      gatesApi.update(gateId!, {
         open_config: editOpenConfig,
         close_config: editCloseConfig,
         status_config: editStatusConfig,
@@ -800,7 +794,7 @@ export default function GatePage() {
         status_transitions: editStatusTransitions,
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['gate', wsId, gateId] })
+      qc.invalidateQueries({ queryKey: ['gate', gateId] })
       closeConfigModal()
       notifySuccess(t('common.saved'))
     },
@@ -815,7 +809,7 @@ export default function GatePage() {
       if (dur !== undefined) metadata.session_duration = dur
       const maxUses = typeof pinMaxUses === 'number' ? pinMaxUses : parseInt(String(pinMaxUses), 10)
       if (maxUses > 0) metadata.max_uses = maxUses
-      return pinsApi.create(wsId!, gateId!, {
+      return pinsApi.create(gateId!, {
         label: pinLabel,
         pin: pinValue,
         code_type: pinCodeType,
@@ -824,7 +818,7 @@ export default function GatePage() {
       })
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['pins', wsId, gateId] })
+      qc.invalidateQueries({ queryKey: ['pins', gateId] })
       closePinModal()
       resetPinForm()
       notifySuccess(t('common.created'))
@@ -864,15 +858,15 @@ export default function GatePage() {
       metadata.session_duration = dur !== undefined ? dur : null
       const maxUses = typeof pinMaxUses === 'number' ? pinMaxUses : parseInt(String(pinMaxUses), 10)
       metadata.max_uses = maxUses > 0 ? maxUses : null
-      await pinsApi.update(wsId!, gateId!, editingPinId!, { label: pinLabel, metadata })
+      await pinsApi.update(gateId!, editingPinId!, { label: pinLabel, metadata })
       if (pinScheduleId) {
-        await pinsApi.setSchedule(wsId!, gateId!, editingPinId!, pinScheduleId)
+        await pinsApi.setSchedule(gateId!, editingPinId!, pinScheduleId)
       } else {
-        await pinsApi.clearSchedule(wsId!, gateId!, editingPinId!).catch(() => {})
+        await pinsApi.clearSchedule(gateId!, editingPinId!).catch(() => {})
       }
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['pins', wsId, gateId] })
+      qc.invalidateQueries({ queryKey: ['pins', gateId] })
       closePinModal()
       resetPinForm()
       notifySuccess(t('common.saved'))
@@ -881,15 +875,15 @@ export default function GatePage() {
   })
 
   const deletePin = useMutation({
-    mutationFn: (pinId: string) => pinsApi.delete(wsId!, gateId!, pinId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['pins', wsId, gateId] }),
+    mutationFn: (pinId: string) => pinsApi.delete(gateId!, pinId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pins', gateId] }),
     onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
   const addDomain = useMutation({
-    mutationFn: () => domainsApi.create(wsId!, gateId!, domainValue),
+    mutationFn: () => domainsApi.create(gateId!, domainValue),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['domains', wsId, gateId] })
+      qc.invalidateQueries({ queryKey: ['domains', gateId] })
       closeDomainModal()
       setDomainValue('')
       notifySuccess(t('common.created'))
@@ -898,17 +892,17 @@ export default function GatePage() {
   })
 
   const deleteDomain = useMutation({
-    mutationFn: (domainId: string) => domainsApi.delete(wsId!, gateId!, domainId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['domains', wsId, gateId] }),
+    mutationFn: (domainId: string) => domainsApi.delete(gateId!, domainId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['domains', gateId] }),
     onError: (err: unknown) => notifyError(err, t('common.error')),
   })
 
   const verifyDomain = useMutation({
-    mutationFn: (domainId: string) => domainsApi.verify(wsId!, gateId!, domainId),
+    mutationFn: (domainId: string) => domainsApi.verify(gateId!, domainId),
     onSuccess: (data, domainId) => {
       setVerifyResult((prev) => ({ ...prev, [domainId]: data }))
       if (data.verified) {
-        qc.invalidateQueries({ queryKey: ['domains', wsId, gateId] })
+        qc.invalidateQueries({ queryKey: ['domains', gateId] })
         notifySuccess(t('domains.verified'))
       } else {
         notifyError(null, t('domains.notYetVerified'))
@@ -948,7 +942,7 @@ export default function GatePage() {
         unit: f.unit,
         raw: false,
       }))
-    if (canManage) {
+    if (isAdmin) {
       const mappedKeys = new Set(cfg.map((f) => f.key))
       const allKeys = flattenKeys(meta)
       const rawRows = allKeys
@@ -957,7 +951,7 @@ export default function GatePage() {
       return [...mapped, ...rawRows]
     }
     return mapped
-  }, [gate, canManage])
+  }, [gate, isAdmin])
 
   const statusColor = getStatusColor(gate?.status)
   const scheduleSelectData = [
@@ -979,7 +973,7 @@ export default function GatePage() {
         size="xs"
         leftSection={<ArrowLeft size={14} />}
         mb="md"
-        onClick={() => navigate(`/workspaces/${wsId}`)}
+        onClick={() => navigate('/gates')}
       >
         {t('common.back')}
       </Button>
@@ -1054,7 +1048,7 @@ export default function GatePage() {
       )}
 
       {/* Gate token (admin only) */}
-      {canManage && (
+      {isAdmin && (
         <Paper withBorder p="md" radius="md" mb="md">
           <Group justify="space-between" mb="xs">
             <Group gap="xs">

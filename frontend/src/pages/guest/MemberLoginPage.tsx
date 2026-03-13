@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate, useSearchParams } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 import { publicApi, authApi } from '@/api'
 import type { DomainResolveResult } from '@/types'
 import { useAuthStore } from '@/store/auth'
@@ -16,7 +16,6 @@ import { isSafeRedirect } from '@/lib/utils'
 type PageState = 'idle' | 'loading' | 'success' | 'error'
 
 export default function MemberLoginPage() {
-  const { wsId } = useParams<{ wsId: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { t } = useTranslation()
@@ -25,7 +24,7 @@ export default function MemberLoginPage() {
   const redirectParam = searchParams.get('redirect')
   const errorParam = searchParams.get('error')
 
-  const [resolving, setResolving] = useState(true)
+  const [resolving, setResolving] = useState(!!gateId)
   const [resolved, setResolved] = useState<DomainResolveResult | null>(null)
   const [ssoProviders, setSsoProviders] = useState<{ id: string; name: string; type: string }[]>([])
 
@@ -35,11 +34,9 @@ export default function MemberLoginPage() {
   const [errorMsg, setErrorMsg] = useState(errorParam ? t('pinpad.ssoError') : '')
 
   useEffect(() => {
-    if (wsId) {
-      publicApi.ssoProviders(wsId)
-        .then((providers) => setSsoProviders(providers))
-        .catch(() => {})
-    }
+    publicApi.ssoProviders()
+      .then((providers) => setSsoProviders(providers))
+      .catch(() => {})
 
     if (!gateId) {
       setResolving(false)
@@ -49,7 +46,7 @@ export default function MemberLoginPage() {
       .then((data) => setResolved(data))
       .catch(() => {})
       .finally(() => setResolving(false))
-  }, [gateId, wsId, navigate])
+  }, [gateId])
 
   function redirectAfterLogin(role: string) {
     const authState = { state: { justAuthenticated: true } }
@@ -57,10 +54,10 @@ export default function MemberLoginPage() {
       navigate(redirectParam, authState)
       return
     }
-    if (role === 'ADMIN' || role === 'OWNER') {
-      navigate(`/workspaces/${wsId}`, authState)
+    if (role === 'ADMIN') {
+      navigate('/gates', authState)
     } else {
-      navigate(gateId ? `/workspaces/${wsId}/gates/${gateId}/public` : `/workspaces/${wsId}`, authState)
+      navigate(gateId ? `/gates/${gateId}/public` : '/gates', authState)
     }
   }
 
@@ -79,12 +76,12 @@ export default function MemberLoginPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!resolved || state !== 'idle') return
+    if (state !== 'idle') return
     setState('loading')
     try {
-      const data = await authApi.loginLocal(resolved.workspace_id, username, password)
-      useAuthStore.getState().setLocalSession(data.membership_id, data.workspace_id, data.role, data.display_name)
-      showFeedback('success', '', data.role)
+      const data = await authApi.login(username, password)
+      useAuthStore.getState().setMemberSession(data.member)
+      showFeedback('success', '', data.member.role)
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status
       if (status === 401 || status === 403) showFeedback('error', t('pinpad.invalidCredentials'))
@@ -93,9 +90,7 @@ export default function MemberLoginPage() {
   }
 
   function handleSSOLogin(providerId: string) {
-    const workspaceId = resolved?.workspace_id ?? wsId
-    if (!workspaceId) return
-    const url = `/api/auth/sso/${encodeURIComponent(workspaceId)}/${encodeURIComponent(providerId)}/authorize`
+    const url = `/api/auth/sso/${encodeURIComponent(providerId)}/authorize`
     window.location.href = gateId ? `${url}?gate_id=${encodeURIComponent(gateId)}` : url
   }
 
@@ -117,7 +112,7 @@ export default function MemberLoginPage() {
       <Center mih="100vh" p="md">
         <Stack align="center" gap="xl" w="100%" maw={320}>
           <Stack align="center" gap={4}>
-            <Title order={2}>{resolved?.workspace_name}</Title>
+            <Title order={2}>{resolved?.gate_name ?? 'GATIE'}</Title>
             <Text size="sm" c="dimmed">{t('pinpad.memberAccess')}</Text>
           </Stack>
 
@@ -182,7 +177,7 @@ export default function MemberLoginPage() {
                   type="button"
                   size="xs"
                   c="dimmed"
-                  onClick={() => navigate(isSafeRedirect(redirectParam) ? redirectParam : `/workspaces/${wsId}/gates/${gateId}/public`)}
+                  onClick={() => navigate(isSafeRedirect(redirectParam) ? redirectParam : `/gates/${gateId}/public`)}
                 >
                   {t('pinpad.useAnotherMethod')}
                 </Anchor>

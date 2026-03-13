@@ -1,25 +1,15 @@
-export type WorkspaceRole = 'OWNER' | 'ADMIN' | 'MEMBER'
+export type Role = 'ADMIN' | 'MEMBER'
 export type GateStatus = 'online' | 'offline' | 'unknown' | 'open' | 'closed' | string
 export type GateIntegrationType = 'MQTT' | 'POLLING' | 'WEBHOOK'
 export type CredentialType = 'PASSWORD' | 'SSO_IDENTITY' | 'API_TOKEN'
 
-export interface User {
+export interface Member {
   id: string
-  email: string
+  username: string
+  display_name?: string
+  role: Role
+  auth_config: Record<string, unknown>
   created_at: string
-}
-
-export interface Workspace {
-  id: string
-  name: string
-  owner_id: string
-  sso_settings: Record<string, unknown>
-  member_auth_config: Record<string, unknown>
-  created_at: string
-}
-
-export interface WorkspaceWithRole extends Workspace {
-  role: WorkspaceRole
 }
 
 /** Maps raw device status values (stringified) to application status strings. */
@@ -77,7 +67,6 @@ export interface StatusTransition {
 
 export interface Gate {
   id: string
-  workspace_id: string
   name: string
   integration_type: GateIntegrationType
   integration_config: Record<string, unknown>
@@ -101,19 +90,6 @@ export interface Gate {
   status_transitions?: StatusTransition[]
   /** Gate authentication token — only populated on create and rotate-token responses. */
   gate_token?: string
-}
-
-export interface WorkspaceMembership {
-  id: string
-  workspace_id: string
-  user_id?: string
-  user_email?: string
-  local_username?: string
-  display_name?: string
-  role: WorkspaceRole
-  auth_config: Record<string, unknown>
-  invited_by?: string
-  created_at: string
 }
 
 export interface ScheduleRule {
@@ -145,9 +121,8 @@ export interface ExprNode {
 
 export interface AccessSchedule {
   id: string
-  workspace_id: string
-  /** Present only for member personal schedules; absent for workspace-level schedules. */
-  membership_id?: string
+  /** Present only for member personal schedules; absent for admin-level schedules. */
+  member_id?: string
   name: string
   description?: string
   expr: ExprNode | null  // null = always allowed
@@ -172,8 +147,8 @@ export interface CustomDomain {
   created_at: string
 }
 
-export interface MembershipPolicy {
-  membership_id: string
+export interface MemberPolicy {
+  member_id: string
   gate_id: string
   permission_code: string
 }
@@ -187,29 +162,15 @@ export interface Credential {
   created_at: string
 }
 
-/** Response from global login/register — tokens in cookies, metadata in body. */
-export interface GlobalAuthResponse {
-  type: 'global'
-  user: User
+/** Response from login — tokens in cookies, metadata in body. */
+export interface AuthResponse {
+  member: Member
 }
 
-/** Response from local login — tokens in cookies, metadata in body. */
-export interface LocalAuthResponse {
-  type: 'local'
-  membership_id: string
-  workspace_id: string
-  role: WorkspaceRole
-  display_name?: string
-}
-
-/** Response from refresh — tokens in cookies, type-dependent metadata in body. */
+/** Response from refresh — tokens in cookies, metadata in body. */
 export interface RefreshResponse {
-  type: 'global' | 'local' | 'pin_session'
-  user?: User
-  membership_id?: string
-  workspace_id?: string
-  role?: WorkspaceRole
-  display_name?: string
+  type: 'member' | 'pin_session'
+  member?: Member
   gate_id?: string
   permissions?: string[]
 }
@@ -217,8 +178,6 @@ export interface RefreshResponse {
 export interface DomainResolveResult {
   gate_id: string
   gate_name: string
-  workspace_id: string
-  workspace_name: string
   has_open_action: boolean
   has_close_action: boolean
   status: GateStatus
